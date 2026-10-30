@@ -21,6 +21,10 @@ using asio::ip::tcp;
 
 constexpr auto kAsTuple = asio::as_tuple(asio::use_awaitable);
 
+// One waiting accept takes one connection per turn of the event loop, which is only a few hundred
+// per second under load, so new clients would queue for seconds while existing ones are served.
+constexpr int kConcurrentAccepts = 64;
+
 http::response<http::string_body> toBeastResponse(const Response& response, unsigned version,
                                                   bool keep_alive, bool head_request) {
     http::response<http::string_body> result{static_cast<http::status>(response.status()), version};
@@ -271,7 +275,9 @@ Result<void> Server::start() {
     }
     impl.bound_port.store(local.port());
 
-    asio::co_spawn(impl.io, impl.accept(), asio::detached);
+    for (int i = 0; i < kConcurrentAccepts; ++i) {
+        asio::co_spawn(impl.io, impl.accept(), asio::detached);
+    }
     impl.network_thread = std::jthread{[&impl] { impl.io.run(); }};
     return {};
 }

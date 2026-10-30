@@ -29,8 +29,9 @@ using Clock = std::chrono::steady_clock;
 
 constexpr auto kAsTuple = asio::as_tuple(asio::use_awaitable);
 
-// Binding to more loopback addresses gets past the limit on ports per address.
-constexpr std::size_t kConnectionsPerSource = 20000;
+// Binding to more loopback addresses gets past the limit on ports per address, which is about
+// 16,000 by default on Windows.
+constexpr std::size_t kConnectionsPerSource = 12000;
 
 struct Options {
     std::string host{"127.0.0.1"};
