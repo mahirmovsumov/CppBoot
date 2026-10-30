@@ -8,6 +8,7 @@
 #include <vector>
 
 using namespace cppboot;
+using di::Deps;
 
 namespace {
 
@@ -98,6 +99,43 @@ TEST_F(BootTest, RunsModuleComponentsWithTheirDependencies) {
 
     EXPECT_EQ(exit_code, kExitSuccess);
     EXPECT_EQ(events_, (Events{"start first", "start second", "stop second", "stop first"}));
+}
+
+TEST_F(BootTest, ComponentsCanTakeSettingsAndLoggerInTheirConstructors) {
+    struct Configured {
+        Configured(std::shared_ptr<const config::Config> config,
+                   std::shared_ptr<const logging::Logger> logger)
+            : logger_(std::move(logger)), port_(config->getString("myapp.port")) {
+            logger_->info("Configured for port {}", port_);
+        }
+        std::shared_ptr<const logging::Logger> logger_;
+        std::string port_;
+    };
+
+    struct UsesConfigured : Worker {
+        UsesConfigured(std::shared_ptr<Log> log, std::shared_ptr<Configured> configured,
+                       std::shared_ptr<std::string> seen_port)
+            : Worker("uses-configured", std::move(log)) {
+            *seen_port = configured->port_;
+        }
+    };
+
+    options_.default_settings["myapp.port"] = "8081";
+    const auto seen_port = std::make_shared<std::string>();
+
+    const int exit_code = runApplication(
+        0, nullptr,
+        [&](di::Container& container) {
+            container.registerInstance(std::make_shared<Log>(events_));
+            container.registerInstance(seen_port);
+            container.registerSingleton<Configured>(Deps<config::Config, logging::Logger>{});
+            container.registerSingleton<UsesConfigured>(Deps<Log, Configured, std::string>{});
+            container.bindAll<Module, UsesConfigured>();
+        },
+        options_);
+
+    EXPECT_EQ(exit_code, kExitSuccess);
+    EXPECT_EQ(*seen_port, "8081");
 }
 
 TEST_F(BootTest, RunsWithNoComponents) {

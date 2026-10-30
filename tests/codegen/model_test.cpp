@@ -61,6 +61,12 @@ TEST(ValidateComponentsTest, AllowsSharedDependencies) {
     }));
 }
 
+TEST(ValidateComponentsTest, FrameworkTypesNeedNoProvider) {
+    EXPECT_TRUE(validateComponents({
+        {"Service", "a.hpp:1", {}, {"cppboot::config::Config", "cppboot::logging::Logger"}},
+    }));
+}
+
 TEST(ValidateComponentsTest, AllowsManyModules) {
     EXPECT_TRUE(validateComponents({
         {"First", "a.hpp:1", {"cppboot::Module"}, {}},

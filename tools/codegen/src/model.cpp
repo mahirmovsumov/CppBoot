@@ -10,6 +10,10 @@ namespace {
 
 using Providers = std::map<std::string, const Component*>;
 
+bool isFrameworkType(std::string_view type) {
+    return std::find(kFrameworkTypes.begin(), kFrameworkTypes.end(), type) != kFrameworkTypes.end();
+}
+
 Result<void> addProvider(Providers& providers, const std::string& type, const Component& component) {
     const auto [entry, inserted] = providers.emplace(type, &component);
     if (!inserted) {
@@ -43,6 +47,9 @@ Result<void> checkForCycle(const Component& component, const Providers& provider
     states.emplace(&component, VisitState::InProgress);
     path.push_back(&component);
     for (const std::string& dependency : component.dependencies) {
+        if (isFrameworkType(dependency)) {
+            continue;
+        }
         if (auto checked = checkForCycle(*providers.at(dependency), providers, states, path);
             !checked) {
             return checked;
@@ -73,7 +80,7 @@ Result<void> validateComponents(const std::vector<Component>& components) {
 
     for (const Component& component : components) {
         for (const std::string& dependency : component.dependencies) {
-            if (!providers.contains(dependency)) {
+            if (!providers.contains(dependency) && !isFrameworkType(dependency)) {
                 return Error{ErrorCode::DependencyError,
                              component.type + " (" + component.location + ") needs " + dependency +
                                  ", but no component provides it"};

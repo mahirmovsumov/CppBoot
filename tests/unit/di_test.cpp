@@ -205,6 +205,35 @@ TEST(ValidateTest, ReportsAGroupMemberThatIsNotRegistered) {
     EXPECT_NE(result.error().message().find("isn't registered"), std::string::npos);
 }
 
+// On MinGW, types with internal linkage sort inconsistently against other types, which once made
+// registered types impossible to find.
+TEST(ContainerTest, FindsTypesWhenLocalAndExternalTypesAreMixed) {
+    struct LocalA {};
+    struct LocalB {};
+    struct LocalC {};
+
+    Container container;
+    container.registerSingleton<std::string>();
+    container.registerSingleton<LocalA>();
+    container.registerSingleton<std::vector<int>>();
+    container.registerSingleton<LocalB>();
+    container.registerSingleton<Plain>();
+    container.registerSingleton<std::vector<char>>();
+    container.registerSingleton<LocalC>();
+    container.registerSingleton<std::vector<long>>();
+
+    EXPECT_TRUE(container.contains(typeid(std::string)));
+    EXPECT_TRUE(container.contains(typeid(LocalA)));
+    EXPECT_TRUE(container.contains(typeid(std::vector<int>)));
+    EXPECT_TRUE(container.contains(typeid(LocalB)));
+    EXPECT_TRUE(container.contains(typeid(Plain)));
+    EXPECT_TRUE(container.contains(typeid(std::vector<char>)));
+    EXPECT_TRUE(container.contains(typeid(LocalC)));
+    EXPECT_TRUE(container.contains(typeid(std::vector<long>)));
+    EXPECT_NE(container.resolve<LocalB>(), nullptr);
+    EXPECT_NE(container.resolve<std::vector<long>>(), nullptr);
+}
+
 TEST(ContainerTest, DuplicateRegistrationThrows) {
     Container container;
     container.registerSingleton<Plain>();

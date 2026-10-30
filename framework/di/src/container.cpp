@@ -203,7 +203,7 @@ Result<void> Container::validate() const {
     }
 
     enum class VisitState { InProgress, Done };
-    std::map<std::type_index, VisitState> states;
+    std::unordered_map<std::type_index, VisitState> states;
     std::vector<std::type_index> path;
 
     const std::function<Result<void>(std::type_index)> visit =

@@ -55,7 +55,20 @@ The build also fails on a missing dependency, a dependency cycle, or two compone
 - Other components can ask for a marked class by its own type, or by an abstract base class it directly and publicly inherits from.
 - A marked class that derives from `cppboot::Module` starts and stops with the application, so it's created at startup.
 
-A component can't take settings or the logger in its constructor yet. Modules get both through the context in `start()`, and can pass them on to the components they use.
+### Settings and logging
+
+A marked class can also take the application's settings and logger in its constructor. `runApplication` provides both, so you don't have to register them:
+
+```cpp
+class CPPBOOT_SERVICE UserService {
+public:
+    UserService(std::shared_ptr<UserRepository> repository,
+                std::shared_ptr<const cppboot::config::Config> config,
+                std::shared_ptr<const cppboot::logging::Logger> logger);
+};
+```
+
+Components are created during startup, after the configuration has loaded and before modules start.
 
 ## Manual registration
 

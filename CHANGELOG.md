@@ -41,6 +41,7 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - Groups for interfaces with many implementations, with `bindAll` and `resolveAll`.
 - Clear errors instead of a stack overflow when resolving a cycle, and thread-safe resolution.
 - `cppboot::runApplication()`, which registers components, validates them and starts every component that's a module.
+- Components can take the application's `Config` and `Logger` in their constructors, with no registration.
 
 ### Code generator
 

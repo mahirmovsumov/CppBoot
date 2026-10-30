@@ -3,6 +3,7 @@
 #include <atomic>
 #include <concepts>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -35,6 +36,10 @@ struct ApplicationOptions {
 /// The framework entry point. It owns the lifecycle, configuration, logging and modules.
 class Application {
 public:
+    /// Creates modules once configuration and logging are ready. Both outlive every module.
+    using ModuleProvider = std::function<Result<std::vector<std::unique_ptr<Module>>>(
+        const config::Config&, const logging::Logger&)>;
+
     Application(int argc, char* argv[], ApplicationOptions options = {});
     ~Application();
 
@@ -47,6 +52,9 @@ public:
     Application& emplaceModule(Args&&... args) {
         return addModule(std::make_unique<M>(std::forward<Args>(args)...));
     }
+
+    /// Sets a source of modules for those that need settings or logging to be constructed.
+    Application& setModuleProvider(ModuleProvider provider);
 
     /// Runs until shutdown is requested and returns the process exit code. Can run only once.
     int run() noexcept;
@@ -65,6 +73,7 @@ private:
 
     std::vector<std::string> arguments_;
     ApplicationOptions options_;
+    ModuleProvider module_provider_;
     Lifecycle lifecycle_;
 
     std::mutex shutdown_mutex_;

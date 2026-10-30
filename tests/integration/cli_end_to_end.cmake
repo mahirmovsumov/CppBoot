@@ -81,23 +81,29 @@ file(WRITE ${PROJECT_DIR}/src/farewell.hpp [=[
 
 class CPPBOOT_SERVICE FarewellModule : public cppboot::Module {
 public:
-    explicit FarewellModule(std::shared_ptr<GreetingService> greetings)
-        : greetings_(std::move(greetings)) {}
+    FarewellModule(std::shared_ptr<GreetingService> greetings,
+                   std::shared_ptr<const cppboot::config::Config> config,
+                   std::shared_ptr<const cppboot::logging::Logger> logger)
+        : greetings_(std::move(greetings)),
+          name_(config->getString("cppboot.application.name")),
+          logger_(std::move(logger)) {}
 
     std::string_view name() const noexcept override { return "farewell"; }
 
-    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
-        context.logger().info("Injected: {}", greetings_->greeting());
+    cppboot::Result<void> start(cppboot::ApplicationContext&) override {
+        logger_->info("Injected in {}: {}", name_, greetings_->greeting());
         return {};
     }
 
 private:
     std::shared_ptr<GreetingService> greetings_;
+    std::string name_;
+    std::shared_ptr<const cppboot::logging::Logger> logger_;
 };
 ]=])
 run_cli(code output ${PROJECT_DIR} run --cppboot.runtime.shutdown_after_start=true)
 expect_exit_code("${code}" 0 "run with a new component" "${output}")
-expect_contains("${output}" "Injected: Hello from CppBoot!" "run with a new component")
+expect_contains("${output}" "Injected in demo-app: Hello from CppBoot!" "run with a new component")
 
 # A component with a missing dependency has to fail the build, not the running application.
 file(WRITE ${PROJECT_DIR}/src/broken.hpp [=[

@@ -25,25 +25,41 @@ private:
     std::shared_ptr<Module> instance_;
 };
 
+/// Shares an object the application owns. Their public functions are const, and components
+/// receive them as pointers to const, so nothing can change them through this pointer.
+template <typename T>
+std::shared_ptr<T> borrow(const T& value) {
+    return std::shared_ptr<T>{const_cast<T*>(&value), [](T*) {}};
+}
+
 }  // namespace
 
 int runApplication(int argc, char* argv[], const ComponentRegistrar& register_components,
                    ApplicationOptions options) {
-    // Declared before the application, so that components outlive the modules using them.
-    di::Container container;
-
     try {
-        register_components(container);
-
-        if (auto valid = container.validate(); !valid) {
-            std::cerr << "CppBoot failed: " << valid.error().describe() << '\n';
-            return kExitFailure;
-        }
-
         Application app(argc, argv, std::move(options));
-        for (auto& instance : container.resolveAll<Module>()) {
-            app.emplaceModule<ContainerModule>(std::move(instance));
-        }
+
+        // Declared after the application, so that singletons are destroyed while the logger and
+        // configuration still exist. Modules hold their own references to what they use.
+        di::Container container;
+
+        app.setModuleProvider([&](const config::Config& config, const logging::Logger& logger)
+                                  -> Result<std::vector<std::unique_ptr<Module>>> {
+            container.registerInstance(borrow(config));
+            container.registerInstance(borrow(logger));
+            register_components(container);
+
+            if (auto valid = container.validate(); !valid) {
+                return valid.error();
+            }
+
+            std::vector<std::unique_ptr<Module>> modules;
+            for (auto& instance : container.resolveAll<Module>()) {
+                modules.push_back(std::make_unique<ContainerModule>(std::move(instance)));
+            }
+            return modules;
+        });
+
         return app.run();
     } catch (const std::exception& exception) {
         std::cerr << "CppBoot failed: " << exception.what() << '\n';

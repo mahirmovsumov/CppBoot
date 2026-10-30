@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -11,6 +12,13 @@ namespace cppboot::codegen {
 /// A component with this interface is added to a group rather than bound to the interface, since
 /// an application has many modules.
 inline constexpr std::string_view kModuleInterface = "cppboot::Module";
+
+/// Types that cppboot::runApplication() provides, so components can depend on them without any
+/// component declaring them.
+inline constexpr std::array<std::string_view, 2> kFrameworkTypes = {
+    "cppboot::config::Config",
+    "cppboot::logging::Logger",
+};
 
 /// A class marked for registration. Type names are fully qualified.
 struct Component {

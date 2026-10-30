@@ -12,9 +12,11 @@ Start with the tutorial, then use the guides as a reference.
 
 ## Project status
 
+- [Project status](project-status.md): what works today, what's next, and the main decisions
 - [Changelog](../CHANGELOG.md): what has been added so far
 - [Phase 1 roadmap](roadmap/phase-1.md): the finished runtime and CLI
-- [Phase 2 roadmap](roadmap/phase-2.md): dependency injection, in progress
+- [Phase 2 roadmap](roadmap/phase-2.md): the finished dependency injection
+- [Phase 3 roadmap](roadmap/phase-3.md): the web framework, in progress
 
 ## Contributing to CppBoot
 

@@ -2,12 +2,12 @@
 
 #include <concepts>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <type_traits>
 #include <typeindex>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -214,15 +214,17 @@ private:
     std::shared_ptr<void> create(std::type_index type, Registration& registration,
                                  Resolver& resolver);
 
-    mutable std::recursive_mutex mutex_;
-    std::map<std::type_index, Registration> registrations_;
-    std::vector<Registration*> created_singletons_;
-
     struct GroupMember {
         std::type_index type;
         ErasedFactory factory;
     };
-    std::map<std::type_index, std::vector<GroupMember>> groups_;
+
+    // Hash maps because std::type_info::before() isn't a consistent order on MinGW when local or
+    // anonymous-namespace types are mixed with others, which breaks std::map. Equality is reliable.
+    mutable std::recursive_mutex mutex_;
+    std::unordered_map<std::type_index, Registration> registrations_;
+    std::vector<Registration*> created_singletons_;
+    std::unordered_map<std::type_index, std::vector<GroupMember>> groups_;
 };
 
 /// A lifetime for scoped components, such as one web request. It must not outlive its container.

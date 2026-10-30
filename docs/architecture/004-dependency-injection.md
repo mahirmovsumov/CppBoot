@@ -18,7 +18,9 @@ This keeps it usable without the application runtime, and it keeps the core free
 
 ### `cppboot-boot` connects the two
 
-`runApplication()` lives in a small library above both the core and the container. It registers the components, validates them, and adds every component in the `cppboot::Module` group to the application. The container is declared first, so components outlive the modules using them.
+`runApplication()` lives in a small library above both the core and the container. During the application's `RegisteringModules` stage, it registers the application's `Config` and `Logger`, registers the components, validates them and adds every component in the `cppboot::Module` group to the application. Components can therefore use settings and logging in their constructors.
+
+The container is declared after the application, so that singletons are destroyed while the logger and configuration still exist. Modules hold their own references to the components they use.
 
 ### `shared_ptr` for all components
 
@@ -52,5 +54,4 @@ Singletons and scoped components are destroyed in the reverse of their creation 
 
 - Choosing between several implementations of one interface by name
 - Creating singletons at startup, other than modules
-- Injecting settings and the logger into component constructors
 - Marking classes as transient or scoped for the generator

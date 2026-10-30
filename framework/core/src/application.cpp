@@ -24,6 +24,11 @@ Application& Application::addModule(std::unique_ptr<Module> instance) {
     return *this;
 }
 
+Application& Application::setModuleProvider(ModuleProvider provider) {
+    module_provider_ = std::move(provider);
+    return *this;
+}
+
 int Application::run() noexcept {
     int exit_code = kExitFailure;
     try {
@@ -109,6 +114,15 @@ int Application::execute() {
     logger_->debug("Configuration:\n{}", config_->describe());
 
     advance(LifecycleState::RegisteringModules);
+    if (module_provider_) {
+        auto provided = module_provider_(*config_, *logger_);
+        if (!provided) {
+            return fail(provided.error(), kExitFailure);
+        }
+        for (auto& instance : provided.value()) {
+            modules_.add(std::move(instance));
+        }
+    }
     if (auto resolved = modules_.resolveOrder(); !resolved) {
         return fail(resolved.error(), kExitFailure);
     }
