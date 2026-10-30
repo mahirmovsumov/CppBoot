@@ -39,6 +39,14 @@ execute_process(
     COMMAND_ERROR_IS_FATAL ANY
 )
 
+# The installed generator must use the Clang headers installed with it.
+execute_process(
+    COMMAND ${PREFIX}/bin/cppboot-codegen${EXE_SUFFIX} --print-resource-dir
+    OUTPUT_VARIABLE resource_dir
+    COMMAND_ERROR_IS_FATAL ANY
+)
+expect_contains("${resource_dir}" "lib/cppboot/clang" "installed generator")
+
 run_cli(code output ${WORK_DIR} info)
 expect_exit_code("${code}" 0 "info" "${output}")
 expect_contains("${output}" "CppBoot ${EXPECTED_VERSION}" "info")
@@ -56,8 +64,61 @@ expect_exit_code("${code}" 0 "build" "${output}")
 run_cli(code output ${PROJECT_DIR} run -- --cppboot.runtime.shutdown_after_start=true)
 expect_exit_code("${code}" 0 "run" "${output}")
 expect_contains("${output}" "[demo-app]" "run")
+# Printed by a component that the generated code created and injected.
+expect_contains("${output}" "Hello from CppBoot!" "run")
 expect_contains("${output}" "Application is running" "run")
 expect_contains("${output}" "Shutting down" "run")
+
+# A new marked class in a new header has to be found and injected with no registration code.
+file(WRITE ${PROJECT_DIR}/src/farewell.hpp [=[
+#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <memory>
+#include <utility>
+
+#include "greeting.hpp"
+
+class CPPBOOT_SERVICE FarewellModule : public cppboot::Module {
+public:
+    explicit FarewellModule(std::shared_ptr<GreetingService> greetings)
+        : greetings_(std::move(greetings)) {}
+
+    std::string_view name() const noexcept override { return "farewell"; }
+
+    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
+        context.logger().info("Injected: {}", greetings_->greeting());
+        return {};
+    }
+
+private:
+    std::shared_ptr<GreetingService> greetings_;
+};
+]=])
+run_cli(code output ${PROJECT_DIR} run --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run with a new component" "${output}")
+expect_contains("${output}" "Injected: Hello from CppBoot!" "run with a new component")
+
+# A component with a missing dependency has to fail the build, not the running application.
+file(WRITE ${PROJECT_DIR}/src/broken.hpp [=[
+#pragma once
+
+#include <cppboot/base/annotations.hpp>
+#include <memory>
+
+class NotAComponent {};
+
+class CPPBOOT_SERVICE Broken {
+public:
+    explicit Broken(std::shared_ptr<NotAComponent> dependency);
+};
+]=])
+run_cli(code output ${PROJECT_DIR} build)
+if(code EQUAL 0)
+    message(FATAL_ERROR "build with a missing dependency: expected a failure:\n${output}")
+endif()
+expect_contains("${output}" "needs NotAComponent" "build with a missing dependency")
+file(REMOVE ${PROJECT_DIR}/src/broken.hpp)
 
 # The application's own exit code has to come back through the CLI.
 run_cli(code output ${PROJECT_DIR} run --cppboot.logging.level=loud)

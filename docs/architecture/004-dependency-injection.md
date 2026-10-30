@@ -1,6 +1,6 @@
 # 004: Dependency injection
 
-**Status:** Accepted. The container is built, and generator integration is in progress.
+**Status:** Accepted.
 
 ## Decisions
 
@@ -15,6 +15,10 @@ C++20 can't list a constructor's parameters. The container could guess them with
 ### `cppboot-di` depends only on `cppboot-base`
 
 This keeps it usable without the application runtime, and it keeps the core free of it. An application that doesn't use injection doesn't pay for it.
+
+### `cppboot-boot` connects the two
+
+`runApplication()` lives in a small library above both the core and the container. It registers the components, validates them, and adds every component in the `cppboot::Module` group to the application. The container is declared first, so components outlive the modules using them.
 
 ### `shared_ptr` for all components
 
@@ -46,6 +50,7 @@ Singletons and scoped components are destroyed in the reverse of their creation 
 
 ## Not included yet
 
-- Injecting several implementations of one interface, or choosing between them by name
-- Creating singletons at startup rather than on first use
-- A container available through `ApplicationContext`
+- Choosing between several implementations of one interface by name
+- Creating singletons at startup, other than modules
+- Injecting settings and the logger into component constructors
+- Marking classes as transient or scoped for the generator

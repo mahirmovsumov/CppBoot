@@ -167,6 +167,44 @@ TEST(ContainerTest, BindSharesTheInstanceOfTheComponent) {
     EXPECT_EQ(container.resolve<Repository>().get(), container.resolve<SqlRepository>().get());
 }
 
+TEST(ContainerTest, GroupReturnsEveryMemberInOrder) {
+    class FirstRepository : public SqlRepository {};
+    class SecondRepository : public SqlRepository {};
+
+    Container container;
+    container.registerSingleton<FirstRepository>();
+    container.registerSingleton<SecondRepository>();
+    container.bindAll<Repository, FirstRepository>();
+    container.bindAll<Repository, SecondRepository>();
+
+    const auto repositories = container.resolveAll<Repository>();
+    ASSERT_EQ(repositories.size(), 2U);
+    EXPECT_EQ(repositories[0].get(), container.resolve<FirstRepository>().get());
+    EXPECT_EQ(repositories[1].get(), container.resolve<SecondRepository>().get());
+    EXPECT_TRUE(container.validate());
+}
+
+TEST(ContainerTest, UnknownGroupIsEmpty) {
+    Container container;
+    EXPECT_TRUE(container.resolveAll<Repository>().empty());
+}
+
+TEST(ContainerTest, GroupMembersAreNotNormalBindings) {
+    Container container;
+    container.registerSingleton<SqlRepository>();
+    container.bindAll<Repository, SqlRepository>();
+    EXPECT_THROW(static_cast<void>(container.resolve<Repository>()), Exception);
+}
+
+TEST(ValidateTest, ReportsAGroupMemberThatIsNotRegistered) {
+    Container container;
+    container.bindAll<Repository, SqlRepository>();
+
+    const auto result = container.validate();
+    ASSERT_FALSE(result);
+    EXPECT_NE(result.error().message().find("isn't registered"), std::string::npos);
+}
+
 TEST(ContainerTest, DuplicateRegistrationThrows) {
     Container container;
     container.registerSingleton<Plain>();

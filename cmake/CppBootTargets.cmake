@@ -36,6 +36,7 @@ function(cppboot_install_package)
         COMPATIBILITY SameMinorVersion
     )
     install(FILES
+        ${PROJECT_SOURCE_DIR}/cmake/CppBootCodegen.cmake
         ${PROJECT_BINARY_DIR}/CppBootConfig.cmake
         ${PROJECT_BINARY_DIR}/CppBootConfigVersion.cmake
         DESTINATION ${CPPBOOT_INSTALL_CMAKEDIR}

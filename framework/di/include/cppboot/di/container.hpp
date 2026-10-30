@@ -122,6 +122,31 @@ public:
         return *this;
     }
 
+    /// Adds a registered Component to a group, for interfaces with many implementations. A group
+    /// is separate from normal resolution, and is read with resolveAll().
+    template <typename Interface, typename Component>
+    Container& bindAll() {
+        static_assert(std::convertible_to<Component*, Interface*>,
+                      "Component must publicly derive from Interface");
+        addToGroup(typeid(Interface), typeid(Component),
+                   [](Resolver& resolver) -> std::shared_ptr<void> {
+                       std::shared_ptr<Interface> instance = resolver.resolve<Component>();
+                       return instance;
+                   });
+        return *this;
+    }
+
+    /// Returns every member of a group in the order they were added, or nothing for an unknown one.
+    template <typename Interface>
+    std::vector<std::shared_ptr<Interface>> resolveAll() {
+        std::vector<std::shared_ptr<Interface>> instances;
+        for (const ErasedFactory& factory : groupMembers(typeid(Interface))) {
+            Resolver resolver{*this, nullptr};
+            instances.push_back(std::static_pointer_cast<Interface>(factory(resolver)));
+        }
+        return instances;
+    }
+
     /// Throws cppboot::Exception if the type isn't registered, depends on itself, is scoped and is
     /// resolved outside a Scope, or if its factory fails.
     template <typename T>
@@ -182,6 +207,9 @@ private:
     void add(std::type_index type, Lifetime lifetime, std::vector<std::type_index> dependencies,
              bool dependencies_known, ErasedFactory factory, std::shared_ptr<void> instance);
 
+    void addToGroup(std::type_index group, std::type_index member, ErasedFactory factory);
+    std::vector<ErasedFactory> groupMembers(std::type_index group) const;
+
     std::shared_ptr<void> resolveEntry(std::type_index type, Resolver& resolver);
     std::shared_ptr<void> create(std::type_index type, Registration& registration,
                                  Resolver& resolver);
@@ -189,6 +217,12 @@ private:
     mutable std::recursive_mutex mutex_;
     std::map<std::type_index, Registration> registrations_;
     std::vector<Registration*> created_singletons_;
+
+    struct GroupMember {
+        std::type_index type;
+        ErasedFactory factory;
+    };
+    std::map<std::type_index, std::vector<GroupMember>> groups_;
 };
 
 /// A lifetime for scoped components, such as one web request. It must not outlive its container.

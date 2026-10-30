@@ -1,6 +1,6 @@
 # Getting started
 
-In this tutorial, you install CppBoot on Windows, create an application and add a module to it. It takes about 15 minutes, and most of that is installing the compiler.
+In this tutorial, you install CppBoot on Windows, create an application and add your own component to it. It takes about 15 minutes, and most of that is installing the compiler.
 
 CppBoot has no web or database support yet. Today, you can use it to build background services and command-line applications.
 
@@ -14,7 +14,7 @@ CppBoot has no web or database support yet. Today, you can use it to build backg
    . .\scripts\dev-env.ps1
    ```
 
-   The first script installs GCC, CMake, Ninja and the libraries CppBoot needs. The second adds them to PATH for the current PowerShell window only, so run it again in each new window.
+   The first script installs GCC, Clang, CMake, Ninja and the libraries CppBoot needs. The second adds them to PATH for the current PowerShell window only, so run it again in each new window.
 
 ## Build and install CppBoot
 
@@ -41,74 +41,115 @@ cppboot run
 
 ```text
 [hello-world] [info] Starting CppBoot 0.1.0 (profile: none)
+[hello-world] [info] Hello from CppBoot!
 [hello-world] [info] Application is running
 ```
 
 Press Ctrl+C. The application logs `Shutting down` and exits with code 0.
 
-The generated `src/main.cpp` is all the code an application needs:
+## See how it works
+
+`src/main.cpp` has no knowledge of your classes:
 
 ```cpp
-#include <cppboot/cppboot.hpp>
+#include <cppboot/boot.hpp>
+
+#include "cppboot_components.generated.hpp"
 
 int main(int argc, char* argv[]) {
-    cppboot::Application app(argc, argv);
-    return app.run();
+    return cppboot::runApplication(argc, argv, cppboot::generated::registerComponents);
 }
 ```
 
-## Add a module
+Your code goes in `src/greeting.hpp`, which has two classes marked with `CPPBOOT_SERVICE`:
 
-An application does its work in modules. Replace `src/main.cpp` with this:
+- `GreetingService` is a component that other classes can use.
+- `GreetingModule` takes a `GreetingService` in its constructor. It derives from `cppboot::Module`, so it also starts and stops with the application.
+
+During the build, a code generator reads every `.hpp` file in `src`, finds the marked classes and generates the code that creates them. You never write that code.
+
+## Add a component
+
+Create `src/clock.hpp`:
 
 ```cpp
+#pragma once
+
 #include <cppboot/cppboot.hpp>
+#include <memory>
+#include <string>
+#include <utility>
 
-class GreetingModule : public cppboot::Module {
+#include "greeting.hpp"
+
+class CPPBOOT_SERVICE TimeOfDay {
 public:
-    std::string_view name() const noexcept override { return "greeting"; }
-
-    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
-        const std::string who = context.config().getString("cppboot.greeting.name", "world");
-        context.logger().info("Hello, {}!", who);
-        return {};
-    }
+    std::string period() const { return "morning"; }
 };
 
-int main(int argc, char* argv[]) {
-    cppboot::Application app(argc, argv);
-    app.emplaceModule<GreetingModule>();
-    return app.run();
-}
+class CPPBOOT_SERVICE MorningModule : public cppboot::Module {
+public:
+    MorningModule(std::shared_ptr<GreetingService> greetings, std::shared_ptr<TimeOfDay> time)
+        : greetings_(std::move(greetings)), time_(std::move(time)) {}
+
+    std::string_view name() const noexcept override { return "morning"; }
+
+    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
+        context.logger().info("{} Good {}.", greetings_->greeting(), time_->period());
+        return {};
+    }
+
+private:
+    std::shared_ptr<GreetingService> greetings_;
+    std::shared_ptr<TimeOfDay> time_;
+};
 ```
 
-Run it with `cppboot run`, and the log includes `Hello, world!`. Press Ctrl+C to stop it.
+Run `cppboot run` again, and the log includes `Hello from CppBoot! Good morning.`. Press Ctrl+C to stop it. You didn't have to register anything or change `main.cpp`.
+
+## See a mistake caught early
+
+Delete `class CPPBOOT_SERVICE TimeOfDay` and its body, and replace them with a plain class:
+
+```cpp
+class TimeOfDay {
+public:
+    std::string period() const { return "morning"; }
+};
+```
+
+Now run `cppboot build`. The build fails and tells you what's wrong, without the application ever running:
+
+```text
+cppboot-codegen: MorningModule (.../clock.hpp:15) needs TimeOfDay, but no component provides it
+```
+
+Put `CPPBOOT_SERVICE` back to fix it.
 
 ## Change a setting
 
-Open `cppboot.yaml` and add a `greeting` section under `cppboot`:
+Modules can read settings through the context. In `src/clock.hpp`, replace the line that logs the message with these two lines:
 
-```yaml
-cppboot:
-  application:
-    name: hello-world
-
-  logging:
-    level: info
-
-  greeting:
-    name: CppBoot
+```cpp
+const std::string who = context.config().getString("greeting.name", "world");
+context.logger().info("{} Good {}, {}.", greetings_->greeting(), time_->period(), who);
 ```
 
-Run `cppboot run` again, and the log now says `Hello, CppBoot!`. You don't need to rebuild after changing a setting.
+Then add a section to `cppboot.yaml`:
 
-You can also override a setting for a single run:
+```yaml
+greeting:
+  name: CppBoot
+```
+
+Run `cppboot run`, and the log now ends with `Good morning, CppBoot.`. You can override a setting for a single run:
 
 ```powershell
-cppboot run --cppboot.greeting.name=Alex
+cppboot run --greeting.name=Alex
 ```
 
 ## Next steps
 
+- Learn about lifetimes and scopes in the [dependency injection guide](../guides/dependency-injection.md).
 - Add background work with the [modules guide](../guides/modules.md).
 - See every way to set a value in the [configuration guide](../guides/configuration.md).

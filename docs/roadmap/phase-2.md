@@ -1,25 +1,25 @@
 # Phase 2: Dependency injection
 
-**Status:** In progress.
+**Status:** Complete on Windows. It's finished once CI passes on Linux.
 
 ## Done
 
 - `cppboot::di::Container` with singleton, transient, scoped and external lifetimes
-- Registration with declared dependencies, factories, instances and interface bindings
+- Registration with declared dependencies, factories, instances, interface bindings and groups
 - `validate()` for missing dependencies, cycles and singletons that depend on scoped components
 - Cycle detection at runtime, and thread-safe resolution
-- Generated code that registers components with the real container
-
-## Remaining
-
-1. Install `cppboot-codegen` with the SDK, and replace the Clang header path that's fixed at build time.
-2. Add a CMake function so that projects run the generator as part of their build.
-3. Connect the container to `Application`, so that a project needs no manual wiring in `main()`.
-4. Generate that setup from `cppboot create`, with a marked service in the template.
+- `cppboot-codegen` installed with the SDK, with its own copy of Clang's built-in headers
+- `cppboot_generate_components()`, which runs the generator during a project's build
+- `cppboot::runApplication()`, which connects the container to the application
+- A `cppboot create` template that uses all of this, with a marked service and module
 
 ## Done when
 
-A project created by `cppboot create` can add a class marked with `CPPBOOT_SERVICE` and have it created and injected, with no registration code written by hand. This has to pass on Linux and Windows.
+A project created by `cppboot create` can add a class marked with `CPPBOOT_SERVICE` and have it created and injected, with no registration code written by hand. The end-to-end test checks exactly this, and that a missing dependency fails the build.
+
+## Left for later
+
+See "Not included yet" in [004](../architecture/004-dependency-injection.md) and "Known limits" in [009](../architecture/009-code-generation.md).
 
 ## Next
 

@@ -1,10 +1,10 @@
 # 009: Code generation
 
-**Status:** Prototype. The approach is proven for services, but the tool isn't installed or available through the `cppboot` CLI yet.
+**Status:** Accepted for services. Controllers and routes arrive with Phase 3.
 
-## Question
+## Context
 
-C++20 can't list a class's constructor parameters, so CppBoot needs a source code generator for dependency injection. The prototype tests whether a generator can read marked classes reliably and produce code that compiles and works.
+C++20 can't list a class's constructor parameters, so CppBoot needs a source code generator for dependency injection. A prototype came first, to test whether a generator could read marked classes reliably and produce code that compiles and works. It could, so the generator now ships with the SDK.
 
 ## How it works
 
@@ -28,7 +28,7 @@ A marked class must meet all of these rules, and the generator reports an error 
 - It has one public constructor, not counting copy and move constructors, or no declared constructor at all.
 - Every constructor parameter is a `std::shared_ptr` to a component, by value or by reference.
 
-A component can be requested by its own type or by any abstract base class it publicly inherits from directly.
+A component can be requested by its own type or by any abstract base class it publicly inherits from directly. The exception is `cppboot::Module`. An application has many modules, so they join a group that `runApplication` reads with `resolveAll`, and can't be injected through that interface.
 
 The generator also rejects missing dependencies, two providers of the same type and dependency cycles, so these become build errors rather than runtime failures.
 
@@ -39,15 +39,19 @@ The generator also rejects missing dependencies, two providers of the same type 
 | Accuracy | It reads namespaces, type aliases, `const` and references correctly, because it uses Clang's own parser rather than text matching |
 | Speed | About 0.8 seconds for one header that includes `<memory>`, on Windows. A project with many headers will need caching or parallel runs |
 | Generated code | It compiles with GCC and Clang and connects real objects in the tests, using only the public API of `cppboot::di::Container` |
-| Built-in headers | libclang can't always find its built-in headers when loaded as a library, so the build passes `-resource-dir` explicitly |
+| Built-in headers | libclang can't always find its built-in headers when loaded as a library, so the tool passes `-resource-dir` explicitly |
+
+## Packaging
+
+The SDK installs a copy of Clang's built-in headers, about 15 MB, in `lib/cppboot/clang`. The installed tool finds them relative to its own location, and they're always the same version as the libclang it was built with. When running from a build folder, it uses the path found at build time.
+
+`cppboot_generate_components()` runs the tool during the build, and passes it the target's include folders. A project made by `cppboot create` calls it with every `.hpp` file in `src`, so files are found automatically. Changing a listed header runs the generator again.
 
 ## Known limits
 
-- **Path in the binary:** the `-resource-dir` path is fixed at build time, which won't work for an installed tool on another machine. Packaging has to solve this.
+- **libclang is still required:** the installed tool links to libclang as a shared library, so that has to be on the machine. The SDK isn't a standalone download yet.
+- **Build time:** each listed header adds a libclang parse to the build, including headers with no marked classes. This will need caching or parallel runs as projects grow.
+- **Changes in included files:** only listed headers trigger the generator, so a change in a header outside `src` that affects a constructor won't run it again.
 - **Absolute includes:** generated headers include their inputs by absolute path, so they can't be moved between machines. That's acceptable because they are build output.
 - **Interfaces:** only direct abstract base classes count, and each interface can have only one provider. Choosing between providers needs a qualifier feature.
 - **Services only:** controllers and routes aren't implemented.
-
-## Decision
-
-Build dependency injection on this approach. The container's API must not require generated code, so that components can also be registered by hand and Phase 2 can be tested on its own.

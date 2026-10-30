@@ -14,6 +14,7 @@ option(CPPBOOT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 include(cmake/CompilerOptions.cmake)
 include(cmake/CppBootTargets.cmake)
+include(cmake/CppBootCodegen.cmake)
 
 find_package(Threads REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
@@ -25,6 +26,7 @@ add_subdirectory(framework/config)
 add_subdirectory(framework/logging)
 add_subdirectory(framework/core)
 add_subdirectory(framework/di)
+add_subdirectory(framework/boot)
 add_subdirectory(tools/cli)
 
 if(CPPBOOT_BUILD_CODEGEN)

@@ -17,8 +17,11 @@ A name must start with a letter and can contain letters, digits, `-` and `_`. Na
 ├── README.md
 ├── .gitignore
 └── src/
-    └── main.cpp
+    ├── main.cpp
+    └── greeting.hpp
 ```
+
+The project builds every `.cpp` file in `src`, and generates component registration from every `.hpp` file in `src`. New files are picked up automatically.
 
 ### `cppboot build`
 

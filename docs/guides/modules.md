@@ -31,7 +31,15 @@ public:
 | `dependencies()` | No | The modules that must start first |
 | `stop()` | No | Releases resources. It must not throw |
 
-Register modules before calling `run()`, in any order:
+To register a module automatically, mark it with `CPPBOOT_SERVICE`. It can then take other components in its constructor, as the [dependency injection guide](dependency-injection.md) explains:
+
+```cpp
+class CPPBOOT_SERVICE CacheModule : public cppboot::Module {
+    // ...
+};
+```
+
+To register modules by hand, add them before calling `run()`, in any order:
 
 ```cpp
 cppboot::Application app(argc, argv);

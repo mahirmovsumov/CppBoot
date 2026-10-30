@@ -15,7 +15,8 @@ namespace fs = std::filesystem;
 using namespace cppboot;
 
 constexpr std::string_view kUsage =
-    "Usage: cppboot-codegen --output <file> <header>... [-- <compiler arguments>...]\n";
+    "Usage: cppboot-codegen --output <file> [<header>...] [-- <compiler arguments>...]\n"
+    "       cppboot-codegen --print-resource-dir\n";
 
 Result<void> generate(const fs::path& output, const std::vector<fs::path>& headers,
                       const std::vector<std::string>& compiler_arguments) {
@@ -62,6 +63,10 @@ int main(int argc, char* argv[]) {
             compiler_arguments.assign(argv + i + 1, argv + argc);
             break;
         }
+        if (argument == "--print-resource-dir") {
+            std::cout << codegen::clangResourceDirectory() << '\n';
+            return 0;
+        }
         if (argument == "--output" && i + 1 < argc) {
             output = argv[++i];
         } else {
@@ -69,7 +74,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (output.empty() || headers.empty()) {
+    if (output.empty()) {
         std::cerr << kUsage;
         return 2;
     }

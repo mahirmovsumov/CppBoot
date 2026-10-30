@@ -62,6 +62,9 @@ Result<void> validateComponents(const std::vector<Component>& components) {
             return added;
         }
         for (const std::string& interface_type : component.interfaces) {
+            if (interface_type == kModuleInterface) {
+                continue;
+            }
             if (auto added = addProvider(providers, interface_type, component); !added) {
                 return added;
             }
@@ -111,7 +114,9 @@ std::string renderRegistration(const std::vector<Component>& components,
         text += ">{});\n";
 
         for (const std::string& interface_type : component.interfaces) {
-            text += "    container.bind<" + interface_type + ", " + component.type + ">();\n";
+            text += interface_type == kModuleInterface ? "    container.bindAll<"
+                                                       : "    container.bind<";
+            text += interface_type + ", " + component.type + ">();\n";
         }
     }
 

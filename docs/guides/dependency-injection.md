@@ -2,7 +2,62 @@
 
 Dependency injection means a class receives the objects it needs instead of creating them. `cppboot::di::Container` creates your components, passes each one its dependencies and manages how long they live.
 
-Today you register components by hand, as shown here. Automatic registration with `CPPBOOT_SERVICE` works in the code generator prototype, but it isn't available in the installed SDK yet.
+There are two ways to register components. Most applications should mark their classes and let CppBoot generate the registration, and you can still register by hand when you need more control.
+
+## Automatic registration
+
+Mark a class with `CPPBOOT_SERVICE`, and take the components it needs as `std::shared_ptr` constructor parameters:
+
+```cpp
+class CPPBOOT_SERVICE MemoryUserRepository : public UserRepository {
+public:
+    std::string findName(int id) const override;
+};
+
+class CPPBOOT_SERVICE UserService {
+public:
+    explicit UserService(std::shared_ptr<UserRepository> repository);
+};
+```
+
+A project made by `cppboot create` generates the registration during its build, from every `.hpp` file in `src`. A project with its own CMake setup calls this:
+
+```cmake
+target_link_libraries(my-app PRIVATE cppboot::boot)
+cppboot_generate_components(my-app HEADERS src/services.hpp)
+```
+
+Then include the generated header, and pass its function to `runApplication`:
+
+```cpp
+#include <cppboot/boot.hpp>
+
+#include "cppboot_components.generated.hpp"
+
+int main(int argc, char* argv[]) {
+    return cppboot::runApplication(argc, argv, cppboot::generated::registerComponents);
+}
+```
+
+### Rules for marked classes
+
+The build fails with the file and line if a marked class breaks one of these rules:
+
+- It can't be abstract or a template, or be in an anonymous namespace.
+- It needs one public constructor, not counting copy and move constructors, or none at all.
+- Every constructor parameter must be a `std::shared_ptr` to a component, by value or by reference.
+
+The build also fails on a missing dependency, a dependency cycle, or two components that provide the same type.
+
+### What marked classes get
+
+- All marked classes are singletons, created on first use.
+- Other components can ask for a marked class by its own type, or by an abstract base class it directly and publicly inherits from.
+- A marked class that derives from `cppboot::Module` starts and stops with the application, so it's created at startup.
+
+A component can't take settings or the logger in its constructor yet. Modules get both through the context in `start()`, and can pass them on to the components they use.
+
+## Manual registration
 
 ## Example
 
@@ -92,6 +147,13 @@ container.registerInstance(std::make_shared<Clock>());
 // Make a registered component available through an interface too. Both share one instance.
 container.registerSingleton<MemoryUserRepository>();
 container.bind<UserRepository, MemoryUserRepository>();
+
+// Add components to a group, for an interface with many implementations.
+container.registerSingleton<EmailNotifier>();
+container.registerSingleton<SmsNotifier>();
+container.bindAll<Notifier, EmailNotifier>();
+container.bindAll<Notifier, SmsNotifier>();
+auto notifiers = container.resolveAll<Notifier>();
 ```
 
 Registering the same type twice throws `cppboot::Exception`.

@@ -61,6 +61,28 @@ TEST(ValidateComponentsTest, AllowsSharedDependencies) {
     }));
 }
 
+TEST(ValidateComponentsTest, AllowsManyModules) {
+    EXPECT_TRUE(validateComponents({
+        {"First", "a.hpp:1", {"cppboot::Module"}, {}},
+        {"Second", "a.hpp:2", {"cppboot::Module"}, {}},
+    }));
+}
+
+TEST(ValidateComponentsTest, ModulesCannotBeInjectedByTheirInterface) {
+    EXPECT_FALSE(validateComponents({
+        {"First", "a.hpp:1", {"cppboot::Module"}, {}},
+        {"Needs", "a.hpp:2", {}, {"cppboot::Module"}},
+    }));
+}
+
+TEST(RenderRegistrationTest, AddsModulesToTheirGroup) {
+    const std::string text =
+        renderRegistration({{"ns::Worker", "a.hpp:1", {"cppboot::Module"}, {}}}, {});
+
+    EXPECT_NE(text.find("container.bindAll<cppboot::Module, ns::Worker>();"), std::string::npos);
+    EXPECT_EQ(text.find("container.bind<cppboot::Module"), std::string::npos);
+}
+
 TEST(RenderRegistrationTest, WritesIncludesInterfacesAndArguments) {
     const std::string text = renderRegistration(
         {

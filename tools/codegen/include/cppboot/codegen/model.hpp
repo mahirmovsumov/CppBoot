@@ -1,11 +1,16 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "cppboot/base/result.hpp"
 
 namespace cppboot::codegen {
+
+/// A component with this interface is added to a group rather than bound to the interface, since
+/// an application has many modules.
+inline constexpr std::string_view kModuleInterface = "cppboot::Module";
 
 /// A class marked for registration. Type names are fully qualified.
 struct Component {

@@ -73,6 +73,23 @@ void Container::add(std::type_index type, Lifetime lifetime,
     }
 }
 
+void Container::addToGroup(std::type_index group, std::type_index member, ErasedFactory factory) {
+    const std::lock_guard lock{mutex_};
+    groups_[group].push_back(GroupMember{member, std::move(factory)});
+}
+
+std::vector<Container::ErasedFactory> Container::groupMembers(std::type_index group) const {
+    const std::lock_guard lock{mutex_};
+
+    std::vector<ErasedFactory> factories;
+    if (const auto entry = groups_.find(group); entry != groups_.end()) {
+        for (const GroupMember& member : entry->second) {
+            factories.push_back(member.factory);
+        }
+    }
+    return factories;
+}
+
 bool Container::contains(std::type_index type) const {
     const std::lock_guard lock{mutex_};
     return registrations_.contains(type);
@@ -170,6 +187,16 @@ Result<void> Container::validate() const {
             if (!registrations_.contains(dependency)) {
                 return Error{ErrorCode::DependencyError,
                              typeName(type) + " needs " + typeName(dependency) +
+                                 ", which isn't registered"};
+            }
+        }
+    }
+
+    for (const auto& [group, members] : groups_) {
+        for (const GroupMember& member : members) {
+            if (!registrations_.contains(member.type)) {
+                return Error{ErrorCode::DependencyError,
+                             "Group " + typeName(group) + " includes " + typeName(member.type) +
                                  ", which isn't registered"};
             }
         }

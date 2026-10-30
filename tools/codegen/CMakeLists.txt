@@ -46,10 +46,21 @@ target_compile_definitions(cppboot-codegen-lib PRIVATE
 )
 target_link_libraries(cppboot-codegen-lib
     PUBLIC cppboot::base
-    PRIVATE ${CPPBOOT_LIBCLANG_LIBRARY}
+    PRIVATE
+        cppboot::platform
+        ${CPPBOOT_LIBCLANG_LIBRARY}
 )
 cppboot_apply_compiler_options(cppboot-codegen-lib)
 
 add_executable(cppboot-codegen src/main.cpp)
+add_executable(cppboot::codegen ALIAS cppboot-codegen)
+set_target_properties(cppboot-codegen PROPERTIES EXPORT_NAME codegen)
 target_link_libraries(cppboot-codegen PRIVATE cppboot-codegen-lib)
 cppboot_apply_compiler_options(cppboot-codegen)
+
+# The installed tool finds this copy relative to itself, so it doesn't rely on a build-time path.
+install(TARGETS cppboot-codegen
+    EXPORT CppBootTargets
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(DIRECTORY ${libclang_resource_dir}/include DESTINATION lib/cppboot/clang)

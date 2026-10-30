@@ -5,8 +5,11 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
+
+#include "cppboot/platform/process.hpp"
 
 namespace cppboot::codegen {
 
@@ -203,10 +206,23 @@ std::string collectErrors(CXTranslationUnit unit) {
 
 }  // namespace
 
+std::string clangResourceDirectory() {
+    if (auto executable = platform::executablePath()) {
+        const auto installed =
+            executable.value().parent_path().parent_path() / "lib" / "cppboot" / "clang";
+        std::error_code ignored;
+        if (std::filesystem::exists(installed / "include" / "stddef.h", ignored)) {
+            return installed.generic_string();
+        }
+    }
+    return CPPBOOT_LIBCLANG_RESOURCE_DIR;
+}
+
 Result<std::vector<Component>> parseComponents(const std::filesystem::path& header,
                                                const std::vector<std::string>& compiler_arguments) {
+    const std::string resource_directory = clangResourceDirectory();
     std::vector<const char*> arguments = {
-        "-x", "c++", "-std=c++20", "-DCPPBOOT_CODEGEN", "-resource-dir", CPPBOOT_LIBCLANG_RESOURCE_DIR,
+        "-x", "c++", "-std=c++20", "-DCPPBOOT_CODEGEN", "-resource-dir", resource_directory.c_str(),
     };
     for (const std::string& argument : compiler_arguments) {
         arguments.push_back(argument.c_str());

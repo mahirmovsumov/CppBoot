@@ -38,13 +38,16 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot::di::Container`, with singleton, transient, scoped and external lifetimes.
 - Registration by declared dependencies, factories, existing instances and interface bindings.
 - `validate()`, which finds missing dependencies, cycles and singletons that depend on scoped components, without creating anything.
+- Groups for interfaces with many implementations, with `bindAll` and `resolveAll`.
 - Clear errors instead of a stack overflow when resolving a cycle, and thread-safe resolution.
+- `cppboot::runApplication()`, which registers components, validates them and starts every component that's a module.
 
-### Code generator (prototype)
+### Code generator
 
 - `cppboot-codegen`, which reads classes marked with `CPPBOOT_SERVICE` and generates code that registers them with the container.
 - Build-time errors for missing dependencies, duplicate providers and dependency cycles.
-- Not yet installed or available through the `cppboot` CLI.
+- Installed with the SDK, along with `cppboot_generate_components()` for running it during a build.
+- Projects made by `cppboot create` now use it: add a marked class in `src`, and it's created and injected with no registration code.
 
 ### Project setup
 

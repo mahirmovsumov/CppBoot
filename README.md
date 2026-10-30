@@ -30,6 +30,15 @@ cd hello-world
 cppboot run
 ```
 
+Add a class marked with `CPPBOOT_SERVICE` to `src`, and CppBoot creates it and passes in its dependencies, with no registration code to write:
+
+```cpp
+class CPPBOOT_SERVICE UserService {
+public:
+    explicit UserService(std::shared_ptr<UserRepository> repository);
+};
+```
+
 Press Ctrl+C to stop the application. `cppboot run` builds the project first and returns the application's exit code. Anything after `run` goes to the application, such as `cppboot run --cppboot.logging.level=debug`.
 
 ## Run the example

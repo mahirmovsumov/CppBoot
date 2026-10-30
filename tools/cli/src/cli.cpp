@@ -46,7 +46,7 @@ struct ProjectFile {
 };
 
 // "@NAME@" is replaced with the project name.
-constexpr std::array<ProjectFile, 5> kProjectFiles = {{
+constexpr std::array<ProjectFile, 6> kProjectFiles = {{
     {"CMakeLists.txt", R"(cmake_minimum_required(VERSION 3.25)
 
 project(@NAME@ LANGUAGES CXX)
@@ -58,8 +58,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(CppBoot CONFIG REQUIRED)
 
-add_executable(@NAME@ src/main.cpp)
-target_link_libraries(@NAME@ PRIVATE cppboot::core cppboot::di)
+file(GLOB_RECURSE sources CONFIGURE_DEPENDS src/*.cpp)
+file(GLOB_RECURSE headers CONFIGURE_DEPENDS src/*.hpp)
+
+add_executable(@NAME@ ${sources})
+target_link_libraries(@NAME@ PRIVATE cppboot::boot)
+cppboot_generate_components(@NAME@ HEADERS ${headers})
 )"},
     {"cppboot.yaml", R"(cppboot:
   application:
@@ -68,12 +72,44 @@ target_link_libraries(@NAME@ PRIVATE cppboot::core cppboot::di)
   logging:
     level: info
 )"},
-    {"src/main.cpp", R"(#include <cppboot/cppboot.hpp>
+    {"src/main.cpp", R"(#include <cppboot/boot.hpp>
+
+#include "cppboot_components.generated.hpp"
 
 int main(int argc, char* argv[]) {
-    cppboot::Application app(argc, argv);
-    return app.run();
+    return cppboot::runApplication(argc, argv, cppboot::generated::registerComponents);
 }
+)"},
+    {"src/greeting.hpp", R"(#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <memory>
+#include <string>
+#include <utility>
+
+// CPPBOOT_SERVICE makes a class a component. CppBoot reads its constructor, creates it and passes
+// in the components it needs, so there's no registration code to write.
+class CPPBOOT_SERVICE GreetingService {
+public:
+    std::string greeting() const { return "Hello from CppBoot!"; }
+};
+
+// A component that derives from cppboot::Module also starts and stops with the application.
+class CPPBOOT_SERVICE GreetingModule : public cppboot::Module {
+public:
+    explicit GreetingModule(std::shared_ptr<GreetingService> greetings)
+        : greetings_(std::move(greetings)) {}
+
+    std::string_view name() const noexcept override { return "greeting"; }
+
+    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
+        context.logger().info("{}", greetings_->greeting());
+        return {};
+    }
+
+private:
+    std::shared_ptr<GreetingService> greetings_;
+};
 )"},
     {".gitignore", R"(build/
 )"},
