@@ -64,6 +64,23 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `WithStatus<T>`, for sending a JSON value with a status other than 200.
 - `cppboot create --web`, which creates a project with a sample controller.
 
+### Database
+
+- `cppboot::data::Database`, with PostgreSQL and SQLite drivers behind one interface.
+- A connection pool with limits, timeouts and health checks.
+- Parameterized queries using `$1`, `$2` and so on for both databases, which prevents SQL injection.
+- `transaction()`, which commits when a function returns and rolls back when it throws.
+- `CPPBOOT_ROW`, which generates reading a struct from a query result.
+- Migrations: numbered SQL files applied at startup, each in a transaction, with checks for edited, missing and out-of-order files.
+- `DatabaseError`, with a kind for each failure, such as a unique violation.
+- Components can take `Database` in their constructors, and it's set up automatically from settings under `cppboot.database`.
+- `cppboot create --web --sqlite` and `--postgresql`.
+- `cppboot.database.url` is hidden in configuration logs, and left out of CppBoot's error messages.
+
+### Fixes
+
+- Routes with no parameters no longer generate an unused variable, which broke builds using `-Werror`.
+
 ### Project setup
 
 - CMake presets for debug, release and the sanitizers.

@@ -159,6 +159,37 @@ TEST(RenderRegistrationTest, WritesJsonConversions) {
     EXPECT_EQ(text.find("Router"), std::string::npos);
 }
 
+TEST(RenderRegistrationTest, LeavesOutTheDatabaseWhenNotNeeded) {
+    Declarations declarations;
+    declarations.components = {{"Service", "a.hpp:1", {}, {}}};
+    EXPECT_EQ(renderRegistration(declarations, {}).find("cppboot/data"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, RegistersTheDatabaseBeforeOtherModules) {
+    Declarations declarations;
+    declarations.components = {{"Worker", "a.hpp:1", {"cppboot::Module"}, {}}};
+    declarations.row_types = {{"ns::User", "a.hpp:2", {{"id", false}, {"name", false}}}};
+    const std::string text = renderRegistration(declarations, {});
+
+    EXPECT_NE(text.find("cppboot/data/database.hpp"), std::string::npos);
+    EXPECT_NE(text.find("row_mappers->add<ns::User>"), std::string::npos);
+    EXPECT_NE(text.find("row.read(\"id\", value.id);"), std::string::npos);
+
+    const auto database_module = text.find("bindAll<cppboot::Module, cppboot::data::DatabaseModule>");
+    const auto worker = text.find("bindAll<cppboot::Module, Worker>");
+    ASSERT_NE(database_module, std::string::npos);
+    ASSERT_NE(worker, std::string::npos);
+    EXPECT_LT(database_module, worker);
+}
+
+TEST(RenderRegistrationTest, DependingOnTheDatabaseRegistersIt) {
+    Declarations declarations;
+    declarations.components = {{"Repo", "a.hpp:1", {}, {"cppboot::data::Database"}}};
+    EXPECT_TRUE(validateDeclarations(declarations));
+    EXPECT_NE(renderRegistration(declarations, {}).find("Database::fromSettings"),
+              std::string::npos);
+}
+
 TEST(RenderRegistrationTest, WritesRoutesForEachReturnKindAndSource) {
     Route value = makeRoute("Get", "/users/{id}");
     value.function = "get";

@@ -139,6 +139,31 @@ run_cli(code output ${WORK_DIR}/demo-api run
 expect_exit_code("${code}" 0 "run a web project" "${output}")
 expect_contains("${output}" "Server listening on port" "run a web project")
 
+# A database project has to apply its migration on the first run, and only then.
+run_cli(code output ${WORK_DIR} create demo-store --web --sqlite)
+expect_exit_code("${code}" 0 "create --sqlite" "${output}")
+run_cli(code output ${WORK_DIR}/demo-store run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run a database project" "${output}")
+expect_contains("${output}" "Applied 1 new database migrations" "run a database project")
+expect_contains("${output}" "Server listening on port" "run a database project")
+run_cli(code output ${WORK_DIR}/demo-store run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run a database project again" "${output}")
+expect_contains("${output}" "Applied 0 new database migrations" "run a database project again")
+
+# A database that can't be reached has to stop startup, without showing the password.
+run_cli(code output ${WORK_DIR}/demo-store run
+    "--cppboot.database.url=postgresql://user:hunter2@127.0.0.1:1/absent?connect_timeout=2"
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+if(code EQUAL 0)
+    message(FATAL_ERROR "run with a bad database: expected a failure:\n${output}")
+endif()
+string(FIND "${output}" "hunter2" password_position)
+if(NOT password_position EQUAL -1)
+    message(FATAL_ERROR "run with a bad database: the output shows the password:\n${output}")
+endif()
+
 run_cli(code output ${WORK_DIR} build)
 expect_exit_code("${code}" 1 "build outside a project" "${output}")
 expect_contains("${output}" "No CppBoot project here" "build outside a project")

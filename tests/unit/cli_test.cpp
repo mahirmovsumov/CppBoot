@@ -73,7 +73,37 @@ TEST_F(CliTest, PlainProjectHasNoWebParts) {
     EXPECT_FALSE(std::filesystem::exists(root / "src" / "users.hpp"));
     EXPECT_EQ(readFile(root / "CMakeLists.txt").find("cppboot::web"), std::string::npos);
     EXPECT_EQ(readFile(root / "cppboot.yaml").find("server:"), std::string::npos);
-    EXPECT_EQ(readFile(root / "cppboot.yaml").find("@SERVER@"), std::string::npos);
+    EXPECT_EQ(readFile(root / "cppboot.yaml").find("@"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(root / "db"));
+}
+
+TEST_F(CliTest, SqliteProjectHasAMigrationAndSettings) {
+    ASSERT_TRUE(createProject("store", directory_, cppboot::cli::ProjectKind::WebSqlite));
+
+    const auto root = directory_ / "store";
+    EXPECT_NE(readFile(root / "cppboot.yaml").find("url: sqlite:store.db"), std::string::npos);
+    EXPECT_NE(readFile(root / "cppboot.yaml").find("port: 8080"), std::string::npos);
+    EXPECT_NE(readFile(root / "CMakeLists.txt").find("cppboot::data"), std::string::npos);
+    EXPECT_NE(readFile(root / "src" / "users.hpp").find("CPPBOOT_ROW"), std::string::npos);
+    EXPECT_NE(readFile(root / "db" / "migrations" / "001_create_users.sql").find("INTEGER PRIMARY"),
+              std::string::npos);
+}
+
+TEST_F(CliTest, PostgresqlProjectUsesItsOwnSettingsAndColumnType) {
+    ASSERT_TRUE(createProject("store", directory_, cppboot::cli::ProjectKind::WebPostgresql));
+
+    const auto root = directory_ / "store";
+    EXPECT_NE(readFile(root / "cppboot.yaml").find("localhost:5432/store"), std::string::npos);
+    EXPECT_NE(readFile(root / "db" / "migrations" / "001_create_users.sql").find("BIGSERIAL"),
+              std::string::npos);
+}
+
+TEST_F(CliTest, DatabaseOptionsNeedWebAndCannotBeCombined) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cppboot::cli::run({"create", "a", "--sqlite"}, out, err), cppboot::cli::kExitUsage);
+    EXPECT_EQ(cppboot::cli::run({"create", "a", "--web", "--sqlite", "--postgresql"}, out, err),
+              cppboot::cli::kExitUsage);
 }
 
 TEST_F(CliTest, WebProjectHasAControllerAndServerSettings) {

@@ -57,7 +57,7 @@ The build also fails on a missing dependency, a dependency cycle, or two compone
 
 ### Settings and logging
 
-A marked class can also take the application's settings and logger in its constructor. `runApplication` provides both, so you don't have to register them:
+A marked class can also take the application's settings and logger in its constructor, and the [database](database.md). You don't have to register any of these:
 
 ```cpp
 class CPPBOOT_SERVICE UserService {

@@ -48,6 +48,15 @@ endif()
 cppboot_apply_compiler_options(cppboot-web-tests)
 add_test(NAME cppboot-web-tests COMMAND cppboot-web-tests)
 
+# PostgreSQL tests run only if CPPBOOT_TEST_POSTGRESQL_URL names a test database.
+add_executable(cppboot-data-tests data/data_test.cpp)
+target_link_libraries(cppboot-data-tests PRIVATE
+    cppboot::data
+    GTest::gtest_main
+)
+cppboot_apply_compiler_options(cppboot-data-tests)
+add_test(NAME cppboot-data-tests COMMAND cppboot-data-tests)
+
 if(CPPBOOT_BUILD_CODEGEN)
     add_executable(cppboot-codegen-tests
         codegen/model_test.cpp
@@ -83,6 +92,19 @@ if(CPPBOOT_BUILD_CODEGEN)
     )
     cppboot_apply_compiler_options(cppboot-generated-controller-tests)
     add_test(NAME cppboot-generated-controller-tests COMMAND cppboot-generated-controller-tests)
+
+    add_executable(cppboot-generated-repository-tests codegen/repository_test.cpp)
+    target_link_libraries(cppboot-generated-repository-tests PRIVATE
+        cppboot::boot
+        cppboot::data
+        cppboot::web
+        GTest::gtest_main
+    )
+    cppboot_generate_components(cppboot-generated-repository-tests
+        HEADERS codegen/sample_repository.hpp
+    )
+    cppboot_apply_compiler_options(cppboot-generated-repository-tests)
+    add_test(NAME cppboot-generated-repository-tests COMMAND cppboot-generated-repository-tests)
 
     # Installs the framework, then creates, builds and runs a project using the installed CLI.
     add_test(NAME cppboot-cli-end-to-end

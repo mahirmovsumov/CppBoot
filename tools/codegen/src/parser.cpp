@@ -18,6 +18,7 @@ namespace {
 
 constexpr std::string_view kServiceAnnotation = "cppboot:service";
 constexpr std::string_view kJsonAnnotation = "cppboot:json";
+constexpr std::string_view kRowAnnotation = "cppboot:row";
 constexpr std::string_view kControllerPrefix = "cppboot:controller:";
 constexpr std::string_view kRoutePrefix = "cppboot:route:";
 constexpr std::string_view kAnyPrefix = "cppboot:";
@@ -249,29 +250,30 @@ Result<Component> readComponent(CXCursor cursor) {
     return component;
 }
 
-Result<JsonType> readJsonType(CXCursor cursor) {
-    JsonType json_type;
-    json_type.type = qualifiedName(clang_getCursorType(cursor));
-    json_type.location = locationOf(cursor);
+Result<MappedStruct> readMappedStruct(CXCursor cursor, std::string_view macro) {
+    const std::string macro_name{macro};
 
-    if (json_type.type.find("(anonymous") != std::string::npos) {
-        return errorAt(cursor, json_type.type + " can't be marked with CPPBOOT_JSON because "
-                                                "generated code can't name it");
+    MappedStruct mapped;
+    mapped.type = qualifiedName(clang_getCursorType(cursor));
+    mapped.location = locationOf(cursor);
+
+    if (mapped.type.find("(anonymous") != std::string::npos) {
+        return errorAt(cursor, mapped.type + " can't be marked with " + macro_name +
+                                   " because generated code can't name it");
     }
 
     std::optional<Error> error;
     visitChildren(cursor, [&](CXCursor child) {
         const CXCursorKind kind = clang_getCursorKind(child);
         if (kind == CXCursor_CXXBaseSpecifier) {
-            error = errorAt(child, json_type.type +
-                                       " can't have base classes, because CPPBOOT_JSON only "
-                                       "converts its own fields");
+            error = errorAt(child, mapped.type + " can't have base classes, because " + macro_name +
+                                       " only converts its own fields");
         } else if (kind == CXCursor_FieldDecl) {
             if (clang_getCXXAccessSpecifier(child) != CX_CXXPublic) {
-                error = errorAt(child, "Field '" + spelling(child) + "' of " + json_type.type +
-                                           " must be public for CPPBOOT_JSON");
+                error = errorAt(child, "Field '" + spelling(child) + "' of " + mapped.type +
+                                           " must be public for " + macro_name);
             } else {
-                json_type.fields.push_back(JsonField{
+                mapped.fields.push_back(StructField{
                     spelling(child),
                     isOptionalType(clang_getCanonicalType(clang_getCursorType(child))),
                 });
@@ -283,7 +285,7 @@ Result<JsonType> readJsonType(CXCursor cursor) {
     if (error) {
         return *std::move(error);
     }
-    return json_type;
+    return mapped;
 }
 
 Result<std::vector<RouteParameter>> readRouteParameters(CXCursor method, const std::string& path) {
@@ -464,12 +466,21 @@ void readClass(CXCursor cursor, Walk& walk) {
     }
 
     if (hasAnnotation(annotations, kJsonAnnotation)) {
-        auto json_type = readJsonType(cursor);
+        auto json_type = readMappedStruct(cursor, "CPPBOOT_JSON");
         if (!json_type) {
             walk.error = json_type.error();
             return;
         }
         walk.declarations.json_types.push_back(std::move(json_type).value());
+    }
+
+    if (hasAnnotation(annotations, kRowAnnotation)) {
+        auto row_type = readMappedStruct(cursor, "CPPBOOT_ROW");
+        if (!row_type) {
+            walk.error = row_type.error();
+            return;
+        }
+        walk.declarations.row_types.push_back(std::move(row_type).value());
     }
 }
 

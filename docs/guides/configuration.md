@@ -89,4 +89,4 @@ if (!enabled) {
 
 ## Sensitive values
 
-At `debug` level, CppBoot logs all settings at startup. Values are hidden if their key contains `password`, `secret`, `token`, `credential`, `private_key` or `api_key`. Use one of those words in the name of any key that holds a secret.
+At `debug` level, CppBoot logs all settings at startup. Values are hidden if their key contains `password`, `secret`, `token`, `credential`, `private_key`, `api_key` or `database.url`. Use one of those words in the name of any key that holds a secret.

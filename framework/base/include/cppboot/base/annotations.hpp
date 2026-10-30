@@ -15,6 +15,10 @@
 /// Generates JSON conversion for a struct: struct CPPBOOT_JSON User { int id; std::string name; };
 #define CPPBOOT_JSON CPPBOOT_ANNOTATE("cppboot:json")
 
+/// Generates reading a struct from a query result, with fields matched to columns by name:
+/// struct CPPBOOT_ROW User { int id; std::string name; };
+#define CPPBOOT_ROW CPPBOOT_ANNOTATE("cppboot:row")
+
 /// Makes a class a component whose marked functions handle requests under a base path:
 /// class CPPBOOT_CONTROLLER("/api/users") UserController { ... };
 #define CPPBOOT_CONTROLLER(path) CPPBOOT_ANNOTATE("cppboot:controller:" path)

@@ -25,6 +25,7 @@ constexpr std::string_view kUsage = R"(Usage: cppboot <command> [arguments]
 Commands:
   create <name>     Create a new project in a new folder
                     Add --web for a web API with a sample controller
+                    Add --sqlite or --postgresql with --web to store its data in a database
   build             Build the project in the current folder
   run [arguments]   Build and run the project, passing arguments to the application
   info              Show version and installation details
@@ -41,7 +42,7 @@ constexpr std::array<std::string_view, 30> kReservedNames = {
     "lpt4", "lpt5",  "lpt6", "lpt7",    "lpt8", "lpt9",
 };
 
-enum class ProjectFiles { Always, PlainOnly, WebOnly };
+enum class ProjectFiles { Always, PlainOnly, WebWithoutDatabase, WithDatabase };
 
 struct ProjectFile {
     std::string_view path;
@@ -55,9 +56,22 @@ constexpr std::string_view kWebSettings = R"(
     port: 8080
 )";
 
-// "@NAME@" is replaced with the project name. "@LIBRARIES@" and "@SERVER@" depend on the project
-// kind.
-constexpr std::array<ProjectFile, 7> kProjectFiles = {{
+constexpr std::string_view kSqliteSettings = R"(
+  database:
+    url: sqlite:@NAME@.db
+    migrations: db/migrations
+)";
+
+// A local development default. Set CPPBOOT_DATABASE_URL to keep real credentials out of this file.
+constexpr std::string_view kPostgresqlSettings = R"(
+  database:
+    url: postgresql://postgres:postgres@localhost:5432/@NAME@
+    migrations: db/migrations
+)";
+
+// "@NAME@" is replaced with the project name. "@LIBRARIES@", "@SETTINGS@" and "@ID_COLUMN@" depend
+// on the project kind.
+constexpr std::array<ProjectFile, 9> kProjectFiles = {{
     {"CMakeLists.txt", R"(cmake_minimum_required(VERSION 3.25)
 
 project(@NAME@ LANGUAGES CXX)
@@ -82,7 +96,7 @@ cppboot_generate_components(@NAME@ HEADERS ${headers})
 
   logging:
     level: info
-@SERVER@)"},
+@SETTINGS@)"},
     {"src/main.cpp", R"(#include <cppboot/boot.hpp>
 
 #include "cppboot_components.generated.hpp"
@@ -154,8 +168,87 @@ private:
     std::shared_ptr<UserService> users_;
 };
 )",
-     ProjectFiles::WebOnly},
+     ProjectFiles::WebWithoutDatabase},
+    {"src/users.hpp", R"(#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <cppboot/data/database.hpp>
+#include <cppboot/web/binding.hpp>
+#include <cppboot/web/http.hpp>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+// CPPBOOT_JSON generates the conversion to and from JSON, and CPPBOOT_ROW generates reading it from
+// a query result. Fields match columns by name.
+struct CPPBOOT_JSON CPPBOOT_ROW User {
+    std::int64_t id{0};
+    std::string name;
+};
+
+struct CPPBOOT_JSON NewUser {
+    std::string name;
+};
+
+// Values go in as $1, $2 and so on, never as part of the SQL text, which prevents SQL injection.
+class CPPBOOT_SERVICE UserRepository {
+public:
+    explicit UserRepository(std::shared_ptr<cppboot::data::Database> database)
+        : database_(std::move(database)) {}
+
+    User add(const NewUser& details) {
+        return *database_->queryOne<User>("INSERT INTO users (name) VALUES ($1) RETURNING id, name",
+                                          details.name);
+    }
+
+    std::optional<User> find(std::int64_t id) {
+        return database_->queryOne<User>("SELECT id, name FROM users WHERE id = $1", id);
+    }
+
+    std::vector<User> all() {
+        return database_->queryAs<User>("SELECT id, name FROM users ORDER BY id");
+    }
+
+private:
+    std::shared_ptr<cppboot::data::Database> database_;
+};
+
+class CPPBOOT_CONTROLLER("/api/users") UserController {
+public:
+    explicit UserController(std::shared_ptr<UserRepository> users) : users_(std::move(users)) {}
+
+    CPPBOOT_GET("/") std::vector<User> list() { return users_->all(); }
+
+    CPPBOOT_GET("/{id}") User get(std::int64_t id) {
+        auto user = users_->find(id);
+        if (!user) {
+            throw cppboot::web::HttpError(404, "No user has that ID");
+        }
+        return *user;
+    }
+
+    CPPBOOT_POST("/") cppboot::web::WithStatus<User> create(const NewUser& details) {
+        return {201, users_->add(details)};
+    }
+
+private:
+    std::shared_ptr<UserRepository> users_;
+};
+)",
+     ProjectFiles::WithDatabase},
+    {"db/migrations/001_create_users.sql", R"(CREATE TABLE users (
+    id @ID_COLUMN@,
+    name TEXT NOT NULL
+);
+)",
+     ProjectFiles::WithDatabase},
     {".gitignore", R"(build/
+*.db
+*.db-shm
+*.db-wal
 )"},
     {"README.md", R"(# @NAME@
 
@@ -186,11 +279,43 @@ std::string replaceAll(std::string_view content, std::string_view placeholder,
     }
 }
 
+bool hasDatabase(ProjectKind kind) {
+    return kind == ProjectKind::WebSqlite || kind == ProjectKind::WebPostgresql;
+}
+
 std::string fillTemplate(std::string_view content, std::string_view name, ProjectKind kind) {
-    const bool web = kind == ProjectKind::Web;
-    std::string result = replaceAll(content, "@NAME@", name);
-    result = replaceAll(result, "@LIBRARIES@", web ? "cppboot::boot cppboot::web" : "cppboot::boot");
-    return replaceAll(result, "@SERVER@", web ? kWebSettings : std::string_view{});
+    std::string libraries = "cppboot::boot";
+    std::string settings;
+    if (kind != ProjectKind::Plain) {
+        libraries += " cppboot::web";
+        settings += kWebSettings;
+    }
+    if (hasDatabase(kind)) {
+        libraries += " cppboot::data";
+        settings += kind == ProjectKind::WebSqlite ? kSqliteSettings : kPostgresqlSettings;
+    }
+
+    // Settings go first, because they contain the project name.
+    std::string result = replaceAll(content, "@SETTINGS@", settings);
+    result = replaceAll(result, "@NAME@", name);
+    result = replaceAll(result, "@LIBRARIES@", libraries);
+    return replaceAll(result, "@ID_COLUMN@",
+                      kind == ProjectKind::WebPostgresql ? "BIGSERIAL PRIMARY KEY"
+                                                         : "INTEGER PRIMARY KEY");
+}
+
+bool isIncluded(ProjectFiles included, ProjectKind kind) {
+    switch (included) {
+        case ProjectFiles::Always:
+            return true;
+        case ProjectFiles::PlainOnly:
+            return kind == ProjectKind::Plain;
+        case ProjectFiles::WebWithoutDatabase:
+            return kind == ProjectKind::Web;
+        case ProjectFiles::WithDatabase:
+            return hasDatabase(kind);
+    }
+    return false;
 }
 
 Result<fs::path> findInstallation() {
@@ -328,8 +453,7 @@ Result<void> createProject(std::string_view name, const fs::path& parent, Projec
     }
 
     for (const ProjectFile& file : kProjectFiles) {
-        if ((file.included == ProjectFiles::WebOnly && kind != ProjectKind::Web) ||
-            (file.included == ProjectFiles::PlainOnly && kind != ProjectKind::Plain)) {
+        if (!isIncluded(file.included, kind)) {
             continue;
         }
 
@@ -393,17 +517,37 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
         printInfo(out);
     } else if (command == "create") {
         std::vector<std::string> names;
-        ProjectKind kind = ProjectKind::Plain;
+        bool web = false;
+        bool sqlite = false;
+        bool postgresql = false;
         for (const std::string& argument : rest) {
             if (argument == "--web") {
-                kind = ProjectKind::Web;
+                web = true;
+            } else if (argument == "--sqlite") {
+                sqlite = true;
+            } else if (argument == "--postgresql") {
+                postgresql = true;
             } else {
                 names.push_back(argument);
             }
         }
-        if (names.size() != 1) {
+        if (names.size() != 1 || (sqlite && postgresql)) {
             err << kUsage;
             return kExitUsage;
+        }
+        if ((sqlite || postgresql) && !web) {
+            err << "cppboot: --sqlite and --postgresql need --web, because the sample that uses "
+                   "the database is a web API\n";
+            return kExitUsage;
+        }
+
+        ProjectKind kind = ProjectKind::Plain;
+        if (sqlite) {
+            kind = ProjectKind::WebSqlite;
+        } else if (postgresql) {
+            kind = ProjectKind::WebPostgresql;
+        } else if (web) {
+            kind = ProjectKind::Web;
         }
 
         if (auto created = createProject(names.front(), fs::current_path(), kind); !created) {

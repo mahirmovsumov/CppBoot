@@ -29,6 +29,13 @@ Add `--web` for a web API. The project then has `src/users.hpp`, with a sample c
 cppboot create my-api --web
 ```
 
+Add `--sqlite` or `--postgresql` as well to store the API's data in a database. The project then has a repository in `src/users.hpp`, a migration in `db/migrations`, and database settings in `cppboot.yaml`. These options need `--web`:
+
+```powershell
+cppboot create my-api --web --sqlite
+cppboot create my-api --web --postgresql
+```
+
 ### `cppboot build`
 
 Builds the project in the current folder into `build/`. The first build configures the project as a debug build.

@@ -39,7 +39,18 @@ public:
 };
 ```
 
-There's no HTTPS or database support yet.
+To store data, add `--sqlite` or `--postgresql`. Mark a struct to read it from query results, and CppBoot applies your migrations at startup:
+
+```cpp
+struct CPPBOOT_ROW User {
+    std::int64_t id{0};
+    std::string name;
+};
+
+auto user = database_->queryOne<User>("SELECT * FROM users WHERE id = $1", id);
+```
+
+There's no HTTPS or authentication support yet.
 
 ## Progress
 
@@ -49,7 +60,7 @@ There's no HTTPS or database support yet.
 | 2. Dependency injection | Complete | Marked classes are created and connected automatically |
 | 3. Web framework | Complete | Controllers, JSON, routing, middleware and an HTTP server |
 | 4. Developer experience | Mostly done early | The CLI and generator were needed for Phases 1 and 2 |
-| 5. Database | Not started | PostgreSQL, SQLite, connection pooling, transactions |
+| 5. Database | Complete | PostgreSQL, SQLite, connection pooling, transactions, migrations |
 | 6. Security | Not started | Basic JWT authentication for 1.0 |
 | 7. Enterprise integration | After 1.0 | Redis, Kafka, RabbitMQ and similar |
 | 8. Observability | Not started | Health and metrics endpoints for 1.0 |
@@ -67,10 +78,11 @@ There's no HTTPS or database support yet.
 | Code generator | Reads marked classes and generates their registration | [Code generation](architecture/009-code-generation.md) |
 | `cppboot` CLI | Creates, builds and runs projects | [CLI](guides/cli.md) |
 | Web framework | Serves HTTP with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |
+| Database | Connects to PostgreSQL and SQLite, with pooling, transactions and migrations | [Database](guides/database.md) |
 
 ## How it's tested
 
-Every push runs on Linux with GCC and Clang, on Linux with memory and thread checkers (AddressSanitizer, UBSan and ThreadSanitizer), and on Windows with GCC.
+Every push runs on Linux with GCC and Clang, on Linux with memory and thread checkers (AddressSanitizer, UBSan and ThreadSanitizer), and on Windows with GCC. The database tests run against SQLite everywhere, and against a real PostgreSQL server on Linux.
 
 The tests include an end-to-end test that installs the framework, creates a new project with the CLI, adds a marked class, then builds and runs it. A real Ctrl+C on Windows can't be sent automatically in CI, so that's checked by hand.
 
@@ -90,3 +102,4 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 - Marked classes are always singletons. Transient and scoped components need manual registration.
 - Every header in `src` adds time to the build, because the generator parses each one.
 - A project that uses controllers can't add middleware yet.
+- A struct used with a query but not marked with `CPPBOOT_ROW` fails when it runs, not when it builds.

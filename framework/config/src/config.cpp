@@ -19,8 +19,9 @@ constexpr std::string_view kArgumentPrefix = "--cppboot.";
 constexpr std::string_view kProfileKey = "cppboot.profile";
 constexpr std::string_view kProfileVariable = "CPPBOOT_PROFILE";
 
-constexpr std::array<std::string_view, 6> kSensitiveWords = {
-    "password", "secret", "token", "credential", "private_key", "api_key",
+// A database URL can hold a password, so it counts as sensitive too.
+constexpr std::array<std::string_view, 7> kSensitiveWords = {
+    "password", "secret", "token", "credential", "private_key", "api_key", "database.url",
 };
 
 char toUpper(char c) {

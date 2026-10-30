@@ -18,6 +18,7 @@ constexpr const char* kPreamble = R"(
 #include <vector>
 #define SERVICE [[clang::annotate("cppboot:service")]]
 #define JSON [[clang::annotate("cppboot:json")]]
+#define ROW [[clang::annotate("cppboot:row")]]
 #define CONTROLLER(path) [[clang::annotate("cppboot:controller:" path)]]
 #define GET(path) [[clang::annotate("cppboot:route:Get:" path)]]
 #define POST(path) [[clang::annotate("cppboot:route:Post:" path)]]
@@ -196,13 +197,31 @@ TEST_F(ParserTest, ReadsJsonFields) {
     ASSERT_TRUE(result) << result.error().message();
     ASSERT_EQ(result.value().json_types.size(), 1U);
 
-    const JsonType& type = result.value().json_types[0];
+    const MappedStruct& type = result.value().json_types[0];
     EXPECT_EQ(type.type, "app::User");
     ASSERT_EQ(type.fields.size(), 4U);
     EXPECT_EQ(type.fields[0].name, "id");
     EXPECT_FALSE(type.fields[0].is_optional);
     EXPECT_EQ(type.fields[2].name, "nickname");
     EXPECT_TRUE(type.fields[2].is_optional);
+}
+
+TEST_F(ParserTest, ReadsRowFieldsAndAllowsBothMarks) {
+    const auto result = parse(R"(
+        struct JSON ROW User { long id; std::optional<std::string> nickname; };
+        struct ROW OnlyRow { int value; };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    EXPECT_EQ(result.value().json_types.size(), 1U);
+    ASSERT_EQ(result.value().row_types.size(), 2U);
+    EXPECT_EQ(result.value().row_types[0].type, "User");
+    EXPECT_EQ(result.value().row_types[0].fields[0].name, "id");
+    EXPECT_EQ(result.value().row_types[1].type, "OnlyRow");
+}
+
+TEST_F(ParserTest, RejectsPrivateRowFields) {
+    expectError("class ROW Hidden { int secret; };",
+                "Field 'secret' of Hidden must be public for CPPBOOT_ROW");
 }
 
 TEST_F(ParserTest, RejectsPrivateJsonFields) {

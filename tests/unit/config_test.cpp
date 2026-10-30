@@ -171,6 +171,14 @@ TEST_F(ConfigTest, TypedGettersValidateValues) {
     EXPECT_FALSE(config.value().getBool("word", false));
 }
 
+TEST_F(ConfigTest, DescribeHidesTheDatabaseUrl) {
+    sources_.defaults = {{"cppboot.database.url", "postgresql://user:hunter2@host/db"}};
+
+    const auto config = Config::load(sources_);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config.value().describe().find("hunter2"), std::string::npos);
+}
+
 TEST_F(ConfigTest, DescribeHidesSensitiveValues) {
     sources_.defaults = {{"database.password", "hunter2"}, {"server.port", "8080"}};
 

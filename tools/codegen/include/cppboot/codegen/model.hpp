@@ -15,10 +15,14 @@ inline constexpr std::string_view kModuleInterface = "cppboot::Module";
 
 /// Types that cppboot::runApplication() provides, so components can depend on them without any
 /// component declaring them.
-inline constexpr std::array<std::string_view, 2> kFrameworkTypes = {
+inline constexpr std::array<std::string_view, 3> kFrameworkTypes = {
     "cppboot::config::Config",
     "cppboot::logging::Logger",
+    "cppboot::data::Database",
 };
+
+/// Generated code registers the database when something depends on this, or a struct is mapped.
+inline constexpr std::string_view kDatabaseType = "cppboot::data::Database";
 
 /// A class marked for registration. Type names are fully qualified.
 struct Component {
@@ -31,17 +35,17 @@ struct Component {
     std::vector<std::string> dependencies;
 };
 
-struct JsonField {
+struct StructField {
     std::string name;
     /// A std::optional field, which may be missing from JSON.
     bool is_optional{false};
 };
 
-/// A struct marked for JSON conversion.
-struct JsonType {
+/// A struct marked with CPPBOOT_JSON or CPPBOOT_ROW.
+struct MappedStruct {
     std::string type;
     std::string location;
-    std::vector<JsonField> fields;
+    std::vector<StructField> fields;
 };
 
 enum class ParameterSource { Path, Query, Body, Request };
@@ -74,7 +78,8 @@ struct Controller {
 /// Everything marked in one or more headers.
 struct Declarations {
     std::vector<Component> components;
-    std::vector<JsonType> json_types;
+    std::vector<MappedStruct> json_types;
+    std::vector<MappedStruct> row_types;
     std::vector<Controller> controllers;
 
     void append(Declarations other);
@@ -86,7 +91,8 @@ Result<void> validateDeclarations(const Declarations& declarations);
 
 /// Returns a header defining JSON conversions and cppboot::generated::registerComponents(), which
 /// registers each component with a cppboot::di::Container. If there are controllers, it also
-/// registers a router with their routes, and a module that runs the server.
+/// registers a router with their routes, and a module that runs the server. If anything uses the
+/// database, it registers that first, so that it's ready before other modules start.
 std::string renderRegistration(const Declarations& declarations,
                                const std::vector<std::string>& headers);
 
