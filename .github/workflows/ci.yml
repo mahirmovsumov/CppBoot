@@ -38,6 +38,12 @@ jobs:
       - run: cmake --preset ${{ matrix.preset }}
       - run: cmake --build --preset ${{ matrix.preset }}
       - run: ctest --preset ${{ matrix.preset }}
+      # A skipped test still counts as passed, so this stops PostgreSQL testing from silently ending.
+      - name: Check that the PostgreSQL tests ran
+        run: |
+          output=$(build/${{ matrix.preset }}/tests/cppboot-data-tests --gtest_brief=1)
+          echo "$output" | tail -n 2
+          ! echo "$output" | grep -q SKIPPED
 
   windows:
     runs-on: windows-latest
