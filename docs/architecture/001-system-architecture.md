@@ -63,7 +63,7 @@ The macros compile to nothing in a normal build. When the generator parses the c
 
 Registration is generated code, compiled directly into the application by a CMake function such as `cppboot_add_application()`. Self-registering static objects aren't used, for two reasons: linkers can drop them from static libraries, and they would break the rule against global mutable state.
 
-The generator is the largest technical risk, so it gets a prototype right after Phase 1 rather than waiting for Phase 4.
+The generator was the largest technical risk, so it got a prototype right after Phase 1 rather than waiting for Phase 4. See [009](009-code-generation.md) for the results.
 
 ## Execution model
 

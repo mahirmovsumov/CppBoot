@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CPPBOOT_BUILD_TESTS "Build CppBoot tests" ON)
 option(CPPBOOT_BUILD_EXAMPLES "Build CppBoot examples" ON)
+option(CPPBOOT_BUILD_CODEGEN "Build the code generator, which requires libclang" ON)
 option(CPPBOOT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 include(cmake/CompilerOptions.cmake)
@@ -24,6 +25,10 @@ add_subdirectory(framework/config)
 add_subdirectory(framework/logging)
 add_subdirectory(framework/core)
 add_subdirectory(tools/cli)
+
+if(CPPBOOT_BUILD_CODEGEN)
+    add_subdirectory(tools/codegen)
+endif()
 
 cppboot_install_package()
 

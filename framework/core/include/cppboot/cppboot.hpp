@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cppboot/base/annotations.hpp"
 #include "cppboot/base/error.hpp"
 #include "cppboot/base/exceptions.hpp"
 #include "cppboot/base/result.hpp"

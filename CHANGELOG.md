@@ -33,6 +33,12 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot create`, `build`, `run` and `info`.
 - CMake install rules, so projects can use `find_package(CppBoot)`.
 
+### Code generator (prototype)
+
+- `cppboot-codegen`, which reads classes marked with `CPPBOOT_SERVICE` and generates code that creates them and passes in their dependencies.
+- Build-time errors for missing dependencies, duplicate providers and dependency cycles.
+- Not yet installed or available through the `cppboot` CLI.
+
 ### Project setup
 
 - CMake presets for debug, release and the sanitizers.

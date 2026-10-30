@@ -20,4 +20,5 @@ Start with the tutorial, then use the guides as a reference.
 - [Core runtime](architecture/002-core-runtime.md)
 - [Module system](architecture/003-module-system.md)
 - [Platform abstraction](architecture/007-platform-abstraction.md)
+- [Code generation](architecture/009-code-generation.md)
 - [C++20 coding standard](standards/cpp20-coding-standard.md)

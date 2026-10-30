@@ -44,7 +44,7 @@ cd examples\hello-world
 ## Build on Linux
 
 ```bash
-sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libgtest-dev
+sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libgtest-dev libclang-dev
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
