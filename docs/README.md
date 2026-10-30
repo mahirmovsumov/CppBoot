@@ -7,6 +7,7 @@ Start with the tutorial, then use the guides as a reference.
 - [Getting started](tutorials/getting-started.md): install CppBoot and create your first application
 - [Modules and workers](guides/modules.md): add functionality and background work
 - [Dependency injection](guides/dependency-injection.md): components, lifetimes and scopes
+- [Web server](guides/web.md): routes, requests, responses and middleware
 - [Configuration](guides/configuration.md): settings, profiles and overrides
 - [Command-line tool](guides/cli.md): every `cppboot` command
 
@@ -26,4 +27,5 @@ Start with the tutorial, then use the guides as a reference.
 - [Dependency injection](architecture/004-dependency-injection.md)
 - [Platform abstraction](architecture/007-platform-abstraction.md)
 - [Code generation](architecture/009-code-generation.md)
+- [Web server](architecture/010-web-server.md)
 - [C++20 coding standard](standards/cpp20-coding-standard.md)

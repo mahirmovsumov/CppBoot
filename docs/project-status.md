@@ -28,7 +28,7 @@ public:
 
 A mistake such as a missing dependency fails the build, so it can't reach a running application.
 
-You can't build web APIs yet, and there's no database support.
+You can also serve HTTP requests by defining routes in code, with middleware, error handling and limits on request size and time. Marked controllers and automatic JSON conversion are still to come, and there's no HTTPS or database support yet.
 
 ## Progress
 
@@ -36,7 +36,7 @@ You can't build web APIs yet, and there's no database support.
 |---|---|---|
 | 1. Core runtime and CLI | Complete | Applications start, read settings, log and shut down cleanly |
 | 2. Dependency injection | Complete | Marked classes are created and connected automatically |
-| 3. Web framework | In progress | REST APIs with controllers and JSON |
+| 3. Web framework | In progress | The server and routing work. JSON and controllers are next |
 | 4. Developer experience | Mostly done early | The CLI and generator were needed for Phases 1 and 2 |
 | 5. Database | Not started | PostgreSQL, SQLite, connection pooling, transactions |
 | 6. Security | Not started | Basic JWT authentication for 1.0 |
@@ -55,6 +55,7 @@ You can't build web APIs yet, and there's no database support.
 | Dependency injection | Creates components and manages their lifetimes | [Dependency injection](guides/dependency-injection.md) |
 | Code generator | Reads marked classes and generates their registration | [Code generation](architecture/009-code-generation.md) |
 | `cppboot` CLI | Creates, builds and runs projects | [CLI](guides/cli.md) |
+| Web server | Serves HTTP with routes, middleware and error handling | [Web server](guides/web.md) |
 
 ## How it's tested
 

@@ -50,6 +50,16 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - Installed with the SDK, along with `cppboot_generate_components()` for running it during a build.
 - Projects made by `cppboot create` now use it: add a marked class in `src`, and it's created and injected with no registration code.
 
+### Web server
+
+- `cppboot::web::Server`, an HTTP/1.1 server where handlers run on a worker pool, so a slow handler can't block other requests.
+- `Router`, with path and query parameters, 404 and 405 responses, and `HEAD` support.
+- Middleware that runs around every request, and can stop it or change its response.
+- `HttpError` for sending errors to clients. Other exceptions become a generic 500, so that internal details can't reach them.
+- Limits on body size, connections and time, plus protection against header injection and encoded null characters.
+- Graceful shutdown, which lets running requests finish.
+- `ServerModule`, which runs the server within an application using settings under `cppboot.server`.
+
 ### Project setup
 
 - CMake presets for debug, release and the sanitizers.

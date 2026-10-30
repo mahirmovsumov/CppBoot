@@ -1,12 +1,12 @@
 # Phase 3: Web framework
 
-**Status:** In progress.
+**Status:** In progress. Steps 1 to 3 are done.
 
 ## Steps
 
 1. **Settings and logger injection:** done. Components can take `Config` and `Logger` in their constructors.
-2. **HTTP server:** Boost.Asio and Beast, kept out of public headers, with a worker pool so that a slow handler can't block other requests.
-3. **Routing and middleware:** path and query parameters, a request pipeline and error handling.
+2. **HTTP server:** done. It uses Boost.Asio and Beast, kept out of public headers, with a worker pool so that a slow handler can't block other requests.
+3. **Routing and middleware:** done. It covers path and query parameters, a request pipeline and error handling.
 4. **JSON:** conversion to and from your classes, using the code generator.
 5. **Controllers:** `CPPBOOT_CONTROLLER` and `CPPBOOT_GET` become real routes.
 

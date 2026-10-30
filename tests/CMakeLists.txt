@@ -32,6 +32,22 @@ cppboot_apply_compiler_options(cppboot-unit-tests)
 
 add_test(NAME cppboot-unit-tests COMMAND cppboot-unit-tests)
 
+add_executable(cppboot-web-tests
+    web/router_test.cpp
+    web/server_test.cpp
+)
+target_link_libraries(cppboot-web-tests PRIVATE
+    cppboot::web
+    Boost::headers
+    GTest::gtest_main
+)
+if(WIN32)
+    target_compile_definitions(cppboot-web-tests PRIVATE _WIN32_WINNT=0x0A00)
+    target_link_libraries(cppboot-web-tests PRIVATE ws2_32 mswsock)
+endif()
+cppboot_apply_compiler_options(cppboot-web-tests)
+add_test(NAME cppboot-web-tests COMMAND cppboot-web-tests)
+
 if(CPPBOOT_BUILD_CODEGEN)
     add_executable(cppboot-codegen-tests
         codegen/model_test.cpp
