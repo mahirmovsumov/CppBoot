@@ -51,10 +51,7 @@ private:
 // Not marked, so the generator must leave it out.
 class HelperWithoutAnnotation {
 public:
-    explicit HelperWithoutAnnotation(int value) : value_(value) {}
-
-private:
-    int value_;
+    explicit HelperWithoutAnnotation(int) {}
 };
 
 }  // namespace demo
