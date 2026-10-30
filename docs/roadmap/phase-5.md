@@ -1,6 +1,6 @@
 # Phase 5: Database
 
-**Status:** Complete on Windows. It's finished once CI passes on Linux.
+**Status:** Complete. CI passes on Linux with GCC, Clang and the sanitizers, including against a real PostgreSQL server, and on Windows with GCC.
 
 ## Done
 
