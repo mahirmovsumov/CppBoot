@@ -12,6 +12,8 @@ Operating system headers and calls appear only in `framework/platform/windows` a
 |---|---|---|
 | `environmentVariables()` | `GetEnvironmentStringsW`, converted to UTF-8 | `environ` |
 | `ShutdownSignal` | Console control handler and event objects | `sigaction` for SIGINT and SIGTERM, with a semaphore |
+| `runProcess()` | `CreateProcessW`, with a handler that waits for the child | `fork` and `execvp`, forwarding SIGINT and SIGTERM to the child |
+| `executablePath()` | `GetModuleFileNameW` | `/proc/self/exe` |
 
 ## Platform differences
 

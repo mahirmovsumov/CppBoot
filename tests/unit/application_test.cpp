@@ -175,6 +175,23 @@ TEST_F(ApplicationTest, InvalidLogLevelIsAConfigurationError) {
     EXPECT_EQ(app.run(), kExitConfigurationError);
 }
 
+TEST_F(ApplicationTest, ShutdownAfterStartSettingStopsTheApplication) {
+    options_.default_settings["cppboot.runtime.shutdown_after_start"] = "true";
+
+    Application app{0, nullptr, options_};
+    app.emplaceModule<RecordingModule>("only", events_, StartBehavior::Succeed);
+
+    EXPECT_EQ(app.run(), kExitSuccess);
+    EXPECT_EQ(events_, (Events{"start only", "stop only"}));
+}
+
+TEST_F(ApplicationTest, InvalidShutdownAfterStartIsAConfigurationError) {
+    options_.default_settings["cppboot.runtime.shutdown_after_start"] = "maybe";
+
+    Application app{0, nullptr, options_};
+    EXPECT_EQ(app.run(), kExitConfigurationError);
+}
+
 TEST_F(ApplicationTest, RunCanOnlyHappenOnce) {
     Application app{0, nullptr, options_};
     app.requestShutdown();

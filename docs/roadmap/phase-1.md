@@ -1,6 +1,6 @@
 # Phase 1: Core runtime
 
-**Status:** In progress. The runtime works on Windows with GCC 16.2. The Linux code and the CI workflow haven't been run yet.
+**Status:** In progress. The runtime and CLI work on Windows with GCC 16.2. The Linux process code and the installed CLI haven't been run on Linux yet.
 
 ## Done
 
@@ -10,19 +10,15 @@
 - `cppboot-config`: YAML, profiles, environment and command-line overrides
 - `cppboot-logging`: console and file logging
 - `cppboot-core`: `Application`, lifecycle, module manager, workers
-- `examples/hello-world` and 46 passing unit tests on Windows
-- `hello-world` shuts down cleanly on a real console Ctrl+C with exit code 0
-
-## Written but not run
-
-- `cppboot-platform` for Linux
-- CI workflow for Linux and Windows
+- `cppboot-platform` for Linux: environment and shutdown signals, with CI on GCC, Clang and the sanitizers
+- CMake install rules, so projects can use `find_package(CppBoot)`
+- CLI: `cppboot create`, `build`, `run` and `info`
+- An end-to-end test that installs the framework, then creates, builds and runs a project
+- `examples/hello-world` and unit tests
 
 ## Remaining
 
-1. Add CMake install rules so generated projects can use `find_package(CppBoot)`.
-2. Write the CLI: `cppboot create`, `build`, `run` and `info`.
-3. Push to GitHub and pass CI on Linux, including the sanitizers.
+1. Pass CI on Linux and Windows with the CLI and the Linux process code.
 
 ## Done when
 

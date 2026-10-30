@@ -2,7 +2,7 @@
 
 CppBoot is a native application framework for C++20, inspired by the developer experience of Spring Boot. It aims to give C++ applications one lifecycle, one configuration model and one set of modules for services, web APIs, data access, security and operations.
 
-**Status: early Phase 1, not ready for real applications.** The runtime foundation builds and passes its tests on Windows. Linux hasn't been built yet. See [the Phase 1 roadmap](docs/roadmap/phase-1.md).
+**Status: early Phase 1, not ready for real applications.** See [the Phase 1 roadmap](docs/roadmap/phase-1.md).
 
 ## Build on Windows
 
@@ -16,6 +16,21 @@ cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
 ```
+
+## Create a project
+
+Install CppBoot, then use the installed CLI. The compiler, CMake and Ninja must be on PATH.
+
+```powershell
+cmake --install build\dev --prefix D:\cppboot-sdk
+$env:PATH = "D:\cppboot-sdk\bin;$env:PATH"
+
+cppboot create hello-world
+cd hello-world
+cppboot run
+```
+
+Press Ctrl+C to stop the application. `cppboot run` builds the project first and returns the application's exit code. Anything after `run` goes to the application, such as `cppboot run --cppboot.logging.level=debug`.
 
 ## Run the example
 

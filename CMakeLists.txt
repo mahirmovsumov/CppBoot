@@ -12,7 +12,9 @@ option(CPPBOOT_BUILD_EXAMPLES "Build CppBoot examples" ON)
 option(CPPBOOT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 include(cmake/CompilerOptions.cmake)
+include(cmake/CppBootTargets.cmake)
 
+find_package(Threads REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 
@@ -21,6 +23,9 @@ add_subdirectory(framework/platform)
 add_subdirectory(framework/config)
 add_subdirectory(framework/logging)
 add_subdirectory(framework/core)
+add_subdirectory(tools/cli)
+
+cppboot_install_package()
 
 if(CPPBOOT_BUILD_EXAMPLES)
     add_subdirectory(examples/hello-world)

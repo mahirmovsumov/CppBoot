@@ -98,6 +98,11 @@ int Application::execute() {
     }
     logger_.emplace(std::move(logger).value());
 
+    const auto shutdown_after_start = config_->getBool("cppboot.runtime.shutdown_after_start", false);
+    if (!shutdown_after_start) {
+        return fail(shutdown_after_start.error(), kExitConfigurationError);
+    }
+
     logger_->info("Starting CppBoot {} (profile: {})", kVersionString,
                   config_->profile().empty() ? std::string_view{"none"}
                                              : std::string_view{config_->profile()});
@@ -124,6 +129,9 @@ int Application::execute() {
 
     advance(LifecycleState::Running);
     logger_->info("Application is running");
+    if (shutdown_after_start.value()) {
+        requestShutdown();
+    }
     signal_->wait();
 
     advance(LifecycleState::Stopping);
