@@ -80,6 +80,11 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 ### Fixes
 
 - Routes with no parameters no longer generate an unused variable, which broke builds using `-Werror`.
+- New connections no longer wait for seconds, or get refused, when the server is under load.
+
+### Benchmarks
+
+- A benchmark server, a load generator, a script for one core with a 2 GB limit, and a workflow to run it on GitHub. See the [results](docs/benchmarks.md).
 
 ### Project setup
 

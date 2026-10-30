@@ -13,6 +13,8 @@ Developers can write ordinary blocking handlers without stalling other connectio
 
 Each connection handles one request at a time, so the number of queued requests is limited by `max_connections`. That bounds memory under load.
 
+The server keeps 64 accepts waiting at once. A single one takes one connection per turn of the event loop, which is only a few hundred per second under load, so new clients would queue for seconds. See the [benchmarks](../benchmarks.md).
+
 ## Public headers
 
 Boost.Asio and Boost.Beast appear only in `server.cpp`. Public headers use CppBoot's own `Request`, `Response` and `Router`. This limits Boost's compile-time cost to one file, and allows replacing it without changing applications.

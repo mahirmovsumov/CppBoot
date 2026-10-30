@@ -86,6 +86,10 @@ Every push runs on Linux with GCC and Clang, on Linux with memory and thread che
 
 The tests include an end-to-end test that installs the framework, creates a new project with the CLI, adds a marked class, then builds and runs it. A real Ctrl+C on Windows can't be sent automatically in CI, so that's checked by hand.
 
+## Performance
+
+On one Linux cloud core, CppBoot served about 37,000 small requests per second. With a 2 GB limit, 150,000 open connections stayed open and working. The [benchmarks](benchmarks.md) give full results and their limits, and no other framework has been measured for comparison.
+
 ## Main decisions
 
 - **C++20 only:** no later language features are required.
