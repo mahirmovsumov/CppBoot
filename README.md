@@ -54,9 +54,6 @@ The `asan` and `tsan` presets run the same tests under the sanitizers and work o
 
 ## Documentation
 
-- [System architecture](docs/architecture/001-system-architecture.md)
-- [Core runtime](docs/architecture/002-core-runtime.md)
-- [Module system](docs/architecture/003-module-system.md)
-- [Platform abstraction](docs/architecture/007-platform-abstraction.md)
-- [C++20 coding standard](docs/standards/cpp20-coding-standard.md)
-- [Phase 1 roadmap](docs/roadmap/phase-1.md)
+- [Getting started](docs/tutorials/getting-started.md)
+- [All documentation](docs/README.md)
+- [Changelog](CHANGELOG.md)
