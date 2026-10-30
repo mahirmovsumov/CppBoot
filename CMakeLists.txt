@@ -24,6 +24,7 @@ add_subdirectory(framework/platform)
 add_subdirectory(framework/config)
 add_subdirectory(framework/logging)
 add_subdirectory(framework/core)
+add_subdirectory(framework/di)
 add_subdirectory(tools/cli)
 
 if(CPPBOOT_BUILD_CODEGEN)

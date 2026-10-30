@@ -36,7 +36,7 @@ cppboot-config  cppboot-logging  cppboot-platform
 cppboot-base         Result, Error, Exception, version
 ```
 
-Dependency injection will sit between the core and the feature modules. It arrives in Phase 2 and is not required by the core.
+`cppboot-di` depends only on `cppboot-base`, and the core doesn't depend on it. See [004](004-dependency-injection.md).
 
 This replaces the original diagram, which had configuration and logging depending on core while `Application` in core needed both to start. The fix is a small base library at the bottom, with `Application` above the services it starts.
 

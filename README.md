@@ -2,7 +2,7 @@
 
 CppBoot is a native application framework for C++20, inspired by the developer experience of Spring Boot. It aims to give C++ applications one lifecycle, one configuration model and one set of modules for services, web APIs, data access, security and operations.
 
-**Status: early development, not ready for production.** The runtime and CLI are finished, but dependency injection, web and database support are still to come. See [the changelog](CHANGELOG.md) and [the Phase 1 roadmap](docs/roadmap/phase-1.md).
+**Status: early development, not ready for production.** The runtime, CLI and dependency injection container work, but web and database support are still to come. See [the changelog](CHANGELOG.md) and [the Phase 2 roadmap](docs/roadmap/phase-2.md).
 
 ## Build on Windows
 

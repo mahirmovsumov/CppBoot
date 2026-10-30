@@ -21,8 +21,8 @@ struct Component {
 /// Fails if a dependency has no provider, a type has two providers, or dependencies form a cycle.
 Result<void> validateComponents(const std::vector<Component>& components);
 
-/// Returns a header defining cppboot::generated::registerComponents(), which creates each
-/// component through the registry it's given.
+/// Returns a header defining cppboot::generated::registerComponents(), which registers each
+/// component with a cppboot::di::Container.
 std::string renderRegistration(const std::vector<Component>& components,
                                const std::vector<std::string>& headers);
 

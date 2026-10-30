@@ -59,7 +59,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(CppBoot CONFIG REQUIRED)
 
 add_executable(@NAME@ src/main.cpp)
-target_link_libraries(@NAME@ PRIVATE cppboot::core)
+target_link_libraries(@NAME@ PRIVATE cppboot::core cppboot::di)
 )"},
     {"cppboot.yaml", R"(cppboot:
   application:

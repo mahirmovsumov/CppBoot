@@ -70,9 +70,10 @@ TEST(RenderRegistrationTest, WritesIncludesInterfacesAndArguments) {
         {"D:/app/a.hpp"});
 
     EXPECT_NE(text.find("#include \"D:/app/a.hpp\""), std::string::npos);
-    EXPECT_NE(text.find("add<ns::Service, ns::IService>([](auto& context)"), std::string::npos);
-    EXPECT_NE(text.find("std::make_shared<ns::Service>(context.template get<ns::A>(), "
-                        "context.template get<ns::B>())"),
+    EXPECT_NE(text.find("container.registerSingleton<ns::Service>("
+                        "cppboot::di::Deps<ns::A, ns::B>{});"),
               std::string::npos);
-    EXPECT_NE(text.find("add<ns::Leaf>([](auto&)"), std::string::npos);
+    EXPECT_NE(text.find("container.bind<ns::IService, ns::Service>();"), std::string::npos);
+    EXPECT_NE(text.find("container.registerSingleton<ns::Leaf>(cppboot::di::Deps<>{});"),
+              std::string::npos);
 }

@@ -8,6 +8,7 @@ add_executable(cppboot-unit-tests
     unit/application_test.cpp
     unit/cli_test.cpp
     unit/config_test.cpp
+    unit/di_test.cpp
     unit/lifecycle_test.cpp
     unit/module_manager_test.cpp
     unit/process_test.cpp
@@ -18,6 +19,7 @@ add_executable(cppboot-unit-tests
 
 target_link_libraries(cppboot-unit-tests PRIVATE
     cppboot::core
+    cppboot::di
     cppboot-cli-lib
     GTest::gtest_main
 )
@@ -61,7 +63,7 @@ if(CPPBOOT_BUILD_CODEGEN)
     )
     target_include_directories(cppboot-generated-wiring-tests PRIVATE ${generated_dir})
     target_link_libraries(cppboot-generated-wiring-tests PRIVATE
-        cppboot::base
+        cppboot::di
         GTest::gtest_main
     )
     cppboot_apply_compiler_options(cppboot-generated-wiring-tests)

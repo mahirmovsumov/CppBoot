@@ -38,7 +38,7 @@ The generator also rejects missing dependencies, two providers of the same type 
 |---|---|
 | Accuracy | It reads namespaces, type aliases, `const` and references correctly, because it uses Clang's own parser rather than text matching |
 | Speed | About 0.8 seconds for one header that includes `<memory>`, on Windows. A project with many headers will need caching or parallel runs |
-| Generated code | It compiles with GCC and connects real objects in the tests, with no framework code beyond a small test registry |
+| Generated code | It compiles with GCC and Clang and connects real objects in the tests, using only the public API of `cppboot::di::Container` |
 | Built-in headers | libclang can't always find its built-in headers when loaded as a library, so the build passes `-resource-dir` explicitly |
 
 ## Known limits

@@ -33,9 +33,16 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot create`, `build`, `run` and `info`.
 - CMake install rules, so projects can use `find_package(CppBoot)`.
 
+### Dependency injection
+
+- `cppboot::di::Container`, with singleton, transient, scoped and external lifetimes.
+- Registration by declared dependencies, factories, existing instances and interface bindings.
+- `validate()`, which finds missing dependencies, cycles and singletons that depend on scoped components, without creating anything.
+- Clear errors instead of a stack overflow when resolving a cycle, and thread-safe resolution.
+
 ### Code generator (prototype)
 
-- `cppboot-codegen`, which reads classes marked with `CPPBOOT_SERVICE` and generates code that creates them and passes in their dependencies.
+- `cppboot-codegen`, which reads classes marked with `CPPBOOT_SERVICE` and generates code that registers them with the container.
 - Build-time errors for missing dependencies, duplicate providers and dependency cycles.
 - Not yet installed or available through the `cppboot` CLI.
 
