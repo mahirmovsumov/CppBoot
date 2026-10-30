@@ -1,0 +1,22 @@
+name: Benchmark
+
+# Only runs when started by hand, because it uses minutes and its results vary between machines.
+on:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev
+      - name: Build
+        run: |
+          cmake -S . -B build/bench -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCPPBOOT_BUILD_BENCHMARKS=ON -DCPPBOOT_BUILD_TESTS=OFF \
+            -DCPPBOOT_BUILD_EXAMPLES=OFF -DCPPBOOT_BUILD_CODEGEN=OFF
+          cmake --build build/bench --target cppboot-bench-server cppboot-load
+      - name: Run
+        run: bash scripts/benchmark-linux.sh build/bench

@@ -1,0 +1,11 @@
+add_executable(cppboot-bench-server bench_server.cpp)
+target_link_libraries(cppboot-bench-server PRIVATE cppboot::web cppboot::data)
+cppboot_apply_compiler_options(cppboot-bench-server)
+
+add_executable(cppboot-load http_load.cpp)
+target_link_libraries(cppboot-load PRIVATE Boost::headers Threads::Threads)
+if(WIN32)
+    target_compile_definitions(cppboot-load PRIVATE _WIN32_WINNT=0x0A00)
+    target_link_libraries(cppboot-load PRIVATE ws2_32 mswsock)
+endif()
+cppboot_apply_compiler_options(cppboot-load)
