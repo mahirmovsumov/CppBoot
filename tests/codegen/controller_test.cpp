@@ -87,6 +87,14 @@ TEST_F(ControllerTest, RejectsABadBody) {
     EXPECT_EQ(send(Method::Post, "/api/users", "[]").status(), 400);
 }
 
+TEST_F(ControllerTest, BadBodyMessageNamesTheProblemWithoutLibraryDetails) {
+    const Response response = send(Method::Post, "/api/users", R"({"nickname":"A"})");
+    EXPECT_NE(response.body().find("Invalid request body: key 'name' not found"),
+              std::string::npos)
+        << response.body();
+    EXPECT_EQ(response.body().find("json.exception"), std::string::npos);
+}
+
 TEST_F(ControllerTest, WithStatusSendsJsonWithThatStatus) {
     const Response response = send(Method::Post, "/api/users/copies", R"({"name":"Ada"})");
     EXPECT_EQ(response.status(), 201);

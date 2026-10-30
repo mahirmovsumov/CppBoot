@@ -111,7 +111,12 @@ T bodyAs(const Request& request) {
     try {
         return Json::parse(request.body()).template get<T>();
     } catch (const nlohmann::json::exception& exception) {
-        throw HttpError(400, std::string{"Invalid request body: "} + exception.what());
+        // Removes the library's own prefix, such as "[json.exception.out_of_range.403] ".
+        std::string_view reason = exception.what();
+        if (const auto prefix_end = reason.find("] "); prefix_end != std::string_view::npos) {
+            reason.remove_prefix(prefix_end + 2);
+        }
+        throw HttpError(400, "Invalid request body: " + std::string{reason});
     }
 }
 
