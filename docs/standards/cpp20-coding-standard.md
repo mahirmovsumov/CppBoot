@@ -26,7 +26,7 @@ Use `clang-format` with the repository's `.clang-format`: 4-space indentation an
 1. No raw owning pointers.
 2. No global mutable framework state. See [002](../architecture/002-core-runtime.md) for the one exception.
 3. No circular dependencies.
-4. No third-party types in public headers.
+4. No third-party types in public headers, except `cppboot::web::Json`. See [001](../architecture/001-system-architecture.md).
 5. No operating system code outside `framework/platform`.
 6. No C++23 or later features.
 7. Every public API has a test.

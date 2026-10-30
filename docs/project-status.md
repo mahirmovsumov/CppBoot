@@ -8,7 +8,7 @@ CppBoot is a framework for building C++20 applications, inspired by Spring Boot.
 
 ## What works today
 
-You can build background services and command-line applications on Windows and Linux. A new project takes three commands:
+You can build web APIs, background services and command-line applications on Windows and Linux. A new project takes three commands:
 
 ```text
 cppboot create my-app
@@ -28,7 +28,18 @@ public:
 
 A mistake such as a missing dependency fails the build, so it can't reach a running application.
 
-You can also serve HTTP requests by defining routes in code, with middleware, error handling and limits on request size and time. Marked controllers and automatic JSON conversion are still to come, and there's no HTTPS or database support yet.
+A web API works the same way, with `cppboot create my-api --web`. Marked functions become routes, and values convert to and from JSON automatically:
+
+```cpp
+class CPPBOOT_CONTROLLER("/api/users") UserController {
+public:
+    explicit UserController(std::shared_ptr<UserService> users);
+
+    CPPBOOT_GET("/{id}") User get(int id) const;
+};
+```
+
+There's no HTTPS or database support yet.
 
 ## Progress
 
@@ -36,7 +47,7 @@ You can also serve HTTP requests by defining routes in code, with middleware, er
 |---|---|---|
 | 1. Core runtime and CLI | Complete | Applications start, read settings, log and shut down cleanly |
 | 2. Dependency injection | Complete | Marked classes are created and connected automatically |
-| 3. Web framework | In progress | The server and routing work. JSON and controllers are next |
+| 3. Web framework | Complete | Controllers, JSON, routing, middleware and an HTTP server |
 | 4. Developer experience | Mostly done early | The CLI and generator were needed for Phases 1 and 2 |
 | 5. Database | Not started | PostgreSQL, SQLite, connection pooling, transactions |
 | 6. Security | Not started | Basic JWT authentication for 1.0 |
@@ -55,7 +66,7 @@ You can also serve HTTP requests by defining routes in code, with middleware, er
 | Dependency injection | Creates components and manages their lifetimes | [Dependency injection](guides/dependency-injection.md) |
 | Code generator | Reads marked classes and generates their registration | [Code generation](architecture/009-code-generation.md) |
 | `cppboot` CLI | Creates, builds and runs projects | [CLI](guides/cli.md) |
-| Web server | Serves HTTP with routes, middleware and error handling | [Web server](guides/web.md) |
+| Web framework | Serves HTTP with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |
 
 ## How it's tested
 
@@ -78,3 +89,4 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 - The SDK isn't a standalone download, because it needs the compiler, libraries and libclang installed.
 - Marked classes are always singletons. Transient and scoped components need manual registration.
 - Every header in `src` adds time to the build, because the generator parses each one.
+- A project that uses controllers can't add middleware yet.

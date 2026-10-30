@@ -14,9 +14,9 @@ target_link_libraries(cppboot-web
     PUBLIC
         cppboot::base
         cppboot::core
+        nlohmann_json::nlohmann_json
     PRIVATE
         Boost::headers
-        nlohmann_json::nlohmann_json
 )
 
 if(WIN32)

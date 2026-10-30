@@ -6,14 +6,25 @@
 #include <string>
 #include <vector>
 
+using namespace cppboot::codegen;
 using cppboot::ErrorCode;
-using cppboot::codegen::parseComponents;
 
 namespace {
 
 constexpr const char* kPreamble = R"(
 #include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 #define SERVICE [[clang::annotate("cppboot:service")]]
+#define JSON [[clang::annotate("cppboot:json")]]
+#define CONTROLLER(path) [[clang::annotate("cppboot:controller:" path)]]
+#define GET(path) [[clang::annotate("cppboot:route:Get:" path)]]
+#define POST(path) [[clang::annotate("cppboot:route:Post:" path)]]
+namespace cppboot::web {
+class Request {};
+class Response {};
+}
 )";
 
 }  // namespace
@@ -33,7 +44,7 @@ protected:
     auto parse(const std::string& source, const std::string& name = "input.hpp") const {
         const auto path = directory_ / name;
         std::ofstream{path, std::ios::binary} << kPreamble << source;
-        return parseComponents(path, {"-I" + directory_.string()});
+        return parseDeclarations(path, {"-I" + directory_.string()});
     }
 
     void expectError(const std::string& source, const std::string& expected) const {
@@ -41,6 +52,17 @@ protected:
         ASSERT_FALSE(result) << source;
         EXPECT_NE(result.error().message().find(expected), std::string::npos)
             << result.error().message();
+    }
+
+    Route parseOneRoute(const std::string& function, const std::string& base = "/users") const {
+        const auto result =
+            parse("class CONTROLLER(\"" + base + "\") C { public: " + function + " };");
+        EXPECT_TRUE(result) << (result ? "" : result.error().message());
+        if (!result || result.value().controllers.empty() ||
+            result.value().controllers[0].routes.empty()) {
+            return Route{};
+        }
+        return result.value().controllers[0].routes[0];
     }
 
     std::filesystem::path directory_;
@@ -60,14 +82,15 @@ TEST_F(ParserTest, ReadsQualifiedNamesAndDependencies) {
         }
     )");
     ASSERT_TRUE(result) << result.error().message();
-    ASSERT_EQ(result.value().size(), 2U);
+    const auto& components = result.value().components;
+    ASSERT_EQ(components.size(), 2U);
 
-    EXPECT_EQ(result.value()[0].type, "app::inner::SqlRepo");
-    EXPECT_EQ(result.value()[0].interfaces, std::vector<std::string>{"app::Repo"});
-    EXPECT_TRUE(result.value()[0].dependencies.empty());
+    EXPECT_EQ(components[0].type, "app::inner::SqlRepo");
+    EXPECT_EQ(components[0].interfaces, std::vector<std::string>{"app::Repo"});
+    EXPECT_TRUE(components[0].dependencies.empty());
 
-    EXPECT_EQ(result.value()[1].type, "app::Service");
-    EXPECT_EQ(result.value()[1].dependencies,
+    EXPECT_EQ(components[1].type, "app::Service");
+    EXPECT_EQ(components[1].dependencies,
               (std::vector<std::string>{"app::Repo", "app::inner::SqlRepo"}));
 }
 
@@ -80,23 +103,23 @@ TEST_F(ParserTest, SeesThroughTypeAliases) {
         }
     )");
     ASSERT_TRUE(result) << result.error().message();
-    EXPECT_EQ(result.value()[1].dependencies, std::vector<std::string>{"app::Repo"});
+    EXPECT_EQ(result.value().components[1].dependencies, std::vector<std::string>{"app::Repo"});
 }
 
 TEST_F(ParserTest, IgnoresClassesThatAreNotMarked) {
     const auto result = parse("class Plain {}; class SERVICE Marked {};");
     ASSERT_TRUE(result);
-    ASSERT_EQ(result.value().size(), 1U);
-    EXPECT_EQ(result.value()[0].type, "Marked");
+    ASSERT_EQ(result.value().components.size(), 1U);
+    EXPECT_EQ(result.value().components[0].type, "Marked");
 }
 
-TEST_F(ParserTest, SkipsComponentsInIncludedFiles) {
-    std::ofstream{directory_ / "other.hpp"} << kPreamble << "class SERVICE Included {};\n";
+TEST_F(ParserTest, SkipsDeclarationsInIncludedFiles) {
+    std::ofstream{directory_ / "other.hpp"} << "class SERVICE Included {};\n";
 
     const auto result = parse("#include \"other.hpp\"\nclass SERVICE Local {};");
     ASSERT_TRUE(result) << result.error().message();
-    ASSERT_EQ(result.value().size(), 1U);
-    EXPECT_EQ(result.value()[0].type, "Local");
+    ASSERT_EQ(result.value().components.size(), 1U);
+    EXPECT_EQ(result.value().components[0].type, "Local");
 }
 
 TEST_F(ParserTest, IgnoresCopyAndMoveConstructors) {
@@ -109,13 +132,13 @@ TEST_F(ParserTest, IgnoresCopyAndMoveConstructors) {
         };
     )");
     ASSERT_TRUE(result) << result.error().message();
-    EXPECT_TRUE(result.value()[0].dependencies.empty());
+    EXPECT_TRUE(result.value().components[0].dependencies.empty());
 }
 
 TEST_F(ParserTest, LocationNamesTheFileAndLine) {
     const auto result = parse("\nclass SERVICE Marked {};");
     ASSERT_TRUE(result);
-    EXPECT_NE(result.value()[0].location.find("input.hpp:"), std::string::npos);
+    EXPECT_NE(result.value().components[0].location.find("input.hpp:"), std::string::npos);
 }
 
 TEST_F(ParserTest, RejectsAbstractComponents) {
@@ -154,6 +177,146 @@ TEST_F(ParserTest, ReportsCompileErrors) {
 }
 
 TEST_F(ParserTest, ReportsAMissingFile) {
-    const auto result = parseComponents(directory_ / "absent.hpp", {});
+    const auto result = parseDeclarations(directory_ / "absent.hpp", {});
     EXPECT_FALSE(result);
+}
+
+TEST_F(ParserTest, ReadsJsonFields) {
+    const auto result = parse(R"(
+        namespace app {
+        struct JSON User {
+            int id;
+            std::string name;
+            std::optional<std::string> nickname;
+            std::vector<int> scores;
+            static constexpr int kVersion = 1;
+        };
+        }
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    ASSERT_EQ(result.value().json_types.size(), 1U);
+
+    const JsonType& type = result.value().json_types[0];
+    EXPECT_EQ(type.type, "app::User");
+    ASSERT_EQ(type.fields.size(), 4U);
+    EXPECT_EQ(type.fields[0].name, "id");
+    EXPECT_FALSE(type.fields[0].is_optional);
+    EXPECT_EQ(type.fields[2].name, "nickname");
+    EXPECT_TRUE(type.fields[2].is_optional);
+}
+
+TEST_F(ParserTest, RejectsPrivateJsonFields) {
+    expectError("class JSON Hidden { int secret; };", "Field 'secret' of Hidden must be public");
+}
+
+TEST_F(ParserTest, RejectsJsonBaseClasses) {
+    expectError("struct Base { int a; }; struct JSON Derived : Base { int b; };", "base classes");
+}
+
+TEST_F(ParserTest, BindsPathQueryBodyAndRequestParameters) {
+    const Route route = parseOneRoute(R"(
+        struct Body {};
+        GET("/{id}") Body get(int id, const std::string& filter, std::optional<int> page,
+                              const Body& body, const cppboot::web::Request& request);
+    )");
+
+    EXPECT_EQ(route.method, "Get");
+    EXPECT_EQ(route.path, "/users/{id}");
+    EXPECT_EQ(route.function, "get");
+    EXPECT_EQ(route.return_kind, ReturnKind::Value);
+    ASSERT_EQ(route.parameters.size(), 5U);
+
+    EXPECT_EQ(route.parameters[0].source, ParameterSource::Path);
+    EXPECT_EQ(route.parameters[0].type, "int");
+    EXPECT_EQ(route.parameters[1].source, ParameterSource::Query);
+    EXPECT_EQ(route.parameters[1].name, "filter");
+    EXPECT_EQ(route.parameters[2].source, ParameterSource::Query);
+    EXPECT_EQ(route.parameters[3].source, ParameterSource::Body);
+    EXPECT_EQ(route.parameters[3].type, "C::Body");
+    EXPECT_EQ(route.parameters[4].source, ParameterSource::Request);
+}
+
+TEST_F(ParserTest, WorksOutRouteReturnKinds) {
+    EXPECT_EQ(parseOneRoute("POST(\"/\") void a();").return_kind, ReturnKind::Nothing);
+    EXPECT_EQ(parseOneRoute("GET(\"/\") cppboot::web::Response a();").return_kind,
+              ReturnKind::Response);
+    EXPECT_EQ(parseOneRoute("GET(\"/\") std::vector<int> a();").return_kind, ReturnKind::Value);
+}
+
+TEST_F(ParserTest, JoinsControllerAndRoutePaths) {
+    EXPECT_EQ(parseOneRoute("GET(\"/\") int a();", "/users").path, "/users");
+    EXPECT_EQ(parseOneRoute("GET(\"/x\") int a();", "/users/").path, "/users/x");
+    EXPECT_EQ(parseOneRoute("GET(\"/\") int a();", "/").path, "/");
+    EXPECT_EQ(parseOneRoute("GET(\"/x\") int a();", "").path, "/x");
+}
+
+TEST_F(ParserTest, AllowsTwoRoutesOnOneFunction) {
+    const auto result = parse(R"(
+        class CONTROLLER("/a") C { public: GET("/one") GET("/two") int f(); };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    EXPECT_EQ(result.value().controllers[0].routes.size(), 2U);
+}
+
+TEST_F(ParserTest, ControllerIsAlsoAComponentWithDependencies) {
+    const auto result = parse(R"(
+        class SERVICE Service {};
+        class CONTROLLER("/a") C {
+        public:
+            explicit C(std::shared_ptr<Service> service);
+            GET("/") int f();
+        };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    ASSERT_EQ(result.value().components.size(), 2U);
+    EXPECT_EQ(result.value().components[1].dependencies, std::vector<std::string>{"Service"});
+}
+
+TEST_F(ParserTest, RejectsAPathParameterWithNoFunctionParameter) {
+    expectError(R"(class CONTROLLER("/a") C { public: GET("/{id}") int f(); };)",
+                "no parameter with that name");
+}
+
+TEST_F(ParserTest, RejectsAnOptionalPathParameter) {
+    expectError(R"(class CONTROLLER("/a") C { public: GET("/{id}") int f(std::optional<int> id); };)",
+                "Path parameter 'id'");
+}
+
+TEST_F(ParserTest, RejectsTwoBodyParameters) {
+    expectError(R"(
+        struct B {};
+        class CONTROLLER("/a") C { public: POST("/") int f(const B& one, const B& two); };
+    )",
+                "only read one parameter");
+}
+
+TEST_F(ParserTest, RejectsANonConstReferenceParameter) {
+    expectError(R"(class CONTROLLER("/a") C { public: GET("/") int f(int& value); };)",
+                "non-const reference");
+}
+
+TEST_F(ParserTest, RejectsAPrivateRouteFunction) {
+    expectError(R"(class CONTROLLER("/a") C { GET("/") int f(); };)", "must be public");
+}
+
+TEST_F(ParserTest, RejectsAStaticRouteFunction) {
+    expectError(R"(class CONTROLLER("/a") C { public: GET("/") static int f(); };)",
+                "can't be static");
+}
+
+TEST_F(ParserTest, RejectsAControllerWithNoRoutes) {
+    expectError(R"(class CONTROLLER("/a") C { public: int f(); };)", "has no routes");
+}
+
+TEST_F(ParserTest, RejectsARouteOutsideAController) {
+    expectError(R"(class SERVICE C { public: GET("/") int f(); };)",
+                "must be in a class marked with CPPBOOT_CONTROLLER");
+}
+
+TEST_F(ParserTest, RejectsARoutePathWithoutASlash) {
+    expectError(R"(class CONTROLLER("/a") C { public: GET("x") int f(); };)", "must start with '/'");
+}
+
+TEST_F(ParserTest, RejectsABasePathWithoutASlash) {
+    expectError(R"(class CONTROLLER("a") C { public: GET("/") int f(); };)", "must start with '/'");
 }

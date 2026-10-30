@@ -11,3 +11,17 @@
 
 /// Registers a class as a component: class CPPBOOT_SERVICE UserService { ... };
 #define CPPBOOT_SERVICE CPPBOOT_ANNOTATE("cppboot:service")
+
+/// Generates JSON conversion for a struct: struct CPPBOOT_JSON User { int id; std::string name; };
+#define CPPBOOT_JSON CPPBOOT_ANNOTATE("cppboot:json")
+
+/// Makes a class a component whose marked functions handle requests under a base path:
+/// class CPPBOOT_CONTROLLER("/api/users") UserController { ... };
+#define CPPBOOT_CONTROLLER(path) CPPBOOT_ANNOTATE("cppboot:controller:" path)
+
+/// Makes a controller function handle a route: CPPBOOT_GET("/{id}") User get(int id);
+#define CPPBOOT_GET(path) CPPBOOT_ANNOTATE("cppboot:route:Get:" path)
+#define CPPBOOT_POST(path) CPPBOOT_ANNOTATE("cppboot:route:Post:" path)
+#define CPPBOOT_PUT(path) CPPBOOT_ANNOTATE("cppboot:route:Put:" path)
+#define CPPBOOT_PATCH(path) CPPBOOT_ANNOTATE("cppboot:route:Patch:" path)
+#define CPPBOOT_DELETE(path) CPPBOOT_ANNOTATE("cppboot:route:Delete:" path)

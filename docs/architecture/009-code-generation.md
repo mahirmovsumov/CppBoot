@@ -1,6 +1,6 @@
 # 009: Code generation
 
-**Status:** Accepted for services. Controllers and routes arrive with Phase 3.
+**Status:** Accepted.
 
 ## Context
 
@@ -32,6 +32,14 @@ A component can be requested by its own type or by any abstract base class it pu
 
 The generator also rejects missing dependencies, two providers of the same type and dependency cycles, so these become build errors rather than runtime failures.
 
+## JSON and controllers
+
+`CPPBOOT_JSON` generates a specialization of `nlohmann::adl_serializer` for each marked struct, which also handles nested structs. These are defined in the generated header, so user headers can't convert marked structs themselves. `WithStatus<T>` exists for this reason: a controller can choose a status while generated code does the conversion.
+
+`CPPBOOT_CONTROLLER` makes a class a component and generates its routes. All route code is in the generated header, in a factory that registers `Router`, and `ServerModule` is registered with it. An application with no controllers doesn't need `cppboot-web`, because the generated header only includes web headers when it uses them.
+
+The parser decides where each function parameter comes from. Its type decides this rather than extra macros, so controllers read like ordinary functions. The generator rejects a route that can't work, such as a path parameter with no function parameter, or two routes that match the same requests.
+
 ## Results
 
 | Finding | Detail |
@@ -54,4 +62,4 @@ The SDK installs a copy of Clang's built-in headers, about 15 MB, in `lib/cppboo
 - **Changes in included files:** only listed headers trigger the generator, so a change in a header outside `src` that affects a constructor won't run it again.
 - **Absolute includes:** generated headers include their inputs by absolute path, so they can't be moved between machines. That's acceptable because they are build output.
 - **Interfaces:** only direct abstract base classes count, and each interface can have only one provider. Choosing between providers needs a qualifier feature.
-- **Services only:** controllers and routes aren't implemented.
+- **Middleware:** the generated code creates the router, so a project with controllers has no way to add middleware yet.

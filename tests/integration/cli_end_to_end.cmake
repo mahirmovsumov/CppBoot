@@ -131,6 +131,14 @@ run_cli(code output ${PROJECT_DIR} run --cppboot.logging.level=loud)
 expect_exit_code("${code}" 78 "run with invalid configuration" "${output}")
 expect_contains("${output}" "Unknown log level" "run with invalid configuration")
 
+# A web project has to build against the installed SDK and start its server.
+run_cli(code output ${WORK_DIR} create demo-api --web)
+expect_exit_code("${code}" 0 "create --web" "${output}")
+run_cli(code output ${WORK_DIR}/demo-api run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run a web project" "${output}")
+expect_contains("${output}" "Server listening on port" "run a web project")
+
 run_cli(code output ${WORK_DIR} build)
 expect_exit_code("${code}" 1 "build outside a project" "${output}")
 expect_contains("${output}" "No CppBoot project here" "build outside a project")

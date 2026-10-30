@@ -23,6 +23,12 @@ A name must start with a letter and can contain letters, digits, `-` and `_`. Na
 
 The project builds every `.cpp` file in `src`, and generates component registration from every `.hpp` file in `src`. New files are picked up automatically.
 
+Add `--web` for a web API. The project then has `src/users.hpp`, with a sample controller, in place of `src/greeting.hpp`, and server settings in `cppboot.yaml`:
+
+```powershell
+cppboot create my-api --web
+```
+
 ### `cppboot build`
 
 Builds the project in the current folder into `build/`. The first build configures the project as a debug build.

@@ -72,6 +72,18 @@ if(CPPBOOT_BUILD_CODEGEN)
     cppboot_apply_compiler_options(cppboot-generated-wiring-tests)
     add_test(NAME cppboot-generated-wiring-tests COMMAND cppboot-generated-wiring-tests)
 
+    add_executable(cppboot-generated-controller-tests codegen/controller_test.cpp)
+    target_link_libraries(cppboot-generated-controller-tests PRIVATE
+        cppboot::boot
+        cppboot::web
+        GTest::gtest_main
+    )
+    cppboot_generate_components(cppboot-generated-controller-tests
+        HEADERS codegen/sample_controller.hpp
+    )
+    cppboot_apply_compiler_options(cppboot-generated-controller-tests)
+    add_test(NAME cppboot-generated-controller-tests COMMAND cppboot-generated-controller-tests)
+
     # Installs the framework, then creates, builds and runs a project using the installed CLI.
     add_test(NAME cppboot-cli-end-to-end
         COMMAND ${CMAKE_COMMAND}

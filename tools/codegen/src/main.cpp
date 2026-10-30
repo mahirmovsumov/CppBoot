@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "cppboot/codegen/model.hpp"
@@ -20,19 +21,19 @@ constexpr std::string_view kUsage =
 
 Result<void> generate(const fs::path& output, const std::vector<fs::path>& headers,
                       const std::vector<std::string>& compiler_arguments) {
-    std::vector<codegen::Component> components;
+    codegen::Declarations declarations;
     std::vector<std::string> includes;
 
     for (const fs::path& header : headers) {
-        auto found = codegen::parseComponents(header, compiler_arguments);
+        auto found = codegen::parseDeclarations(header, compiler_arguments);
         if (!found) {
             return found.error();
         }
-        components.insert(components.end(), found.value().begin(), found.value().end());
+        declarations.append(std::move(found).value());
         includes.push_back(fs::absolute(header).generic_string());
     }
 
-    if (auto valid = codegen::validateComponents(components); !valid) {
+    if (auto valid = codegen::validateDeclarations(declarations); !valid) {
         return valid;
     }
 
@@ -42,7 +43,7 @@ Result<void> generate(const fs::path& output, const std::vector<fs::path>& heade
     }
 
     std::ofstream file{output, std::ios::binary};
-    file << codegen::renderRegistration(components, includes);
+    file << codegen::renderRegistration(declarations, includes);
     file.close();
     if (!file) {
         return Error{ErrorCode::IoError, "Cannot write " + output.generic_string()};

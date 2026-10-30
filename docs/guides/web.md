@@ -1,10 +1,75 @@
 # Web server
 
-`cppboot::web` serves HTTP requests. You define routes with a `Router`, and `ServerModule` runs the server as part of your application.
+`cppboot::web` serves HTTP requests. There are two ways to use it. Most applications should write controllers, and you can define routes by hand when you need more control, or need middleware.
 
-Today you define routes in code, as shown here. Controllers marked with `CPPBOOT_CONTROLLER`, and automatic JSON conversion, are still to come. See the [Phase 3 roadmap](../roadmap/phase-3.md).
+To start a project with a controller, run `cppboot create my-api --web`. The [REST API tutorial](../tutorials/rest-api.md) builds a complete one.
 
-## Example
+## Controllers
+
+Mark a class with `CPPBOOT_CONTROLLER` and a base path, and mark its functions with `CPPBOOT_GET`, `CPPBOOT_POST`, `CPPBOOT_PUT`, `CPPBOOT_PATCH` or `CPPBOOT_DELETE`:
+
+```cpp
+class CPPBOOT_CONTROLLER("/api/users") UserController {
+public:
+    explicit UserController(std::shared_ptr<UserStore> store);
+
+    CPPBOOT_GET("/{id}") User get(int id) const;
+    CPPBOOT_POST("/") cppboot::web::WithStatus<User> create(const NewUser& details);
+};
+```
+
+A controller is a component, so its constructor can take other components, settings and the logger. There's one instance, and several requests can call it at once, so shared data needs its own protection.
+
+### Function parameters
+
+CppBoot decides where each parameter comes from:
+
+| Parameter | Source | If it's invalid or missing |
+|---|---|---|
+| Its name matches `{name}` in the path | The path | 400 |
+| Text, a number or a `bool` | The query string, by parameter name | 400 |
+| `std::optional` of those | The query string, and can be missing | 400 if invalid |
+| `const cppboot::web::Request&` | The whole request | |
+| Any other type | The request body, parsed from JSON | 400 |
+
+A function can have one body parameter. A path parameter with no matching function parameter fails the build, as does a mistake such as a private route function.
+
+### Return values
+
+| Return type | Response |
+|---|---|
+| `void` | 204 with no body |
+| `cppboot::web::Response` | Sent as it is |
+| `cppboot::web::WithStatus<T>` | The value as JSON, with that status |
+| Anything else | The value as JSON, with status 200 |
+
+To send an error, throw `HttpError`, as described under [Errors](#errors).
+
+## JSON
+
+Mark a struct with `CPPBOOT_JSON`, and CppBoot generates its conversion to and from JSON:
+
+```cpp
+struct CPPBOOT_JSON User {
+    int id{0};
+    std::string name;
+    std::optional<std::string> nickname;
+    Address address;            // Another CPPBOOT_JSON struct
+    std::vector<int> scores;
+};
+```
+
+- JSON keys match the field names, in the same order.
+- Every field is required when reading, unless it's a `std::optional`.
+- An empty `std::optional` is written as `null`.
+- Fields can be other marked structs, and standard containers of supported types.
+- The struct needs a default constructor and public fields, and can't have base classes.
+
+`cppboot::web::Json` is `nlohmann::ordered_json`, for working with JSON directly. See the [nlohmann/json documentation](https://json.nlohmann.me).
+
+Generated conversions are only visible to generated code, so functions in your headers can't convert a marked struct themselves. To send one, return it from a controller function.
+
+## Defining routes by hand
 
 Link to `cppboot::web`, then create a router and add the server module:
 
@@ -123,5 +188,6 @@ Shutdown stops accepting connections, closes idle ones and lets running requests
 ## Not supported yet
 
 - HTTPS, so run the server behind a TLS proxy if it's exposed to a network
+- Middleware in a project that uses controllers, because the generated code creates the router
 - WebSockets and streaming responses
 - `Expect: 100-continue`

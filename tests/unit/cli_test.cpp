@@ -65,6 +65,34 @@ TEST_F(CliTest, CreatesAProjectUsingItsName) {
     EXPECT_EQ(name.value(), "demo-app");
 }
 
+TEST_F(CliTest, PlainProjectHasNoWebParts) {
+    ASSERT_TRUE(createProject("plain", directory_));
+
+    const auto root = directory_ / "plain";
+    EXPECT_TRUE(std::filesystem::exists(root / "src" / "greeting.hpp"));
+    EXPECT_FALSE(std::filesystem::exists(root / "src" / "users.hpp"));
+    EXPECT_EQ(readFile(root / "CMakeLists.txt").find("cppboot::web"), std::string::npos);
+    EXPECT_EQ(readFile(root / "cppboot.yaml").find("server:"), std::string::npos);
+    EXPECT_EQ(readFile(root / "cppboot.yaml").find("@SERVER@"), std::string::npos);
+}
+
+TEST_F(CliTest, WebProjectHasAControllerAndServerSettings) {
+    ASSERT_TRUE(createProject("web-app", directory_, cppboot::cli::ProjectKind::Web));
+
+    const auto root = directory_ / "web-app";
+    EXPECT_TRUE(std::filesystem::exists(root / "src" / "users.hpp"));
+    EXPECT_FALSE(std::filesystem::exists(root / "src" / "greeting.hpp"));
+    EXPECT_NE(readFile(root / "CMakeLists.txt").find("cppboot::web"), std::string::npos);
+    EXPECT_NE(readFile(root / "cppboot.yaml").find("port: 8080"), std::string::npos);
+}
+
+TEST_F(CliTest, CreateNeedsExactlyOneName) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cppboot::cli::run({"create", "--web"}, out, err), cppboot::cli::kExitUsage);
+    EXPECT_EQ(cppboot::cli::run({"create", "one", "two"}, out, err), cppboot::cli::kExitUsage);
+}
+
 TEST_F(CliTest, CreateLeavesAnExistingFolderUntouched) {
     const auto root = directory_ / "taken";
     std::filesystem::create_directories(root);

@@ -24,6 +24,7 @@ constexpr std::string_view kUsage = R"(Usage: cppboot <command> [arguments]
 
 Commands:
   create <name>     Create a new project in a new folder
+                    Add --web for a web API with a sample controller
   build             Build the project in the current folder
   run [arguments]   Build and run the project, passing arguments to the application
   info              Show version and installation details
@@ -40,13 +41,23 @@ constexpr std::array<std::string_view, 30> kReservedNames = {
     "lpt4", "lpt5",  "lpt6", "lpt7",    "lpt8", "lpt9",
 };
 
+enum class ProjectFiles { Always, PlainOnly, WebOnly };
+
 struct ProjectFile {
     std::string_view path;
     std::string_view content;
+    ProjectFiles included{ProjectFiles::Always};
 };
 
-// "@NAME@" is replaced with the project name.
-constexpr std::array<ProjectFile, 6> kProjectFiles = {{
+constexpr std::string_view kWebSettings = R"(
+  server:
+    host: 127.0.0.1
+    port: 8080
+)";
+
+// "@NAME@" is replaced with the project name. "@LIBRARIES@" and "@SERVER@" depend on the project
+// kind.
+constexpr std::array<ProjectFile, 7> kProjectFiles = {{
     {"CMakeLists.txt", R"(cmake_minimum_required(VERSION 3.25)
 
 project(@NAME@ LANGUAGES CXX)
@@ -62,7 +73,7 @@ file(GLOB_RECURSE sources CONFIGURE_DEPENDS src/*.cpp)
 file(GLOB_RECURSE headers CONFIGURE_DEPENDS src/*.hpp)
 
 add_executable(@NAME@ ${sources})
-target_link_libraries(@NAME@ PRIVATE cppboot::boot)
+target_link_libraries(@NAME@ PRIVATE @LIBRARIES@)
 cppboot_generate_components(@NAME@ HEADERS ${headers})
 )"},
     {"cppboot.yaml", R"(cppboot:
@@ -71,7 +82,7 @@ cppboot_generate_components(@NAME@ HEADERS ${headers})
 
   logging:
     level: info
-)"},
+@SERVER@)"},
     {"src/main.cpp", R"(#include <cppboot/boot.hpp>
 
 #include "cppboot_components.generated.hpp"
@@ -110,7 +121,40 @@ public:
 private:
     std::shared_ptr<GreetingService> greetings_;
 };
-)"},
+)",
+     ProjectFiles::PlainOnly},
+    {"src/users.hpp", R"(#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <memory>
+#include <string>
+#include <utility>
+
+// CPPBOOT_JSON generates the conversion to and from JSON.
+struct CPPBOOT_JSON User {
+    int id{0};
+    std::string name;
+};
+
+// CPPBOOT_SERVICE makes a class a component, which CppBoot creates and passes to what needs it.
+class CPPBOOT_SERVICE UserService {
+public:
+    User find(int id) const { return User{id, "user-" + std::to_string(id)}; }
+};
+
+// CPPBOOT_CONTROLLER turns the marked functions below into routes under this path.
+class CPPBOOT_CONTROLLER("/api/users") UserController {
+public:
+    explicit UserController(std::shared_ptr<UserService> users) : users_(std::move(users)) {}
+
+    // Handles GET /api/users/7. The id comes from the path, and the result is sent as JSON.
+    CPPBOOT_GET("/{id}") User get(int id) const { return users_->find(id); }
+
+private:
+    std::shared_ptr<UserService> users_;
+};
+)",
+     ProjectFiles::WebOnly},
     {".gitignore", R"(build/
 )"},
     {"README.md", R"(# @NAME@
@@ -126,21 +170,27 @@ Settings are in `cppboot.yaml`. Press Ctrl+C to stop the application.
 )"},
 }};
 
-std::string fillTemplate(std::string_view content, std::string_view name) {
-    constexpr std::string_view kPlaceholder = "@NAME@";
-
+std::string replaceAll(std::string_view content, std::string_view placeholder,
+                       std::string_view value) {
     std::string result;
     std::size_t position = 0;
     while (true) {
-        const auto found = content.find(kPlaceholder, position);
+        const auto found = content.find(placeholder, position);
         if (found == std::string_view::npos) {
             result += content.substr(position);
             return result;
         }
         result += content.substr(position, found - position);
-        result += name;
-        position = found + kPlaceholder.size();
+        result += value;
+        position = found + placeholder.size();
     }
+}
+
+std::string fillTemplate(std::string_view content, std::string_view name, ProjectKind kind) {
+    const bool web = kind == ProjectKind::Web;
+    std::string result = replaceAll(content, "@NAME@", name);
+    result = replaceAll(result, "@LIBRARIES@", web ? "cppboot::boot cppboot::web" : "cppboot::boot");
+    return replaceAll(result, "@SERVER@", web ? kWebSettings : std::string_view{});
 }
 
 Result<fs::path> findInstallation() {
@@ -266,7 +316,7 @@ Result<void> validateProjectName(std::string_view name) {
     return {};
 }
 
-Result<void> createProject(std::string_view name, const fs::path& parent) {
+Result<void> createProject(std::string_view name, const fs::path& parent, ProjectKind kind) {
     if (auto valid = validateProjectName(name); !valid) {
         return valid;
     }
@@ -278,6 +328,11 @@ Result<void> createProject(std::string_view name, const fs::path& parent) {
     }
 
     for (const ProjectFile& file : kProjectFiles) {
+        if ((file.included == ProjectFiles::WebOnly && kind != ProjectKind::Web) ||
+            (file.included == ProjectFiles::PlainOnly && kind != ProjectKind::Plain)) {
+            continue;
+        }
+
         const fs::path path = root / file.path;
         fs::create_directories(path.parent_path(), error);
         if (error) {
@@ -288,7 +343,7 @@ Result<void> createProject(std::string_view name, const fs::path& parent) {
 
         // Binary mode keeps line endings the same on every platform.
         std::ofstream output{path, std::ios::binary};
-        output << fillTemplate(file.content, name);
+        output << fillTemplate(file.content, name, kind);
         output.close();
         if (!output) {
             return Error{ErrorCode::IoError, "Cannot write " + path.generic_string()};
@@ -336,11 +391,25 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
         out << kUsage;
     } else if (command == "info" && rest.empty()) {
         printInfo(out);
-    } else if (command == "create" && rest.size() == 1) {
-        if (auto created = createProject(rest.front(), fs::current_path()); !created) {
+    } else if (command == "create") {
+        std::vector<std::string> names;
+        ProjectKind kind = ProjectKind::Plain;
+        for (const std::string& argument : rest) {
+            if (argument == "--web") {
+                kind = ProjectKind::Web;
+            } else {
+                names.push_back(argument);
+            }
+        }
+        if (names.size() != 1) {
+            err << kUsage;
+            return kExitUsage;
+        }
+
+        if (auto created = createProject(names.front(), fs::current_path(), kind); !created) {
             result = created.error();
         } else {
-            out << "Created " << rest.front() << ". Next:\n  cd " << rest.front()
+            out << "Created " << names.front() << ". Next:\n  cd " << names.front()
                 << "\n  cppboot run\n";
         }
     } else if (command == "build" && rest.empty()) {

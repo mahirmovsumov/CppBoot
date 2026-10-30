@@ -2,6 +2,7 @@
 
 #include <clang-c/Index.h>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -16,6 +17,10 @@ namespace cppboot::codegen {
 namespace {
 
 constexpr std::string_view kServiceAnnotation = "cppboot:service";
+constexpr std::string_view kJsonAnnotation = "cppboot:json";
+constexpr std::string_view kControllerPrefix = "cppboot:controller:";
+constexpr std::string_view kRoutePrefix = "cppboot:route:";
+constexpr std::string_view kAnyPrefix = "cppboot:";
 
 std::string toString(CXString text) {
     const char* const characters = clang_getCString(text);
@@ -54,39 +59,129 @@ void visitChildren(CXCursor parent, Visitor&& visitor) {
         &visitor);
 }
 
-bool hasServiceAnnotation(CXCursor cursor) {
-    bool found = false;
+std::vector<std::string> annotationsOf(CXCursor cursor) {
+    std::vector<std::string> annotations;
     visitChildren(cursor, [&](CXCursor child) {
-        if (clang_getCursorKind(child) == CXCursor_AnnotateAttr &&
-            spelling(child) == kServiceAnnotation) {
-            found = true;
-            return CXChildVisit_Break;
+        if (clang_getCursorKind(child) == CXCursor_AnnotateAttr) {
+            std::string text = spelling(child);
+            if (text.starts_with(kAnyPrefix)) {
+                annotations.push_back(std::move(text));
+            }
         }
         return CXChildVisit_Continue;
     });
-    return found;
+    return annotations;
 }
 
-/// Returns T if the type is std::shared_ptr<T>, taken by value or by reference.
-std::optional<std::string> sharedPointerTarget(CXType parameter_type) {
+bool hasAnnotation(const std::vector<std::string>& annotations, std::string_view wanted) {
+    return std::find(annotations.begin(), annotations.end(), wanted) != annotations.end();
+}
+
+std::optional<std::string> findWithPrefix(const std::vector<std::string>& annotations,
+                                          std::string_view prefix) {
+    for (const std::string& annotation : annotations) {
+        if (annotation.starts_with(prefix)) {
+            return annotation.substr(prefix.size());
+        }
+    }
+    return std::nullopt;
+}
+
+CXType withoutReference(CXType parameter_type) {
     CXType type = clang_getCanonicalType(parameter_type);
     if (type.kind == CXType_LValueReference || type.kind == CXType_RValueReference) {
         type = clang_getCanonicalType(clang_getPointeeType(type));
     }
+    return type;
+}
 
+/// Returns true for a type with this name in the standard library. Standard libraries put types
+/// in inline namespaces, such as std::__cxx11::basic_string, so those are skipped.
+bool isStandardType(CXType type, std::string_view name) {
     const CXCursor declaration = clang_getTypeDeclaration(type);
-    const std::string parent = spelling(clang_getCursorSemanticParent(declaration));
-    if (spelling(declaration) != "shared_ptr" || (parent != "std" && parent != "__1") ||
-        clang_Type_getNumTemplateArguments(type) != 1) {
+    if (spelling(declaration) != name) {
+        return false;
+    }
+
+    CXCursor parent = clang_getCursorSemanticParent(declaration);
+    while (clang_getCursorKind(parent) == CXCursor_Namespace &&
+           clang_Cursor_isInlineNamespace(parent) != 0) {
+        parent = clang_getCursorSemanticParent(parent);
+    }
+    return clang_getCursorKind(parent) == CXCursor_Namespace && spelling(parent) == "std";
+}
+
+std::string withoutConst(std::string type) {
+    constexpr std::string_view kConst = "const ";
+    if (type.starts_with(kConst)) {
+        type.erase(0, kConst.size());
+    }
+    return type;
+}
+
+/// Returns T if the type is std::shared_ptr<T>, taken by value or by reference.
+std::optional<std::string> sharedPointerTarget(CXType parameter_type) {
+    const CXType type = withoutReference(parameter_type);
+    if (!isStandardType(type, "shared_ptr") || clang_Type_getNumTemplateArguments(type) != 1) {
         return std::nullopt;
     }
+    return withoutConst(qualifiedName(clang_Type_getTemplateArgumentAsType(type, 0)));
+}
 
-    std::string target = qualifiedName(clang_Type_getTemplateArgumentAsType(type, 0));
-    constexpr std::string_view kConst = "const ";
-    if (target.starts_with(kConst)) {
-        target.erase(0, kConst.size());
+bool isOptionalType(CXType type) {
+    return isStandardType(type, "optional");
+}
+
+/// Returns true for types that can be read from text in a URL.
+bool isUrlValue(CXType type) {
+    switch (type.kind) {
+        case CXType_Bool:
+        case CXType_Char_S:
+        case CXType_Char_U:
+        case CXType_SChar:
+        case CXType_UChar:
+        case CXType_Short:
+        case CXType_UShort:
+        case CXType_Int:
+        case CXType_UInt:
+        case CXType_Long:
+        case CXType_ULong:
+        case CXType_LongLong:
+        case CXType_ULongLong:
+        case CXType_Float:
+        case CXType_Double:
+            return true;
+        default:
+            break;
     }
-    return target;
+    if (isOptionalType(type) && clang_Type_getNumTemplateArguments(type) >= 1) {
+        return isUrlValue(clang_getCanonicalType(clang_Type_getTemplateArgumentAsType(type, 0)));
+    }
+    return isStandardType(type, "basic_string");
+}
+
+std::vector<std::string> pathParameterNames(std::string_view path) {
+    std::vector<std::string> names;
+    std::size_t position = 0;
+    while (true) {
+        const auto open = path.find('{', position);
+        const auto close = path.find('}', open);
+        if (open == std::string_view::npos || close == std::string_view::npos) {
+            return names;
+        }
+        names.emplace_back(path.substr(open + 1, close - open - 1));
+        position = close + 1;
+    }
+}
+
+std::string joinPaths(std::string_view base, std::string_view path) {
+    while (!base.empty() && base.back() == '/') {
+        base.remove_suffix(1);
+    }
+    if (path == "/") {
+        return base.empty() ? "/" : std::string{base};
+    }
+    return std::string{base} + std::string{path};
 }
 
 Result<Component> readComponent(CXCursor cursor) {
@@ -154,10 +249,229 @@ Result<Component> readComponent(CXCursor cursor) {
     return component;
 }
 
+Result<JsonType> readJsonType(CXCursor cursor) {
+    JsonType json_type;
+    json_type.type = qualifiedName(clang_getCursorType(cursor));
+    json_type.location = locationOf(cursor);
+
+    if (json_type.type.find("(anonymous") != std::string::npos) {
+        return errorAt(cursor, json_type.type + " can't be marked with CPPBOOT_JSON because "
+                                                "generated code can't name it");
+    }
+
+    std::optional<Error> error;
+    visitChildren(cursor, [&](CXCursor child) {
+        const CXCursorKind kind = clang_getCursorKind(child);
+        if (kind == CXCursor_CXXBaseSpecifier) {
+            error = errorAt(child, json_type.type +
+                                       " can't have base classes, because CPPBOOT_JSON only "
+                                       "converts its own fields");
+        } else if (kind == CXCursor_FieldDecl) {
+            if (clang_getCXXAccessSpecifier(child) != CX_CXXPublic) {
+                error = errorAt(child, "Field '" + spelling(child) + "' of " + json_type.type +
+                                           " must be public for CPPBOOT_JSON");
+            } else {
+                json_type.fields.push_back(JsonField{
+                    spelling(child),
+                    isOptionalType(clang_getCanonicalType(clang_getCursorType(child))),
+                });
+            }
+        }
+        return error ? CXChildVisit_Break : CXChildVisit_Continue;
+    });
+
+    if (error) {
+        return *std::move(error);
+    }
+    return json_type;
+}
+
+Result<std::vector<RouteParameter>> readRouteParameters(CXCursor method, const std::string& path) {
+    const std::vector<std::string> path_names = pathParameterNames(path);
+    std::vector<std::string> unbound = path_names;
+    std::vector<RouteParameter> parameters;
+    bool has_body = false;
+
+    const int count = clang_Cursor_getNumArguments(method);
+    for (int i = 0; i < count; ++i) {
+        const CXCursor parameter = clang_Cursor_getArgument(method, static_cast<unsigned>(i));
+        const std::string name = spelling(parameter);
+        const CXType full_type = clang_getCanonicalType(clang_getCursorType(parameter));
+        const CXType type = withoutReference(full_type);
+        const std::string type_name = withoutConst(qualifiedName(type));
+
+        if (full_type.kind == CXType_LValueReference &&
+            clang_isConstQualifiedType(type) == 0) {
+            return errorAt(parameter, "Route parameter '" + name +
+                                          "' can't be a non-const reference");
+        }
+
+        if (type_name == "cppboot::web::Request") {
+            parameters.push_back(RouteParameter{ParameterSource::Request, name, type_name});
+            continue;
+        }
+        if (name.empty()) {
+            return errorAt(parameter, "Route parameters need a name");
+        }
+
+        const auto path_name = std::find(unbound.begin(), unbound.end(), name);
+        if (path_name != unbound.end()) {
+            if (!isUrlValue(type) || isOptionalType(type)) {
+                return errorAt(parameter, "Path parameter '" + name +
+                                              "' must be text, a number or a bool");
+            }
+            unbound.erase(path_name);
+            parameters.push_back(RouteParameter{ParameterSource::Path, name, type_name});
+        } else if (isUrlValue(type)) {
+            parameters.push_back(RouteParameter{ParameterSource::Query, name, type_name});
+        } else {
+            if (has_body) {
+                return errorAt(parameter, "A route can only read one parameter from the request "
+                                          "body, but '" + name + "' is a second one");
+            }
+            has_body = true;
+            parameters.push_back(RouteParameter{ParameterSource::Body, name, type_name});
+        }
+    }
+
+    if (!unbound.empty()) {
+        return errorAt(method, "Route " + path + " has path parameter '" + unbound.front() +
+                                   "', but its function has no parameter with that name");
+    }
+    return parameters;
+}
+
+/// Reads one route annotation, which looks like "cppboot:route:Get:/{id}".
+Result<Route> readRoute(CXCursor method, std::string_view annotation, std::string_view base_path) {
+    const auto colon = annotation.find(':');
+    const std::string_view route_path = annotation.substr(colon + 1);
+
+    Route route;
+    route.method = annotation.substr(0, colon);
+    route.function = spelling(method);
+    route.location = locationOf(method);
+
+    if (route_path.empty() || route_path.front() != '/') {
+        return errorAt(method, "The route path of " + route.function + " must start with '/'");
+    }
+    if (clang_getCXXAccessSpecifier(method) != CX_CXXPublic) {
+        return errorAt(method, "Route function " + route.function + " must be public");
+    }
+    if (clang_CXXMethod_isStatic(method) != 0) {
+        return errorAt(method, "Route function " + route.function + " can't be static");
+    }
+
+    route.path = joinPaths(base_path, route_path);
+
+    auto parameters = readRouteParameters(method, route.path);
+    if (!parameters) {
+        return parameters.error();
+    }
+    route.parameters = std::move(parameters).value();
+
+    const CXType result = clang_getCanonicalType(clang_getCursorResultType(method));
+    if (result.kind == CXType_Void) {
+        route.return_kind = ReturnKind::Nothing;
+    } else if (withoutConst(qualifiedName(withoutReference(result))) == "cppboot::web::Response") {
+        route.return_kind = ReturnKind::Response;
+    } else {
+        route.return_kind = ReturnKind::Value;
+    }
+    return route;
+}
+
+Result<Controller> readController(CXCursor cursor, std::string_view base_path) {
+    Controller controller;
+    controller.type = qualifiedName(clang_getCursorType(cursor));
+
+    if (!base_path.empty() && base_path.front() != '/') {
+        return errorAt(cursor, "The base path of " + controller.type + " must start with '/'");
+    }
+
+    std::optional<Error> error;
+    visitChildren(cursor, [&](CXCursor child) {
+        if (clang_getCursorKind(child) == CXCursor_CXXMethod) {
+            for (const std::string& annotation : annotationsOf(child)) {
+                if (!annotation.starts_with(kRoutePrefix)) {
+                    continue;
+                }
+                auto route = readRoute(
+                    child, std::string_view{annotation}.substr(kRoutePrefix.size()), base_path);
+                if (!route) {
+                    error = route.error();
+                    return CXChildVisit_Break;
+                }
+                controller.routes.push_back(std::move(route).value());
+            }
+        }
+        return CXChildVisit_Continue;
+    });
+
+    if (error) {
+        return *std::move(error);
+    }
+    if (controller.routes.empty()) {
+        return errorAt(cursor, controller.type + " has no routes. Mark a function with "
+                                                 "CPPBOOT_GET or a similar macro");
+    }
+    return controller;
+}
+
+/// Finds route macros on a class that isn't a controller, where they'd otherwise do nothing.
+std::optional<Error> findStrayRoute(CXCursor cursor) {
+    std::optional<Error> error;
+    visitChildren(cursor, [&](CXCursor child) {
+        if (clang_getCursorKind(child) == CXCursor_CXXMethod &&
+            findWithPrefix(annotationsOf(child), kRoutePrefix)) {
+            error = errorAt(child, "Route function " + spelling(child) +
+                                       " must be in a class marked with CPPBOOT_CONTROLLER");
+            return CXChildVisit_Break;
+        }
+        return CXChildVisit_Continue;
+    });
+    return error;
+}
+
 struct Walk {
-    std::vector<Component> components;
+    Declarations declarations;
     std::optional<Error> error;
 };
+
+void readClass(CXCursor cursor, Walk& walk) {
+    const std::vector<std::string> annotations = annotationsOf(cursor);
+    const auto controller_path = findWithPrefix(annotations, kControllerPrefix);
+    const bool is_service = hasAnnotation(annotations, kServiceAnnotation);
+
+    if (is_service || controller_path) {
+        auto component = readComponent(cursor);
+        if (!component) {
+            walk.error = component.error();
+            return;
+        }
+        walk.declarations.components.push_back(std::move(component).value());
+    }
+
+    if (controller_path) {
+        auto controller = readController(cursor, *controller_path);
+        if (!controller) {
+            walk.error = controller.error();
+            return;
+        }
+        walk.declarations.controllers.push_back(std::move(controller).value());
+    } else if (auto stray = findStrayRoute(cursor)) {
+        walk.error = std::move(stray);
+        return;
+    }
+
+    if (hasAnnotation(annotations, kJsonAnnotation)) {
+        auto json_type = readJsonType(cursor);
+        if (!json_type) {
+            walk.error = json_type.error();
+            return;
+        }
+        walk.declarations.json_types.push_back(std::move(json_type).value());
+    }
+}
 
 void visitDeclarations(CXCursor parent, Walk& walk) {
     visitChildren(parent, [&](CXCursor cursor) {
@@ -168,19 +482,12 @@ void visitDeclarations(CXCursor parent, Walk& walk) {
         const CXCursorKind kind = clang_getCursorKind(cursor);
         if (kind == CXCursor_Namespace) {
             visitDeclarations(cursor, walk);
-        } else if (kind == CXCursor_ClassTemplate && hasServiceAnnotation(cursor)) {
-            walk.error = errorAt(cursor, spelling(cursor) + " can't be a component because it is "
-                                                            "a template");
+        } else if (kind == CXCursor_ClassTemplate && !annotationsOf(cursor).empty()) {
+            walk.error = errorAt(cursor, spelling(cursor) + " can't be marked because it is a "
+                                                            "template");
         } else if ((kind == CXCursor_ClassDecl || kind == CXCursor_StructDecl) &&
                    clang_isCursorDefinition(cursor) != 0) {
-            if (hasServiceAnnotation(cursor)) {
-                auto component = readComponent(cursor);
-                if (!component) {
-                    walk.error = component.error();
-                } else {
-                    walk.components.push_back(std::move(component).value());
-                }
-            }
+            readClass(cursor, walk);
             if (!walk.error) {
                 visitDeclarations(cursor, walk);
             }
@@ -218,8 +525,8 @@ std::string clangResourceDirectory() {
     return CPPBOOT_LIBCLANG_RESOURCE_DIR;
 }
 
-Result<std::vector<Component>> parseComponents(const std::filesystem::path& header,
-                                               const std::vector<std::string>& compiler_arguments) {
+Result<Declarations> parseDeclarations(const std::filesystem::path& header,
+                                       const std::vector<std::string>& compiler_arguments) {
     const std::string resource_directory = clangResourceDirectory();
     std::vector<const char*> arguments = {
         "-x", "c++", "-std=c++20", "-DCPPBOOT_CODEGEN", "-resource-dir", resource_directory.c_str(),
@@ -253,7 +560,7 @@ Result<std::vector<Component>> parseComponents(const std::filesystem::path& head
     if (walk.error) {
         return *std::move(walk.error);
     }
-    return std::move(walk.components);
+    return std::move(walk.declarations);
 }
 
 }  // namespace cppboot::codegen

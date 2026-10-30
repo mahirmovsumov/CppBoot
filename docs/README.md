@@ -5,9 +5,10 @@
 Start with the tutorial, then use the guides as a reference.
 
 - [Getting started](tutorials/getting-started.md): install CppBoot and create your first application
+- [Build a REST API](tutorials/rest-api.md): controllers, JSON and error handling
 - [Modules and workers](guides/modules.md): add functionality and background work
 - [Dependency injection](guides/dependency-injection.md): components, lifetimes and scopes
-- [Web server](guides/web.md): routes, requests, responses and middleware
+- [Web server](guides/web.md): controllers, JSON, routes and middleware
 - [Configuration](guides/configuration.md): settings, profiles and overrides
 - [Command-line tool](guides/cli.md): every `cppboot` command
 

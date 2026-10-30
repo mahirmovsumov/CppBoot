@@ -59,6 +59,10 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - Limits on body size, connections and time, plus protection against header injection and encoded null characters.
 - Graceful shutdown, which lets running requests finish.
 - `ServerModule`, which runs the server within an application using settings under `cppboot.server`.
+- `CPPBOOT_JSON`, which generates conversion between structs and JSON, including nested structs, containers and optional fields.
+- `CPPBOOT_CONTROLLER` with `CPPBOOT_GET`, `CPPBOOT_POST`, `CPPBOOT_PUT`, `CPPBOOT_PATCH` and `CPPBOOT_DELETE`, which turn marked functions into routes. Parameters come from the path, query string or JSON body, and return values become JSON.
+- `WithStatus<T>`, for sending a JSON value with a status other than 200.
+- `cppboot create --web`, which creates a project with a sample controller.
 
 ### Project setup
 
