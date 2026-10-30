@@ -1,0 +1,9 @@
+cppboot:
+  application:
+    name: hello-world
+
+  logging:
+    level: info
+
+hello:
+  interval_seconds: 2

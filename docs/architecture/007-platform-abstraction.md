@@ -1,0 +1,20 @@
+# 007: Platform abstraction
+
+**Status:** Accepted
+
+## Rule
+
+Operating system headers and calls appear only in `framework/platform/windows` and `framework/platform/linux`. Everything else uses the interfaces in `framework/platform/include`.
+
+## Current interfaces
+
+| Interface | Windows | Linux |
+|---|---|---|
+| `environmentVariables()` | `GetEnvironmentStringsW`, converted to UTF-8 | `environ` |
+| `ShutdownSignal` | Console control handler and event objects | `sigaction` for SIGINT and SIGTERM, with a semaphore |
+
+## Platform differences
+
+- **Closing a Windows console:** Windows ends the process when the handler for a close, logoff or shutdown event returns. The handler therefore holds the process open until shutdown finishes, for up to five seconds.
+- **Windows services:** these use a different control mechanism from console events. Support arrives with service packaging.
+- **Sanitizers:** MinGW GCC doesn't provide AddressSanitizer or ThreadSanitizer, so memory and thread checks run only on Linux CI.
