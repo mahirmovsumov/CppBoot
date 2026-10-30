@@ -35,7 +35,7 @@
             "displayName": "ThreadSanitizer (Linux only)",
             "inherits": "dev",
             "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
-            "cacheVariables": { "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer" }
+            "cacheVariables": { "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -DBOOST_ASIO_DISABLE_FENCED_BLOCK" }
         }
     ],
     "buildPresets": [

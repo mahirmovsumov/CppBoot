@@ -50,3 +50,7 @@ Routes are matched with a linear scan, which is simple and fast enough for the n
 
 - `SO_REUSEADDR` is set on Linux so that a restarted server can reuse its port. It isn't set on Windows, where it would let another process take over a port in use.
 - Asio requires Windows 10 APIs (`_WIN32_WINNT=0x0A00`) and links to `ws2_32` and `mswsock`.
+
+## ThreadSanitizer
+
+ThreadSanitizer can't track `atomic_thread_fence`, which Asio uses, and GCC reports this as a warning. The `tsan` preset defines `BOOST_ASIO_DISABLE_FENCED_BLOCK` to remove those fences from that build only. This keeps the check strict, because code relying on a removed fence is reported as a race rather than hidden.
