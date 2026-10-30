@@ -50,7 +50,7 @@ TEST_F(ConfigTest, EachSourceOverridesTheOneBelowIt) {
     EXPECT_EQ(config.value().getString("d"), "default");
     EXPECT_EQ(config.value().getString("a"), "yaml");
     EXPECT_EQ(config.value().getString("b"), "profile");
-    EXPECT_EQ(config.value().getString("cppboot.c"), "environment");
+    EXPECT_EQ(config.value().getString("c"), "environment");
     EXPECT_EQ(config.value().getString("cppboot.server.port"), "9090");
     EXPECT_EQ(config.value().profile(), "prod");
 }
@@ -92,6 +92,33 @@ TEST_F(ConfigTest, UnrelatedEnvironmentAndArgumentsAreIgnored) {
     ASSERT_TRUE(config);
     EXPECT_FALSE(config.value().contains("path"));
     EXPECT_FALSE(config.value().contains("verbose"));
+}
+
+TEST_F(ConfigTest, EnvironmentOverridesApplicationKeysThatExist) {
+    writeFile("cppboot.yaml", "myapp:\n  request_timeout: 30\n");
+    sources_.environment = {{"CPPBOOT_MYAPP_REQUEST_TIMEOUT", "5"}};
+
+    const auto config = Config::load(sources_);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config.value().getString("myapp.request_timeout"), "5");
+}
+
+TEST_F(ConfigTest, ArgumentsOverrideApplicationKeysThatExist) {
+    writeFile("cppboot.yaml", "myapp:\n  timeout: 30\n");
+    sources_.environment = {{"CPPBOOT_MYAPP_TIMEOUT", "5"}};
+    sources_.arguments = {"--myapp.timeout=7"};
+
+    const auto config = Config::load(sources_);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config.value().getString("myapp.timeout"), "7");
+}
+
+TEST_F(ConfigTest, ArgumentsForUnknownApplicationKeysAreLeftAlone) {
+    sources_.arguments = {"--output=report.txt", "--flag"};
+
+    const auto config = Config::load(sources_);
+    ASSERT_TRUE(config);
+    EXPECT_FALSE(config.value().contains("output"));
 }
 
 TEST_F(ConfigTest, ArgumentWithoutValueIsAnError) {

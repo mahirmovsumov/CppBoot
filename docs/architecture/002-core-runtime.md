@@ -37,11 +37,11 @@ Sources from lowest to highest precedence:
 2. `cppboot.yaml`, which is optional
 3. `cppboot-<profile>.yaml`, which must exist if that profile is selected
 4. Environment variables starting with `CPPBOOT_`
-5. Command-line arguments of the form `--cppboot.some.key=value`
+5. Command-line arguments of the form `--cppboot.some.key=value`, or `--other.key=value` if `other.key` is already set
 
 The profile comes from `--cppboot.profile`, then `CPPBOOT_PROFILE`, then the `cppboot.profile` setting.
 
-An environment variable first looks for an existing key that it matches, so `CPPBOOT_RUNTIME_GRACEFUL_SHUTDOWN_TIMEOUT` sets `cppboot.runtime.graceful_shutdown_timeout`. If there's no match, each underscore becomes a dot. If it matches more than one key, startup fails.
+An environment variable first looks for an existing key that it matches, so `CPPBOOT_RUNTIME_GRACEFUL_SHUTDOWN_TIMEOUT` sets `cppboot.runtime.graceful_shutdown_timeout`, and `CPPBOOT_MYAPP_TIMEOUT` sets an existing `myapp.timeout`. If there's no match, each underscore becomes a dot. If it matches more than one key, startup fails.
 
 Setting `cppboot.runtime.shutdown_after_start` to `true` makes the application stop as soon as it's running, which is useful for startup checks in tests and CI.
 

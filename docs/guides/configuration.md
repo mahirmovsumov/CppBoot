@@ -12,7 +12,7 @@ If a key is set in more than one place, the source that's lower in this table wi
 | Base file | `cppboot.yaml` | Optional, read from the working directory |
 | Profile file | `cppboot-prod.yaml` | Must exist if that profile is selected |
 | Environment variable | `CPPBOOT_LOGGING_LEVEL=debug` | Only names starting with `CPPBOOT_` are read |
-| Command-line argument | `--cppboot.logging.level=debug` | Only arguments starting with `--cppboot.` are read |
+| Command-line argument | `--cppboot.logging.level=debug` | Other arguments are left for your application |
 
 Nested YAML becomes dotted keys, and list items get a numeric index:
 
@@ -25,9 +25,21 @@ cppboot:
     - two           # cppboot.hosts.1
 ```
 
-## Overridable keys
+## Your own settings
 
-Environment variables and command-line arguments can only set keys that start with `cppboot.`. A key such as `myapp.timeout` can be set in YAML or in code, but it can't be overridden for a single run. To allow overrides, put the key under `cppboot:`.
+You can use any key name for your application's settings. To override one with an environment variable or a command-line argument, the key must already be set in YAML or in the defaults:
+
+```yaml
+myapp:
+  timeout: 30
+```
+
+```powershell
+$env:CPPBOOT_MYAPP_TIMEOUT = "5"
+cppboot run --myapp.timeout=7
+```
+
+The environment variable always starts with `CPPBOOT_`, so CppBoot never picks up unrelated variables such as `PATH`. An argument such as `--output=report.txt` is left for your application unless `output` is already a setting.
 
 ## Profiles
 

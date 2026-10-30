@@ -99,9 +99,26 @@ Result<Config::Values> parseArguments(const std::vector<std::string>& arguments)
     return values;
 }
 
+/// Overrides keys outside the cppboot namespace, such as --myapp.timeout=5. Only keys that already
+/// exist are matched, so that other arguments stay available to the application.
+void applyKnownArguments(const std::vector<std::string>& arguments, Config::Values& values) {
+    for (const std::string& argument : arguments) {
+        const auto separator = argument.find('=');
+        if (!argument.starts_with("--") || separator == std::string::npos) {
+            continue;
+        }
+
+        const auto entry = values.find(std::string_view{argument}.substr(2, separator - 2));
+        if (entry != values.end()) {
+            entry->second = argument.substr(separator + 1);
+        }
+    }
+}
+
 /// Maps each variable to a key that already exists, which keeps underscores in key names working:
-/// CPPBOOT_RUNTIME_GRACEFUL_SHUTDOWN_TIMEOUT sets cppboot.runtime.graceful_shutdown_timeout.
-/// A variable with no matching key has each underscore treated as a dot.
+/// CPPBOOT_RUNTIME_GRACEFUL_SHUTDOWN_TIMEOUT sets cppboot.runtime.graceful_shutdown_timeout, and
+/// CPPBOOT_MYAPP_TIMEOUT sets myapp.timeout. A variable with no matching key has each underscore
+/// treated as a dot.
 Result<void> applyEnvironment(const std::map<std::string, std::string>& environment,
                               Config::Values& values) {
     std::map<std::string, std::vector<std::string>> known_keys;
@@ -110,6 +127,9 @@ Result<void> applyEnvironment(const std::map<std::string, std::string>& environm
         std::transform(variable.begin(), variable.end(), variable.begin(), [](char c) {
             return (c == '.' || c == '-') ? '_' : toUpper(c);
         });
+        if (!variable.starts_with(kEnvironmentPrefix)) {
+            variable.insert(0, kEnvironmentPrefix);
+        }
         known_keys[std::move(variable)].push_back(key);
     }
 
@@ -198,6 +218,7 @@ Result<Config> Config::load(const ConfigSources& sources) {
     for (auto& [key, value] : arguments.value()) {
         values.insert_or_assign(key, value);
     }
+    applyKnownArguments(sources.arguments, values);
 
     return Config{std::move(values), std::move(profile)};
 }

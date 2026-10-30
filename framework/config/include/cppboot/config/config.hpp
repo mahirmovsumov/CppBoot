@@ -20,7 +20,8 @@ struct ConfigSources {
     std::filesystem::path directory{"."};
     /// Only variables starting with CPPBOOT_ are read.
     std::map<std::string, std::string> environment;
-    /// Only arguments of the form --cppboot.some.key=value are read.
+    /// Reads --cppboot.some.key=value, and --other.key=value if other.key is already set.
+    /// Any other argument is left for the application.
     std::vector<std::string> arguments;
 };
 

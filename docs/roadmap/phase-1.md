@@ -1,6 +1,6 @@
 # Phase 1: Core runtime
 
-**Status:** In progress. The runtime and CLI work on Windows with GCC 16.2. The Linux process code and the installed CLI haven't been run on Linux yet.
+**Status:** Complete. CI passes on Linux with GCC, Clang and the sanitizers, and on Windows with GCC.
 
 ## Done
 
@@ -16,9 +16,9 @@
 - An end-to-end test that installs the framework, then creates, builds and runs a project
 - `examples/hello-world` and unit tests
 
-## Remaining
+## Not tested automatically
 
-1. Pass CI on Linux and Windows with the CLI and the Linux process code.
+CI covers everything above except a real Ctrl+C on Windows, which was checked by hand for both `hello-world` and `cppboot run`.
 
 ## Done when
 

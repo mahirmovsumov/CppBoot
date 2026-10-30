@@ -20,6 +20,7 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 ### Configuration
 
 - YAML files, profiles, environment variables and command-line arguments, in a fixed order of precedence.
+- Application settings with any key name can be overridden if they're already set, such as `myapp.timeout` with `CPPBOOT_MYAPP_TIMEOUT` or `--myapp.timeout=5`.
 - A selected profile must exist, so a typo can't silently run the wrong settings.
 - Typed getters that report invalid values, and hidden values for sensitive keys in configuration dumps.
 
