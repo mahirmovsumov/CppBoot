@@ -7,6 +7,7 @@
 #include <boost/beast.hpp>
 #include <boost/beast/ssl.hpp>
 #include <charconv>
+#include <chrono>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -39,6 +40,9 @@ constexpr std::chrono::milliseconds kMostHandshakeTime = std::chrono::seconds{10
 
 // Closing cleanly waits for the client to agree, and a client that doesn't must not hold it open.
 constexpr std::chrono::milliseconds kTlsCloseTime = std::chrono::seconds{2};
+
+// Rejected requests come in floods, so this is how often the log mentions them.
+constexpr std::chrono::seconds kShedLogInterval{10};
 
 using PlainStream = beast::tcp_stream;
 using TlsStream = beast::ssl_stream<beast::tcp_stream>;
@@ -73,10 +77,6 @@ Result<Request> toRequest(http::request<http::string_body>& request) {
     }
     return Request::create(*method, request.target(), std::move(headers),
                            std::move(request.body()));
-}
-
-asio::awaitable<Response> runHandler(const Router& router, Request request) {
-    co_return router.handle(std::move(request));
 }
 
 /// Keeps per-connection state on the network thread, which is the only thread to touch it.
@@ -236,6 +236,33 @@ struct Server::Impl {
         }
     }
 
+    /// Runs on a worker. The workers take requests in order, so once the oldest is too old, this
+    /// clears the rest of the backlog quickly rather than making everyone wait behind it.
+    asio::awaitable<Response> runHandler(Request request,
+                                         std::chrono::steady_clock::time_point queued_at) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - queued_at <= options.queue_timeout) {
+            co_return router.handle(std::move(request));
+        }
+
+        const auto shed = shed_since_log.fetch_add(1) + 1;
+        const auto now_ticks = now.time_since_epoch().count();
+        auto next_log = next_shed_log_ticks.load();
+        if (now_ticks >= next_log &&
+            next_shed_log_ticks.compare_exchange_strong(
+                next_log, now_ticks + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                          kShedLogInterval)
+                                          .count())) {
+            shed_since_log.fetch_sub(shed);
+            logError("Too busy: rejected " + std::to_string(shed) +
+                     " requests that waited too long for a worker");
+        }
+
+        Response response = errorResponse(503, statusReason(503));
+        response.setHeader("Retry-After", "1");
+        co_return response;
+    }
+
     asio::awaitable<void> accept() {
         while (true) {
             auto [error, socket] = co_await acceptor.async_accept(kAsTuple);
@@ -356,7 +383,8 @@ struct Server::Impl {
             Response response = !request ? errorResponse(400, statusReason(400))
                                          : co_await asio::co_spawn(
                                                workers,
-                                               runHandler(router, std::move(request).value()),
+                                               runHandler(std::move(request).value(),
+                                                          std::chrono::steady_clock::now()),
                                                asio::use_awaitable);
 
             const bool keep_alive = wants_keep_alive && !stopping;
@@ -422,6 +450,8 @@ struct Server::Impl {
     bool stopping{false};
 
     std::jthread network_thread;
+    std::atomic<std::uint64_t> shed_since_log{0};
+    std::atomic<std::chrono::steady_clock::rep> next_shed_log_ticks{0};
     std::atomic<std::uint16_t> bound_port{0};
     std::atomic<bool> started{false};
     std::atomic<bool> stop_called{false};

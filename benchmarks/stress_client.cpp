@@ -274,6 +274,11 @@ public:
             shared_.results.failed(scenario, "request: " + error.message());
             return false;
         }
+        // The server is allowed to turn work away when it's overloaded, if it says so properly.
+        if (response.result_int() == 503 && !response[http::field::retry_after].empty()) {
+            shared_.results.ok("server-too-busy");
+            return true;
+        }
         if (response.result_int() != static_cast<unsigned>(status)) {
             shared_.results.failed(scenario, "status " + std::to_string(response.result_int()) +
                                                  ", expected " + std::to_string(status));
@@ -328,7 +333,8 @@ public:
                 if (!check("routes", json_error, json, 200)) {
                     break;
                 }
-                if (json.body().find("\"page\":\"" + id + "\"") == std::string::npos) {
+                if (json.result_int() == 200 &&
+                    json.body().find("\"page\":\"" + id + "\"") == std::string::npos) {
                     shared_.results.failed("routes", "JSON from another request: " + json.body());
                 }
 
@@ -472,7 +478,8 @@ public:
             if (error) {
                 shared_.results.failed("rate-limited", error.message());
             } else if (response.result_int() == 200 ||
-                       (response.result_int() == 429 && !response[http::field::retry_after].empty())) {
+                       ((response.result_int() == 429 || response.result_int() == 503) &&
+                        !response[http::field::retry_after].empty())) {
                 shared_.results.ok("rate-limited");
             } else {
                 shared_.results.failed("rate-limited",
@@ -490,7 +497,8 @@ public:
                 auto [error, response] =
                     co_await connection->send(request(http::verb::get, "/actuator/metrics"));
                 check("metrics", error, response, 200);
-                if (response.body().find("stress_middleware_total") == std::string::npos) {
+                if (!error && response.result_int() == 200 &&
+                    response.body().find("stress_middleware_total") == std::string::npos) {
                     shared_.results.failed("metrics", "a metric is missing");
                 }
                 // Invented paths must all count as one route, or this would grow forever.
@@ -592,7 +600,7 @@ public:
             auto [error, response] = co_await connection->send(
                 request(http::verb::post, "/echo", std::string(2 * 1024 * 1024, 'x')));
             // The server may close before it has read everything, which the client sees as an error.
-            if (!error && response.result_int() != 413) {
+            if (!error && response.result_int() != 413 && response.result_int() != 503) {
                 shared_.results.failed("oversized",
                                        "status " + std::to_string(response.result_int()));
             } else {

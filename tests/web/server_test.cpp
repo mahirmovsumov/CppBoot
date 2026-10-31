@@ -11,6 +11,7 @@
 #include <latch>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -185,6 +186,78 @@ TEST_F(ClientAddressTest, WritesIpv6InOneForm) {
     server_.reset();
     router_ = Router{};
     EXPECT_EQ(addressSeen({"127.0.0.1"}, {"2001:DB8::1"}), "2001:db8::1");
+}
+
+TEST_F(ServerTest, RejectsRequestsThatWaitedTooLongForAWorker) {
+    std::promise<void> entered;
+    std::promise<void> release;
+    std::atomic<int> quick_calls{0};
+    router_.get("/block", [&](const Request&) {
+        entered.set_value();
+        release.get_future().wait();
+        return Response::text("done");
+    });
+    router_.get("/quick", [&](const Request&) {
+        quick_calls.fetch_add(1);
+        return Response::text("quick");
+    });
+
+    std::mutex log_mutex;
+    std::vector<std::string> logged;
+    ServerOptions options = testOptions();
+    options.worker_threads = 1;
+    options.queue_timeout = std::chrono::milliseconds{100};
+    Server server{router_, std::move(options), [&](std::string_view message) {
+                      const std::lock_guard lock{log_mutex};
+                      logged.emplace_back(message);
+                  }};
+    ASSERT_TRUE(server.start());
+
+    Client blocker{server.port()};
+    auto blocked = std::async(std::launch::async,
+                              [&] { return blocker.send(http::verb::get, "/block"); });
+    entered.get_future().wait();
+
+    // These wait behind the blocked handler for longer than they're allowed.
+    Client first{server.port()};
+    Client second{server.port()};
+    auto first_response = std::async(std::launch::async,
+                                     [&] { return first.send(http::verb::get, "/quick"); });
+    auto second_response = std::async(std::launch::async,
+                                      [&] { return second.send(http::verb::get, "/quick"); });
+    std::this_thread::sleep_for(std::chrono::milliseconds{400});
+    release.set_value();
+
+    EXPECT_EQ(blocked.get().result_int(), 200);
+    for (auto* response : {&first_response, &second_response}) {
+        const auto rejected = response->get();
+        EXPECT_EQ(rejected.result_int(), 503);
+        EXPECT_EQ(rejected[http::field::retry_after], "1");
+    }
+    EXPECT_EQ(quick_calls.load(), 0);
+
+    // The connection and the server both still work, and the backlog has gone.
+    EXPECT_EQ(first.send(http::verb::get, "/quick").result_int(), 200);
+    EXPECT_EQ(quick_calls.load(), 1);
+
+    server.stop();
+    const std::lock_guard lock{log_mutex};
+    ASSERT_FALSE(logged.empty());
+    EXPECT_NE(logged.front().find("Too busy"), std::string::npos);
+}
+
+TEST(ReadServerOptionsTest, ReadsTheQueueTimeout) {
+    config::ConfigSources sources;
+    sources.directory = std::filesystem::temp_directory_path() / "cppboot-absent-directory";
+    EXPECT_EQ(readServerOptions(config::Config::load(sources).value()).value().queue_timeout,
+              std::chrono::seconds{5});
+
+    sources.defaults = {{"cppboot.server.queue_timeout_seconds", "2"}};
+    EXPECT_EQ(readServerOptions(config::Config::load(sources).value()).value().queue_timeout,
+              std::chrono::seconds{2});
+
+    sources.defaults = {{"cppboot.server.queue_timeout_seconds", "0"}};
+    EXPECT_FALSE(readServerOptions(config::Config::load(sources).value()));
 }
 
 TEST_F(ServerTest, RefusesToStartWithAnInvalidTrustedProxy) {

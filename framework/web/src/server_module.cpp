@@ -77,6 +77,12 @@ Result<ServerOptions> readServerOptions(const config::Config& config) {
         return r.error();
     }
 
+    if (auto r = read("cppboot.server.queue_timeout_seconds", 5, 1, 86400,
+                      [&](std::int64_t v) { options.queue_timeout = std::chrono::seconds{v}; });
+        !r) {
+        return r.error();
+    }
+
     const std::string proxies = config.getString("cppboot.server.trusted_proxies");
     std::string_view rest = proxies;
     while (!rest.empty()) {

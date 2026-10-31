@@ -208,6 +208,7 @@ With controllers, use the `CPPBOOT_RATE_LIMIT` mark. The [security guide](securi
 | `cppboot.server.max_connections` | `1024` | Connections beyond this are closed at once |
 | `cppboot.server.request_timeout_seconds` | `30` | The longest a client can take to send a request or read a response |
 | `cppboot.server.shutdown_timeout_seconds` | `30` | How long shutdown waits for connections to finish |
+| `cppboot.server.queue_timeout_seconds` | `5` | A request that waits longer than this for a worker gets a 503, and its handler doesn't run |
 | `cppboot.server.trusted_proxies` | None | Proxies whose `X-Forwarded-For` header can be believed, separated by commas, such as `10.0.0.5, 10.1.0.0/16`. An invalid entry, or a range covering every address, stops startup |
 
 ## HTTPS
@@ -281,6 +282,8 @@ Serving HTTPS directly means one less thing to run. A proxy such as nginx or Cad
 ## Handlers and threads
 
 Handlers run on a pool of worker threads, so a slow handler can't stop the server from serving others. Several handlers can run at once, so shared data needs its own protection, such as a mutex.
+
+When requests arrive faster than the workers can handle them, the server rejects those that have waited too long, with a 503 and a `Retry-After` header. It logs this, at most every 10 seconds. These rejections don't reach middleware, so they don't appear in [metrics](actuator.md). If you see them often, your handlers are too slow for your traffic, so raise `cppboot.server.worker_threads` or add capacity. Raising the timeout only makes clients wait longer.
 
 Shutdown stops accepting connections, closes idle ones and lets running requests finish. A handler can't be interrupted, so shutdown waits for it, however long it takes. Long-running handlers should have their own time limits.
 

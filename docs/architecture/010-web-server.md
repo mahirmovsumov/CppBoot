@@ -28,12 +28,21 @@ Boost.Asio and Boost.Beast appear only in the server's source files. Public head
 | Unsupported method | 400 |
 | Client too slow | Close when `request_timeout` expires |
 | More than `max_connections` | Close at once |
+| Waited longer than `queue_timeout` for a worker | 503 with `Retry-After`, and the handler doesn't run |
 | Handler throws `HttpError` | That status, with its message |
 | Handler throws anything else | 500 with a generic message, with the details logged |
 
 Percent-encoded null characters are rejected, because they can fool later code that passes values to C APIs. Line breaks in response headers throw an exception, which stops header injection.
 
 The default host is `127.0.0.1`, so a service is only exposed to a network if someone chooses that.
+
+## Overload
+
+A stress test found that clients could send a slow request and leave at once, and the worker pool would still run it. Once work arrived faster than it finished, the queue only grew. Open connections reached `max_connections`, and well-behaved clients waited over 30 seconds, although the server kept running and used no extra memory.
+
+So each request records when it was queued, and a worker that picks up one older than `queue_timeout` answers 503 without running it. Workers take requests in order, so once a backlog is too old, the rest of it clears in microseconds per request, and new requests get served. Time is a better limit than a queue length, because the right length depends entirely on how slow the handlers are.
+
+This doesn't detect that a client has gone. A fresh request from one still runs, because the network thread isn't reading a connection while its request is running. Rejected requests skip middleware, because the point is to do no work for them, so metrics don't count them. The server logs them instead.
 
 ## Shutdown
 

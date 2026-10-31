@@ -132,6 +132,16 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - On Linux, a package includes a systemd service, and scripts that install, upgrade and remove it. The service runs under its own account with limited access to the system.
 - Applications tell systemd when they're ready and when they're stopping.
 
+### Stress tests and overload
+
+- `cppboot-stress-client`, `scripts/stress-linux.sh` and a Stress workflow, which check responses, memory, open files and threads over long runs.
+- A request that waits longer than `cppboot.server.queue_timeout_seconds` for a worker now gets a 503, and its handler doesn't run. Before this, an overloaded server could keep well-behaved clients waiting for over 30 seconds.
+
+### Preparing for 1.0
+
+- [What 1.0 promises](docs/stability.md), a [release checklist](docs/release-checklist.md) and a [security policy](SECURITY.md).
+- CI builds the code in the tutorials and guides, checks links in the documentation, and checks that each public header compiles by itself.
+
 ### Fixes
 
 - Settings with underscores in their names can now be set from the environment, even when they aren't in YAML. For example, `CPPBOOT_SERVER_MAX_CONNECTIONS` had no effect before, unless the key was also in `cppboot.yaml`.
