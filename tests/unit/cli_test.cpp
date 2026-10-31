@@ -7,6 +7,8 @@
 #include <sstream>
 #include <string>
 
+#include "package_files.hpp"
+
 using cppboot::ErrorCode;
 using cppboot::cli::createProject;
 using cppboot::cli::readProjectName;
@@ -236,6 +238,59 @@ TEST_F(CliTest, BuildTakesNoOtherArguments) {
     EXPECT_EQ(cppboot::cli::run({"build", "extra"}, out, err), cppboot::cli::kExitUsage);
     EXPECT_EQ(cppboot::cli::run({"build", "--sanitize=address", "extra"}, out, err),
               cppboot::cli::kExitUsage);
+}
+
+TEST_F(CliTest, ServiceAccountNamesAreLowerCaseAndShortEnough) {
+    EXPECT_EQ(cppboot::cli::serviceAccountName("My-Api").value(), "my-api");
+    EXPECT_TRUE(cppboot::cli::serviceAccountName(std::string(32, 'a')));
+    EXPECT_FALSE(cppboot::cli::serviceAccountName(std::string(33, 'a')));
+}
+
+TEST_F(CliTest, LinuxPackageFilesAreComplete) {
+    ASSERT_TRUE(cppboot::cli::writePackageFiles(directory_, "My-Api", true));
+
+    const auto read = [&](const std::string& file) {
+        std::ifstream input{directory_ / file, std::ios::binary};
+        std::stringstream text;
+        text << input.rdbuf();
+        return text.str();
+    };
+
+    const std::string unit = read("My-Api.service");
+    for (const char* expected :
+         {"Type=notify", "User=my-api", "ExecStart=/opt/My-Api/bin/My-Api",
+          "RestartPreventExitStatus=78", "NoNewPrivileges=yes", "ProtectSystem=strict",
+          "CapabilityBoundingSet=\n", "StateDirectory=My-Api"}) {
+        EXPECT_NE(unit.find(expected), std::string::npos) << expected;
+    }
+    EXPECT_EQ(unit.find("User=root"), std::string::npos);
+    EXPECT_EQ(unit.find("@"), unit.find("@system-service"));
+
+    const std::string settings = read("My-Api.env.example");
+    EXPECT_NE(settings.find("#CPPBOOT_SECURITY_JWT_SECRET=\n"), std::string::npos);
+    EXPECT_EQ(settings.find("@NAME@"), std::string::npos);
+
+    // An upgrade must never replace settings that already exist.
+    const std::string install = read("install.sh");
+    EXPECT_NE(install.find("if [ ! -e \"$settings\" ]"), std::string::npos);
+    EXPECT_NE(install.find("-m 0640"), std::string::npos);
+
+    // Removing the service must not delete anyone's data.
+    const std::string uninstall = read("uninstall.sh");
+    EXPECT_EQ(uninstall.find("rm -rf \"/var/lib"), std::string::npos);
+}
+
+TEST_F(CliTest, WindowsPackageHasNoServiceFiles) {
+    ASSERT_TRUE(cppboot::cli::writePackageFiles(directory_, "my-api", false));
+    EXPECT_TRUE(std::filesystem::exists(directory_ / "README.md"));
+    EXPECT_FALSE(std::filesystem::exists(directory_ / "my-api.service"));
+    EXPECT_FALSE(std::filesystem::exists(directory_ / "install.sh"));
+}
+
+TEST_F(CliTest, PackageTakesNoArguments) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cppboot::cli::run({"package", "extra"}, out, err), cppboot::cli::kExitUsage);
 }
 
 TEST_F(CliTest, InfoPrintsTheVersion) {

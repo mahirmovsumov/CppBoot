@@ -66,6 +66,8 @@ cppboot create banking-api --web --postgresql --security --actuator
 
 To serve HTTPS, give the server a certificate and a key in its settings, or put a proxy in front of it.
 
+To deploy it, run `cppboot package`. The result runs on another machine with no SDK, and on Linux it installs as a [systemd service](guides/deployment.md) with limited access to the system.
+
 ## Progress
 
 | Phase | Status | Result |
@@ -78,7 +80,7 @@ To serve HTTPS, give the server a certificate and a key in its settings, or put 
 | 6. Security | Complete | JWT sign-in, roles, password hashing, deny by default |
 | 7. Enterprise integration | After 1.0 | Redis, Kafka, RabbitMQ and similar |
 | 8. Observability | Complete | Health checks and Prometheus metrics |
-| 9. Production readiness | In progress | Rate limiting and HTTPS are done. Service integration and stress testing are next |
+| 9. Production readiness | In progress | Rate limiting, HTTPS, memory safety tools and Linux services are done. Stress testing is next |
 
 ## What has been built
 
@@ -90,7 +92,7 @@ To serve HTTPS, give the server a certificate and a key in its settings, or put 
 | Logging | Writes to the console and to a file from any thread | [Configuration](guides/configuration.md) |
 | Dependency injection | Creates components and manages their lifetimes | [Dependency injection](guides/dependency-injection.md), [Ownership and memory safety](guides/memory-safety.md) |
 | Code generator | Reads marked classes and generates their registration | [Code generation](architecture/009-code-generation.md) |
-| `cppboot` CLI | Creates, builds and runs projects | [CLI](guides/cli.md) |
+| `cppboot` CLI | Creates, builds, runs and packages projects | [CLI](guides/cli.md), [Deployment](guides/deployment.md) |
 | Web framework | Serves HTTP and HTTPS with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |
 | Database | Connects to PostgreSQL and SQLite, with pooling, transactions and migrations | [Database](guides/database.md) |
 | Security | Signs users in with tokens, protects routes by default, and limits request rates | [Security](guides/security.md) |
@@ -100,7 +102,7 @@ To serve HTTPS, give the server a certificate and a key in its settings, or put 
 
 Every push runs on Linux with GCC and Clang, on Linux with memory and thread checkers (AddressSanitizer, UBSan and ThreadSanitizer), and on Windows with GCC. The database tests run against SQLite everywhere, and against a real PostgreSQL server on Linux.
 
-The tests include an end-to-end test that installs the framework, creates a new project with the CLI, adds a marked class, then builds and runs it. A real Ctrl+C on Windows can't be sent automatically in CI, so that's checked by hand.
+The tests include an end-to-end test that installs the framework, creates a new project with the CLI, adds a marked class, then builds, runs and packages it. Another CI job installs a real application as a systemd service, crashes, upgrades and removes it, and runs its package in a clean container. A real Ctrl+C on Windows can't be sent automatically in CI, so that's checked by hand.
 
 ## Performance
 
@@ -118,7 +120,9 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 
 ## Known limits
 
-- The SDK isn't a standalone download, because it needs the compiler, libraries and libclang installed.
+- The SDK isn't a standalone download, because it needs the compiler, libraries and libclang installed. Packages of your application don't need any of this.
+- A package includes its own copies of libraries such as OpenSSL, so a security fix in one means building a new package.
+- A Windows package can't install as a service.
 - Marked classes are always singletons. Transient and scoped components need manual registration.
 - Every header in `src` adds time to the build, because the generator parses each one.
 - Tokens can't be revoked, so they stay valid until they expire.

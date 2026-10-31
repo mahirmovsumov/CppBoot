@@ -7,6 +7,7 @@
 #include "cppboot/base/exceptions.hpp"
 #include "cppboot/base/version.hpp"
 #include "cppboot/platform/environment.hpp"
+#include "cppboot/platform/service_manager.hpp"
 
 namespace cppboot {
 
@@ -143,12 +144,14 @@ int Application::execute() {
 
     advance(LifecycleState::Running);
     logger_->info("Application is running");
+    platform::notifyServiceManager("READY=1");
     if (shutdown_after_start.value()) {
         requestShutdown();
     }
     signal_->wait();
 
     advance(LifecycleState::Stopping);
+    platform::notifyServiceManager("STOPPING=1");
     logger_->info("Shutting down");
     return kExitSuccess;
 }

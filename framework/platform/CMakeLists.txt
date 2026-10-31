@@ -5,6 +5,7 @@ if(WIN32)
     target_sources(cppboot-platform PRIVATE
         windows/environment.cpp
         windows/process.cpp
+        windows/service_manager.cpp
         windows/signals.cpp
         windows/system_info.cpp
     )
@@ -13,6 +14,7 @@ elseif(UNIX)
     target_sources(cppboot-platform PRIVATE
         linux/environment.cpp
         linux/process.cpp
+        linux/service_manager.cpp
         linux/signals.cpp
         linux/system_info.cpp
     )

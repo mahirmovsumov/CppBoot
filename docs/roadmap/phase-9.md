@@ -8,12 +8,12 @@
 - `Request::clientAddress()`, and `cppboot.server.trusted_proxies` for servers behind a proxy
 - HTTPS in the server, with settings under `cppboot.server.tls`
 - Components can take plain references, which the container keeps valid, with build checks and checkers for memory bugs
+- `cppboot package`, with a standalone package, and on Linux a systemd service with limited access. CI installs a real one and tests it
 
 ## Next, in order
 
-1. Running as a Linux service, with systemd, packaging and a standalone install
-2. Stress testing: long runs that look for memory leaks and failures under sustained load
-3. Preparing for 1.0: a stable API policy, and a full review of the documentation
+1. Stress testing: long runs that look for memory leaks and failures under sustained load
+2. Preparing for 1.0: a stable API policy, and a full review of the documentation
 
 ## Done when
 
@@ -26,3 +26,5 @@ An independent security review should also happen before 1.0, because the projec
 - Limits by user or account, and limits shared between servers
 - CORS
 - HTTP/2, and loading a renewed certificate without a restart
+- A standalone download of the SDK, which still needs a compiler and libraries installed
+- Windows services, and upgrades with no downtime

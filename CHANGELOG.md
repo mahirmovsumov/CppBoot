@@ -126,6 +126,12 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - New projects turn on `_GLIBCXX_ASSERTIONS`, `-Wall` and `-Wextra`, and take plain references in their samples.
 - `CPPBOOT_LIFETIMEBOUND`, on request accessors and `Result::value()`, which lets Clang warn about dangling references.
 
+### Deployment
+
+- `cppboot package`, which builds a release with its shared libraries, settings and migrations, and an archive of them all.
+- On Linux, a package includes a systemd service, and scripts that install, upgrade and remove it. The service runs under its own account with limited access to the system.
+- Applications tell systemd when they're ready and when they're stopping.
+
 ### Fixes
 
 - Settings with underscores in their names can now be set from the environment, even when they aren't in YAML. For example, `CPPBOOT_SERVER_MAX_CONNECTIONS` had no effect before, unless the key was also in `cppboot.yaml`.

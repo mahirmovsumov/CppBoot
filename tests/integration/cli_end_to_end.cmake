@@ -326,6 +326,50 @@ public:
     file(REMOVE ${CHECKS_DIR}/src/racy.hpp)
 endif()
 
+# A package has to run from another folder, with no build folder and no SDK to rely on.
+run_cli(code output ${WORK_DIR}/demo-store package)
+expect_exit_code("${code}" 0 "package" "${output}")
+expect_contains("${output}" "Packaged " "package")
+set(STAGE ${WORK_DIR}/demo-store/dist/demo-store)
+foreach(file bin/demo-store${EXE_SUFFIX} cppboot.yaml db/migrations/001_create_users.sql README.md)
+    if(NOT EXISTS ${STAGE}/${file})
+        message(FATAL_ERROR "package: ${file} is missing")
+    endif()
+endforeach()
+
+set(MOVED_PACKAGE ${WORK_DIR}/elsewhere/demo-store)
+file(REMOVE_RECURSE ${WORK_DIR}/elsewhere)
+file(COPY ${STAGE} DESTINATION ${WORK_DIR}/elsewhere)
+execute_process(
+    COMMAND ${MOVED_PACKAGE}/bin/demo-store${EXE_SUFFIX}
+        --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true
+    WORKING_DIRECTORY ${MOVED_PACKAGE}
+    RESULT_VARIABLE code
+    OUTPUT_VARIABLE output
+    ERROR_VARIABLE output
+)
+expect_exit_code("${code}" 0 "run a package" "${output}")
+expect_contains("${output}" "Applied 1 new database migrations" "run a package")
+
+if(WIN32)
+    set(ARCHIVE ${WORK_DIR}/demo-store/dist/demo-store-windows.zip)
+else()
+    set(ARCHIVE ${WORK_DIR}/demo-store/dist/demo-store-linux.tar.gz)
+    foreach(file demo-store.service demo-store.env.example install.sh uninstall.sh lib)
+        if(NOT EXISTS ${STAGE}/${file})
+            message(FATAL_ERROR "package: ${file} is missing")
+        endif()
+    endforeach()
+    execute_process(COMMAND sh -n ${STAGE}/install.sh COMMAND_ERROR_IS_FATAL ANY)
+    execute_process(COMMAND sh -n ${STAGE}/uninstall.sh COMMAND_ERROR_IS_FATAL ANY)
+endif()
+if(NOT EXISTS ${ARCHIVE})
+    message(FATAL_ERROR "package: ${ARCHIVE} is missing")
+endif()
+
+run_cli(code output ${WORK_DIR} package)
+expect_exit_code("${code}" 1 "package outside a project" "${output}")
+
 run_cli(code output ${WORK_DIR} build)
 expect_exit_code("${code}" 1 "build outside a project" "${output}")
 expect_contains("${output}" "No CppBoot project here" "build outside a project")

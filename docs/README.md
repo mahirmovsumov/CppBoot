@@ -11,6 +11,7 @@ Start with the tutorial, then use the guides as a reference.
 - [Modules and workers](guides/modules.md): add functionality and background work
 - [Dependency injection](guides/dependency-injection.md): components, lifetimes and scopes
 - [Ownership and memory safety](guides/memory-safety.md): plain references, build checks, and tools that find memory bugs
+- [Deployment](guides/deployment.md): packaging, and running as a Linux service
 - [Web server](guides/web.md): controllers, JSON, routes and middleware
 - [Database](guides/database.md): queries, row mapping, transactions and migrations
 - [Security](guides/security.md): protected routes, tokens, passwords and middleware

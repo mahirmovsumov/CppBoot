@@ -67,6 +67,10 @@ cppboot run -- --cppboot.logging.level=debug
 
 Press Ctrl+C to stop the application.
 
+### `cppboot package`
+
+Builds a release into `build-release/`, then puts it in `dist/` with everything it needs to run on another machine. On Linux, that includes a systemd service and a script that installs it. See [Deployment](deployment.md).
+
 ### `cppboot info`
 
 Shows the CppBoot version, the install folder and the project in the current folder.

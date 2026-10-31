@@ -45,6 +45,18 @@ jobs:
           echo "$output" | tail -n 2
           ! echo "$output" | grep -q SKIPPED
 
+  # Installs a real application as a systemd service, and packages it for a clean container.
+  linux-service:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+      - run: cmake --preset release
+      - run: cmake --build --preset release
+      - run: cmake --install build/release --prefix "$RUNNER_TEMP/sdk"
+      - run: bash scripts/test-linux-service.sh "$RUNNER_TEMP/sdk"
+
   windows:
     runs-on: windows-latest
     defaults:

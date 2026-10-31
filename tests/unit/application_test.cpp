@@ -1,5 +1,15 @@
 #include <gtest/gtest.h>
 
+#if !defined(_WIN32)
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <array>
+#include <cstdlib>
+#include <cstring>
+#endif
+
 #include <cppboot/cppboot.hpp>
 #include <filesystem>
 #include <fstream>
@@ -191,6 +201,74 @@ TEST_F(ApplicationTest, InvalidShutdownAfterStartIsAConfigurationError) {
     Application app{0, nullptr, options_};
     EXPECT_EQ(app.run(), kExitConfigurationError);
 }
+
+#if !defined(_WIN32)
+TEST_F(ApplicationTest, TellsSystemdWhenItIsReadyAndWhenItIsStopping) {
+    const int receiver = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    ASSERT_GE(receiver, 0);
+
+    const auto path = (std::filesystem::temp_directory_path() /
+                       ("cppboot-notify-" + std::to_string(getpid())))
+                          .string();
+    std::filesystem::remove(path);
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    ASSERT_LT(path.size(), sizeof(address.sun_path));
+    std::memcpy(address.sun_path, path.c_str(), path.size());
+    ASSERT_EQ(bind(receiver, reinterpret_cast<const sockaddr*>(&address), sizeof(address)), 0);
+    ASSERT_EQ(setenv("NOTIFY_SOCKET", path.c_str(), 1), 0);
+
+    options_.default_settings["cppboot.runtime.shutdown_after_start"] = "true";
+    int argc = 1;
+    char name[] = "test";
+    char* argv[] = {name, nullptr};
+    Application app{argc, argv, options_};
+    EXPECT_EQ(app.run(), kExitSuccess);
+    unsetenv("NOTIFY_SOCKET");
+
+    const auto next = [&] {
+        std::array<char, 64> buffer{};
+        const auto received = recv(receiver, buffer.data(), buffer.size(), MSG_DONTWAIT);
+        return received > 0 ? std::string(buffer.data(), static_cast<std::size_t>(received))
+                            : std::string{};
+    };
+    EXPECT_EQ(next(), "READY=1");
+    EXPECT_EQ(next(), "STOPPING=1");
+
+    close(receiver);
+    std::filesystem::remove(path);
+}
+
+TEST_F(ApplicationTest, DoesNotTellSystemdThatItIsReadyIfStartFails) {
+    const int receiver = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    ASSERT_GE(receiver, 0);
+
+    const auto path = (std::filesystem::temp_directory_path() /
+                       ("cppboot-notify-failed-" + std::to_string(getpid())))
+                          .string();
+    std::filesystem::remove(path);
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    ASSERT_LT(path.size(), sizeof(address.sun_path));
+    std::memcpy(address.sun_path, path.c_str(), path.size());
+    ASSERT_EQ(bind(receiver, reinterpret_cast<const sockaddr*>(&address), sizeof(address)), 0);
+    ASSERT_EQ(setenv("NOTIFY_SOCKET", path.c_str(), 1), 0);
+
+    options_.default_settings["cppboot.logging.level"] = "loud";
+    int argc = 1;
+    char name[] = "test";
+    char* argv[] = {name, nullptr};
+    Application app{argc, argv, options_};
+    EXPECT_EQ(app.run(), kExitConfigurationError);
+    unsetenv("NOTIFY_SOCKET");
+
+    std::array<char, 64> buffer{};
+    EXPECT_LT(recv(receiver, buffer.data(), buffer.size(), MSG_DONTWAIT), 0);
+
+    close(receiver);
+    std::filesystem::remove(path);
+}
+#endif
 
 TEST_F(ApplicationTest, RunCanOnlyHappenOnce) {
     Application app{0, nullptr, options_};
