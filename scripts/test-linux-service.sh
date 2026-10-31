@@ -93,6 +93,7 @@ echo "ok: the database is in /var/lib"
 
 step "A crash restarts it"
 before="$(service_property MainPID)"
+restarts="$(service_property NRestarts)"
 sudo kill -9 "$before"
 for _ in $(seq 1 20); do
     sleep 0.5
@@ -100,7 +101,8 @@ for _ in $(seq 1 20); do
 done
 [ "$(service_property MainPID)" != "$before" ] || fail "it wasn't restarted"
 expect_equal "serving again" "$(curl -s -o /dev/null -w '%{http_code}' "$url/actuator/health")" 200
-expect_equal "restart count" "$(service_property NRestarts)" 1
+# Earlier failures to start may have counted too, so this looks at the change.
+expect_equal "restarted once" "$(service_property NRestarts)" "$((restarts + 1))"
 
 step "Stopping is clean"
 sudo systemctl stop "$name"
@@ -126,12 +128,13 @@ sudo systemctl stop "$name"
 step "Invalid settings don't restart forever"
 write_settings "CPPBOOT_LOGGING_LEVEL=loud"
 sudo systemctl reset-failed "$name" || true
+restarts="$(service_property NRestarts)"
 if sudo systemctl start "$name"; then
     fail "the service started with invalid settings"
 fi
 sleep 4
 expect_equal "exit code for invalid settings" "$(service_property ExecMainStatus)" 78
-expect_equal "not restarted" "$(service_property NRestarts)" 0
+expect_equal "not restarted" "$(service_property NRestarts)" "$restarts"
 sudo systemctl reset-failed "$name" || true
 
 step "An upgrade keeps settings and data, and restarts"
