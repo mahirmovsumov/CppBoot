@@ -75,6 +75,18 @@ public:
     CPPBOOT_ROLE("admin") CPPBOOT_GET("/locked") std::string locked() const { return "locked"; }
 };
 
+class CPPBOOT_CONTROLLER("/limited") CPPBOOT_PUBLIC CPPBOOT_RATE_LIMIT("2/minute") LimitedController {
+public:
+    CPPBOOT_GET("/first") std::string first() const { return "first"; }
+    CPPBOOT_GET("/second") std::string second() const { return "second"; }
+    CPPBOOT_RATE_LIMIT("1/hour") CPPBOOT_GET("/strict") std::string strict() const { return "strict"; }
+};
+
+class CPPBOOT_CONTROLLER("/guarded") GuardedController {
+public:
+    CPPBOOT_RATE_LIMIT("1/minute") CPPBOOT_GET("/") std::string read() const { return "guarded"; }
+};
+
 class CPPBOOT_SERVICE TraceLog {
 public:
     std::string read() const { return order_; }

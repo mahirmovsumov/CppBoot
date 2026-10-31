@@ -33,6 +33,7 @@ cppboot_apply_compiler_options(cppboot-unit-tests)
 add_test(NAME cppboot-unit-tests COMMAND cppboot-unit-tests)
 
 add_executable(cppboot-web-tests
+    web/rate_limit_test.cpp
     web/router_test.cpp
     web/server_test.cpp
 )

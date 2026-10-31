@@ -26,4 +26,4 @@ The end-to-end test builds and starts a project with every option on every CI ru
 
 ## Next
 
-Phase 9 is production readiness: packaging, running as a Linux service, and stress testing.
+[Phase 9](phase-9.md) is production readiness: rate limiting, HTTPS, running as a Linux service, and stress testing.

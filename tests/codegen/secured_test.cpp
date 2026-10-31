@@ -155,6 +155,78 @@ TEST_F(SecuredTest, MiddlewareRunsInOrderAndSeesEveryRequest) {
     EXPECT_EQ(get("/app/forgotten").header("X-Middleware"), "ran");
 }
 
+TEST_F(SecuredTest, RateLimitRejectsAClientOverItsLimit) {
+    EXPECT_EQ(get("/limited/first").status(), 200);
+    EXPECT_EQ(get("/limited/first").status(), 200);
+
+    const Response rejected = get("/limited/first");
+    EXPECT_EQ(rejected.status(), 429);
+    EXPECT_EQ(rejected.header("Retry-After"), "30");
+}
+
+TEST_F(SecuredTest, ControllerRateLimitIsSeparateForEachRoute) {
+    EXPECT_EQ(get("/limited/first").status(), 200);
+    EXPECT_EQ(get("/limited/first").status(), 200);
+    EXPECT_EQ(get("/limited/first").status(), 429);
+    EXPECT_EQ(get("/limited/second").status(), 200);
+}
+
+TEST_F(SecuredTest, FunctionRateLimitReplacesControllerRateLimit) {
+    EXPECT_EQ(get("/limited/strict").status(), 200);
+
+    const Response rejected = get("/limited/strict");
+    EXPECT_EQ(rejected.status(), 429);
+    EXPECT_EQ(rejected.header("Retry-After"), "3600");
+}
+
+TEST_F(SecuredTest, RateLimitIsSeparateForEachClient) {
+    const auto from = [&](const std::string& address) {
+        Request request = Request::create(Method::Get, "/limited/strict").value();
+        request.setClientAddress(address);
+        return router_->handle(std::move(request)).status();
+    };
+    EXPECT_EQ(from("192.0.2.1"), 200);
+    EXPECT_EQ(from("192.0.2.2"), 200);
+    EXPECT_EQ(from("192.0.2.1"), 429);
+}
+
+TEST_F(SecuredTest, RateLimitCountsAttemptsWithoutAToken) {
+    EXPECT_EQ(get("/guarded").status(), 401);
+
+    // Guessing tokens uses up the limit, so a real one has to wait too.
+    EXPECT_EQ(get("/guarded", tokenFor({})).status(), 429);
+}
+
+TEST(SecuredStartupTest, RateLimitsCanBeTurnedOffBySetting) {
+    const config::Config config = makeConfig(
+        {{"cppboot.security.jwt.secret", kSecret}, {"cppboot.rate_limit.enabled", "false"}});
+    const logging::Logger logger = logging::Logger::create({}).value();
+
+    di::Container container;
+    container.registerInstance(borrow(config));
+    container.registerInstance(borrow(logger));
+    cppboot::generated::registerComponents(container);
+    const auto router = container.resolve<Router>();
+
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_EQ(router->handle(Request::create(Method::Get, "/limited/strict").value()).status(),
+                  200);
+    }
+}
+
+TEST(SecuredStartupTest, InvalidRateLimitSettingStopsTheRouterFromBeingCreated) {
+    const config::Config config = makeConfig(
+        {{"cppboot.security.jwt.secret", kSecret}, {"cppboot.rate_limit.enabled", "maybe"}});
+    const logging::Logger logger = logging::Logger::create({}).value();
+
+    di::Container container;
+    container.registerInstance(borrow(config));
+    container.registerInstance(borrow(logger));
+    cppboot::generated::registerComponents(container);
+
+    EXPECT_THROW(static_cast<void>(container.resolve<Router>()), Exception);
+}
+
 TEST(SecuredStartupTest, MissingSecretStopsTheRouterFromBeingCreated) {
     const config::Config config = makeConfig({});
     const logging::Logger logger = logging::Logger::create({}).value();

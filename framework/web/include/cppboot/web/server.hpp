@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "cppboot/base/result.hpp"
 #include "cppboot/web/router.hpp"
@@ -27,6 +28,9 @@ struct ServerOptions {
     std::chrono::milliseconds request_timeout{std::chrono::seconds{30}};
     /// How long stop() lets connections finish before closing them.
     std::chrono::milliseconds shutdown_timeout{std::chrono::seconds{30}};
+    /// Addresses such as "10.0.0.5" or "10.0.0.0/8" of proxies whose X-Forwarded-For header can be
+    /// believed. Anyone can send that header, so with none listed, it's ignored.
+    std::vector<std::string> trusted_proxies;
 };
 
 /// An HTTP/1.1 server. Handlers run on a pool of worker threads, so that a slow handler can't

@@ -112,6 +112,103 @@ TEST_F(ServerTest, ServesARequest) {
     EXPECT_EQ(response[http::field::content_type], "application/json");
 }
 
+class ClientAddressTest : public ServerTest {
+protected:
+    /// Sends a request with these X-Forwarded-For headers, and returns the address the handler saw.
+    std::string addressSeen(const std::vector<std::string>& trusted_proxies,
+                            const std::vector<std::string>& forwarded_for) {
+        router_.get("/address",
+                    [](const Request& request) { return Response::text(request.clientAddress()); });
+        ServerOptions options = testOptions();
+        options.trusted_proxies = trusted_proxies;
+        const auto port = startServer(std::move(options)).port();
+
+        std::string text = "GET /address HTTP/1.1\r\nHost: localhost\r\n";
+        for (const std::string& value : forwarded_for) {
+            text += "X-Forwarded-For: " + value + "\r\n";
+        }
+        text += "\r\n";
+
+        Client client{port};
+        client.sendRaw(text);
+        return client.read().body();
+    }
+};
+
+TEST_F(ClientAddressTest, IsThePeerWithNoProxy) {
+    EXPECT_EQ(addressSeen({}, {}), "127.0.0.1");
+}
+
+TEST_F(ClientAddressTest, IgnoresForwardedForFromAnUntrustedPeer) {
+    EXPECT_EQ(addressSeen({}, {"203.0.113.9"}), "127.0.0.1");
+}
+
+TEST_F(ClientAddressTest, IgnoresForwardedForWhenThePeerIsNotInTheList) {
+    EXPECT_EQ(addressSeen({"10.0.0.1", "192.0.2.0/24"}, {"203.0.113.9"}), "127.0.0.1");
+}
+
+TEST_F(ClientAddressTest, ReadsForwardedForFromATrustedProxy) {
+    EXPECT_EQ(addressSeen({"127.0.0.1"}, {"203.0.113.9"}), "203.0.113.9");
+}
+
+TEST_F(ClientAddressTest, TrustsAProxyInARange) {
+    EXPECT_EQ(addressSeen({"127.0.0.0/8"}, {"203.0.113.9"}), "203.0.113.9");
+}
+
+TEST_F(ClientAddressTest, TheClientCantForgeTheStartOfTheList) {
+    EXPECT_EQ(addressSeen({"127.0.0.1"}, {"1.1.1.1, 2.2.2.2, 203.0.113.9"}), "203.0.113.9");
+}
+
+TEST_F(ClientAddressTest, SkipsEveryTrustedProxyFromTheEnd) {
+    EXPECT_EQ(addressSeen({"127.0.0.1", "10.0.0.0/8"}, {"1.1.1.1, 203.0.113.9, 10.0.0.2, 10.0.0.1"}),
+              "203.0.113.9");
+}
+
+TEST_F(ClientAddressTest, ReadsSeveralHeadersInOrder) {
+    EXPECT_EQ(addressSeen({"127.0.0.1", "10.0.0.1"}, {"1.1.1.1", "203.0.113.9, 10.0.0.1"}),
+              "203.0.113.9");
+}
+
+TEST_F(ClientAddressTest, UsesTheLastAddressItCanReadWhenAnEntryIsInvalid) {
+    EXPECT_EQ(addressSeen({"127.0.0.1"}, {"not-an-address"}), "127.0.0.1");
+    server_.reset();
+    router_ = Router{};
+    EXPECT_EQ(addressSeen({"127.0.0.1", "10.0.0.1"}, {"forged, 10.0.0.1"}), "10.0.0.1");
+}
+
+TEST_F(ClientAddressTest, UsesThePeerWhenTheHeaderIsEmpty) {
+    EXPECT_EQ(addressSeen({"127.0.0.1"}, {" , "}), "127.0.0.1");
+}
+
+TEST_F(ClientAddressTest, WritesIpv6InOneForm) {
+    EXPECT_EQ(addressSeen({"127.0.0.1"}, {"::ffff:203.0.113.9"}), "203.0.113.9");
+    server_.reset();
+    router_ = Router{};
+    EXPECT_EQ(addressSeen({"127.0.0.1"}, {"2001:DB8::1"}), "2001:db8::1");
+}
+
+TEST_F(ServerTest, RefusesToStartWithAnInvalidTrustedProxy) {
+    for (const char* proxy : {"not-an-address", "10.0.0.1/33", "10.0.0.1/x", "10.0.0.1/", "::1/129",
+                              "0.0.0.0/0", "::/0", "10.0.0.1/-1"}) {
+        ServerOptions options = testOptions();
+        options.trusted_proxies = {proxy};
+        Server server{router_, std::move(options)};
+        const auto started = server.start();
+        ASSERT_FALSE(started) << proxy;
+        EXPECT_NE(started.error().message().find("Invalid trusted proxy"), std::string::npos);
+    }
+}
+
+TEST(ReadServerOptionsTest, SplitsTrustedProxies) {
+    config::ConfigSources sources;
+    sources.directory = std::filesystem::temp_directory_path() / "cppboot-absent-directory";
+    sources.defaults = {{"cppboot.server.trusted_proxies", " 10.0.0.1, 10.1.0.0/16 ,,::1 "}};
+    const auto options = readServerOptions(config::Config::load(sources).value());
+    ASSERT_TRUE(options);
+    EXPECT_EQ(options.value().trusted_proxies,
+              (std::vector<std::string>{"10.0.0.1", "10.1.0.0/16", "::1"}));
+}
+
 TEST_F(ServerTest, PassesBodyAndHeadersToHandlers) {
     router_.post("/echo", [](const Request& request) {
         return Response::text(request.body() + "|" + request.header("Host").value_or(""), 201);

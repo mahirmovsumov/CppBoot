@@ -79,6 +79,19 @@ Recording [metrics](guides/actuator.md) on every request took about 4% of throug
 | 2 | 12,992 requests/second | 12,595 requests/second |
 | 3 | 13,292 requests/second | 12,627 requests/second |
 
+## The effect of rate limits
+
+A flood of 600 sign-in attempts over 32 connections, against a project created by `cppboot create --web --security`, using 2 worker threads on the Windows laptop. Meanwhile, another signed-in user made 30 requests:
+
+| | Flood results | That user's median request | Their slowest request |
+|---|---|---|---|
+| Limit off | 600 passwords checked | 1,395 ms | 1,515 ms |
+| `10/minute` limit | 9 passwords checked, 591 rejected | 2 ms | 25 ms |
+
+This was one run. The other user's own sign-in used one of the 10 attempts, because both came from one address. A limit only helps when the flood comes from few addresses.
+
+The check itself [costs under 1% of a request for IPv4, and about 2% for IPv6](architecture/014-rate-limiting.md#cost), on routes that have a limit.
+
 ## Before running in production
 
 - **`cppboot.server.max_connections`:** the default is 1,024, and connections beyond it are closed. Raise it if you need more.

@@ -1,5 +1,6 @@
 add_library(cppboot-web
     src/http.cpp
+    src/rate_limit.cpp
     src/router.cpp
     src/server.cpp
     src/server_module.cpp

@@ -120,7 +120,79 @@ std::string hash = cppboot::security::hashPassword(password);
 bool matches = cppboot::security::verifyPassword(password, hash);
 ```
 
-Hashes use scrypt with a random salt. Each hash and check takes about 100 ms and 32 MB, on purpose, because that's what makes guessing passwords expensive. It also means a sign-in route is expensive to call, so limit its rate before exposing it. CppBoot has no rate limiting yet, so use your proxy for this.
+Hashes use scrypt with a random salt. Each hash and check takes about 100 ms and 32 MB, on purpose, because that's what makes guessing passwords expensive. It also means a sign-in route is expensive to call, so [limit its rate](#rate-limits) before exposing it.
+
+## Rate limits
+
+Mark a route with `CPPBOOT_RATE_LIMIT` to limit how often each client can call it. **Do this on every route that checks a password.** Without it, one client can keep your server busy hashing, and can guess passwords as fast as the server can answer.
+
+```cpp
+CPPBOOT_PUBLIC CPPBOOT_RATE_LIMIT("10/minute") CPPBOOT_POST("/login")
+TokenReply login(const Credentials& credentials) const;
+```
+
+A client over the limit gets a 429 with a `Retry-After` header saying how many seconds to wait. This happens before your function runs, and before any token check, so it also limits attempts to guess a token.
+
+`cppboot create --web --security` puts this mark on its sign-in route. Routes with no mark have no limit, so unlike tokens, this isn't on by default.
+
+### How limits work
+
+- **Units:** `second`, `minute` and `hour`. A limit that can't be read, such as `"10 per minute"`, fails the build.
+- **Bursts:** with `"10/minute"`, a client can make 10 requests at once, then gets one more every 6 seconds.
+- **On a controller:** the mark gives each of its routes that limit separately, and a mark on a function replaces it.
+- **Rejected requests:** these don't use up the limit, so a client that keeps retrying gets in as soon as it's allowed.
+
+### Behind a proxy
+
+Limits use the client's address. If the server is behind a proxy, every request appears to come from the proxy, so **all your users would share one limit** until you list the proxy:
+
+```yaml
+cppboot:
+  server:
+    trusted_proxies: 10.0.0.5, 10.1.0.0/16
+```
+
+The server then reads the client's address from `X-Forwarded-For`. It ignores that header from anyone not on this list, because any client can send it. A proxy on the list must add the address it saw to the end of the header, as nginx does with `$proxy_add_x_forwarded_for`.
+
+### What limits can't do
+
+- **Many addresses:** an attacker with many addresses gets a limit for each, so they can still guess one account's password slowly. Long, random passwords are the real defense here.
+- **Shared addresses:** people behind one office or mobile network share an IPv4 address, so they share a limit. Each IPv6 /64 network also shares one, because one customer can usually use all of its addresses.
+- **Several servers:** each process counts on its own, and a restart clears the counts. With 3 servers behind a load balancer, a client can make about 3 times the limit.
+- **Connection floods:** a limit only applies once a request has arrived. Use `cppboot.server.max_connections`, and your network provider's protection, for floods.
+
+### Limit every route
+
+A limit in middleware covers every request, and is shared across routes:
+
+```cpp
+class CPPBOOT_MIDDLEWARE(5) ApiLimit {
+public:
+    ApiLimit(std::shared_ptr<const cppboot::config::Config> config,
+             std::shared_ptr<const cppboot::logging::Logger> logger)
+        : limit_(cppboot::web::rateLimit(
+              {100, std::chrono::seconds{1}},
+              cppboot::web::RateLimiterOptions::fromSettings(*config, *logger))) {}
+
+    cppboot::web::Response handle(const cppboot::web::Request& request,
+                                  const cppboot::web::Next& next) {
+        return limit_(request, next);
+    }
+
+private:
+    cppboot::web::Middleware limit_;
+};
+```
+
+This needs `#include <cppboot/web/rate_limit.hpp>`. It also applies to `/actuator` routes, so allow for your health checks and metrics scrapes.
+
+### Settings
+
+| Key | Default | Purpose |
+|---|---|---|
+| `cppboot.rate_limit.enabled` | `true` | `false` turns limits off, such as for your own tests. The application logs a warning |
+| `cppboot.rate_limit.max_clients` | `100000` | The clients each route remembers, at about 133 bytes each. Beyond this, the one seen longest ago is forgotten |
+| `cppboot.server.trusted_proxies` | None | Addresses and ranges of proxies, separated by commas |
 
 ## Middleware
 
@@ -157,7 +229,8 @@ Tokens are sent with each request, so **use HTTPS in production**. CppBoot doesn
 ## Not supported yet
 
 - HTTPS in the server itself
-- Rate limiting and CORS
+- CORS
+- Limits by user or account, or shared between servers
 - OAuth2 and OpenID Connect
 - Refresh tokens, and revoking tokens
 - Asymmetric token signing, such as RS256

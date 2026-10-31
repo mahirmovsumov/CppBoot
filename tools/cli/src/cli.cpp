@@ -307,7 +307,9 @@ public:
         : accounts_(std::move(accounts)), tokens_(std::move(tokens)) {}
 
     // Every route in a project with security needs a token, unless it's marked public.
-    CPPBOOT_PUBLIC CPPBOOT_POST("/login") TokenReply login(const Credentials& credentials) const {
+    // Checking a password is slow on purpose, so this stops one client from using up the server.
+    CPPBOOT_PUBLIC CPPBOOT_RATE_LIMIT("10/minute") CPPBOOT_POST("/login")
+    TokenReply login(const Credentials& credentials) const {
         if (!accounts_->check(credentials)) {
             throw cppboot::web::HttpError(401, "Wrong name or password");
         }

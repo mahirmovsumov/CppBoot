@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -25,6 +26,7 @@ constexpr std::string_view kRoutePrefix = "cppboot:route:";
 constexpr std::string_view kMiddlewarePrefix = "cppboot:middleware:";
 constexpr std::string_view kPublicAnnotation = "cppboot:public";
 constexpr std::string_view kRolePrefix = "cppboot:role:";
+constexpr std::string_view kRateLimitPrefix = "cppboot:rate_limit:";
 constexpr std::string_view kAnyPrefix = "cppboot:";
 
 std::string toString(CXString text) {
@@ -439,6 +441,60 @@ std::optional<Error> applySecurityMarks(CXCursor method, const std::vector<std::
     return std::nullopt;
 }
 
+/// Reads a limit such as "5/minute".
+std::optional<RouteRateLimit> parseRateLimit(std::string_view text) {
+    constexpr std::uint32_t kMostRequests = 1'000'000;
+
+    const auto slash = text.find('/');
+    if (slash == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    RouteRateLimit limit;
+    const char* const end = text.data() + slash;
+    const auto [parsed_end, error] = std::from_chars(text.data(), end, limit.requests);
+    if (error != std::errc{} || parsed_end != end || limit.requests == 0 ||
+        limit.requests > kMostRequests) {
+        return std::nullopt;
+    }
+
+    const std::string_view unit = text.substr(slash + 1);
+    if (unit == "second") {
+        limit.window_seconds = 1;
+    } else if (unit == "minute") {
+        limit.window_seconds = 60;
+    } else if (unit == "hour") {
+        limit.window_seconds = 3600;
+    } else {
+        return std::nullopt;
+    }
+    return limit;
+}
+
+/// Applies a route's rate limit. A mark on a function replaces the one on its controller.
+std::optional<Error> applyRateLimitMark(CXCursor method, const std::vector<std::string>& method_marks,
+                                        const std::vector<std::string>& class_marks, Route& route) {
+    const std::vector<std::string> method_limits = allWithPrefix(method_marks, kRateLimitPrefix);
+    const std::vector<std::string> class_limits = allWithPrefix(class_marks, kRateLimitPrefix);
+    const std::vector<std::string>& limits = method_limits.empty() ? class_limits : method_limits;
+
+    if (limits.empty()) {
+        return std::nullopt;
+    }
+    if (limits.size() > 1) {
+        return errorAt(method, "Route function " + route.function + " has more than one rate limit");
+    }
+
+    route.rate_limit = parseRateLimit(limits.front());
+    if (!route.rate_limit) {
+        // A limit that can't be read must not leave the route with no limit.
+        return errorAt(method, "The rate limit '" + limits.front() + "' of " + route.function +
+                                   " must look like \"5/minute\", with 1 to 1000000 requests per "
+                                   "second, minute or hour");
+    }
+    return std::nullopt;
+}
+
 Result<Controller> readController(CXCursor cursor, std::string_view base_path,
                                   const std::vector<std::string>& class_marks) {
     Controller controller;
@@ -464,6 +520,11 @@ Result<Controller> readController(CXCursor cursor, std::string_view base_path,
                                            " has a security mark but isn't a route");
                 return CXChildVisit_Break;
             }
+            if (findWithPrefix(marks, kRateLimitPrefix) && !findWithPrefix(marks, kRoutePrefix)) {
+                error = errorAt(child, "Function " + spelling(child) +
+                                           " has a rate limit but isn't a route");
+                return CXChildVisit_Break;
+            }
 
             for (const std::string& annotation : marks) {
                 if (!annotation.starts_with(kRoutePrefix)) {
@@ -477,6 +538,11 @@ Result<Controller> readController(CXCursor cursor, std::string_view base_path,
                 }
                 if (auto mark_error =
                         applySecurityMarks(child, marks, class_marks, route.value())) {
+                    error = std::move(mark_error);
+                    return CXChildVisit_Break;
+                }
+                if (auto mark_error =
+                        applyRateLimitMark(child, marks, class_marks, route.value())) {
                     error = std::move(mark_error);
                     return CXChildVisit_Break;
                 }
@@ -502,12 +568,16 @@ std::optional<Error> findStrayMark(CXCursor cursor, const std::vector<std::strin
     if (hasSecurityMark(class_marks)) {
         return errorAt(cursor, "Security marks must be on a class marked with CPPBOOT_CONTROLLER");
     }
+    if (findWithPrefix(class_marks, kRateLimitPrefix)) {
+        return errorAt(cursor, "A rate limit must be on a class marked with CPPBOOT_CONTROLLER");
+    }
 
     std::optional<Error> error;
     visitChildren(cursor, [&](CXCursor child) {
         if (clang_getCursorKind(child) == CXCursor_CXXMethod) {
             const std::vector<std::string> marks = annotationsOf(child);
-            if (findWithPrefix(marks, kRoutePrefix) || hasSecurityMark(marks)) {
+            if (findWithPrefix(marks, kRoutePrefix) || hasSecurityMark(marks) ||
+                findWithPrefix(marks, kRateLimitPrefix)) {
                 error = errorAt(child, "Route function " + spelling(child) +
                                            " must be in a class marked with CPPBOOT_CONTROLLER");
                 return CXChildVisit_Break;

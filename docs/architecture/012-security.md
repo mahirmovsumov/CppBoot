@@ -60,4 +60,4 @@ The parameters are stored with each hash, in the form `scrypt$15$8$1$salt$hash`,
 
 ## Not included
 
-HTTPS in the server, rate limiting, CORS, OAuth2, refresh tokens, token revocation, asymmetric signing, secret rotation and audit logging are left for later. For now, a proxy can provide HTTPS and rate limiting.
+HTTPS in the server, CORS, OAuth2, refresh tokens, token revocation, asymmetric signing, secret rotation and audit logging are left for later. For now, a proxy can provide HTTPS. [Rate limiting](014-rate-limiting.md) has its own document.

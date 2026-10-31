@@ -1,5 +1,6 @@
 #include "cppboot/web/server_module.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -74,6 +75,20 @@ Result<ServerOptions> readServerOptions(const config::Config& config) {
                       [&](std::int64_t v) { options.shutdown_timeout = std::chrono::seconds{v}; });
         !r) {
         return r.error();
+    }
+
+    const std::string proxies = config.getString("cppboot.server.trusted_proxies");
+    std::string_view rest = proxies;
+    while (!rest.empty()) {
+        const auto comma = rest.find(',');
+        std::string_view entry = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+
+        entry.remove_prefix(std::min(entry.find_first_not_of(' '), entry.size()));
+        entry = entry.substr(0, entry.find(' '));
+        if (!entry.empty()) {
+            options.trusted_proxies.emplace_back(entry);
+        }
     }
     return options;
 }

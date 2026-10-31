@@ -83,12 +83,22 @@ curl.exe -H "Authorization: Bearer $forged" localhost:8080/api/me
 
 (If your token already ends in `A`, use another letter.)
 
+Now try to guess the password, with 12 quick attempts:
+
+```powershell
+'{"name":"admin","password":"wrong"}' | Out-File -Encoding ascii body.json
+1..12 | ForEach-Object { curl.exe -s -o NUL -w "%{http_code} " --data-binary "@body.json" localhost:8080/api/login }
+```
+
+After a few 401 responses, you get 429, Too Many Requests. Each client gets 10 sign-in attempts, then one more every 6 seconds. The server stops checking passwords for that client until then, so it stays fast for everyone else.
+
 ## See how it works
 
 Open `src/auth.hpp`. The controller has three routes:
 
 ```cpp
-CPPBOOT_PUBLIC CPPBOOT_POST("/login") TokenReply login(const Credentials& credentials) const;
+CPPBOOT_PUBLIC CPPBOOT_RATE_LIMIT("10/minute") CPPBOOT_POST("/login")
+TokenReply login(const Credentials& credentials) const;
 
 CPPBOOT_GET("/me") Profile me(const cppboot::security::Principal& who) const;
 
@@ -96,7 +106,7 @@ CPPBOOT_ROLE("admin") CPPBOOT_GET("/report") Profile report(
     const cppboot::security::Principal& who) const;
 ```
 
-- `login` is marked public, so anyone can call it.
+- `login` is marked public, so anyone can call it, but each client can only try so often.
 - `me` has no mark. **In a project with security, that means it needs a token.**
 - `report` also needs the `admin` role.
 
@@ -125,7 +135,7 @@ You forgot to protect it, and it's protected anyway. To open a route, you have t
 The sample has one account, to keep it short. For a real application:
 
 - Keep accounts in a [database](database.md), with hashes from `hashPassword()`.
-- Put a proxy with HTTPS and rate limiting in front of the server.
+- Put a proxy with HTTPS in front of the server, and list it in `cppboot.server.trusted_proxies`. Otherwise, all your users share one sign-in limit.
 - Generate a real secret with `openssl rand -base64 48`.
 
 ## Next steps

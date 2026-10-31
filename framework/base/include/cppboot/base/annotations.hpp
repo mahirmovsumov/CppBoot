@@ -42,3 +42,8 @@
 /// Limits a controller or route function to users with this role. With several marks, any one of
 /// the roles is enough. A mark on a function replaces those on its controller.
 #define CPPBOOT_ROLE(role) CPPBOOT_ANNOTATE("cppboot:role:" role)
+
+/// Limits how often each client can call a route, such as "5/minute". The units are second, minute
+/// and hour. On a controller, it gives each of its routes that limit, and a mark on a function
+/// replaces it.
+#define CPPBOOT_RATE_LIMIT(limit) CPPBOOT_ANNOTATE("cppboot:rate_limit:" limit)

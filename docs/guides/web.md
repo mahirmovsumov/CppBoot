@@ -120,9 +120,12 @@ request.param("id");             // A decoded path parameter
 request.query("page");           // A decoded query parameter, from ?page=2
 request.header("Content-Type");  // Letter case doesn't matter
 request.body();                  // The request body
+request.clientAddress();         // The client's IP address
 ```
 
 `param`, `query` and `header` return a `std::optional<std::string>`.
+
+Behind a proxy, `clientAddress` is the proxy's address unless you set `cppboot.server.trusted_proxies`, as the [security guide](security.md#behind-a-proxy) explains. Don't read the client's address from `X-Forwarded-For` yourself, because any client can send that header.
 
 ## Responses
 
@@ -169,6 +172,31 @@ Middleware sees failures as normal responses, so it can log or change them after
 
 In a project with controllers, mark a class with `CPPBOOT_MIDDLEWARE` instead. See the [security guide](security.md#middleware).
 
+## Rate limits
+
+With hand-written routes, add a limit as middleware, which covers every route:
+
+```cpp
+#include <cppboot/web/rate_limit.hpp>
+
+router->use(rateLimit({100, std::chrono::seconds{1}}));
+```
+
+For one route, keep a `RateLimiter` and call `check`, which returns the response to send if the client is over its limit:
+
+```cpp
+auto limiter = std::make_shared<RateLimiter>(RateLimit{5, std::chrono::minutes{1}});
+
+router->post("/login", [limiter](const Request& request) {
+    if (auto rejected = limiter->check(request)) {
+        return *std::move(rejected);
+    }
+    return Response::text("Signed in");
+});
+```
+
+With controllers, use the `CPPBOOT_RATE_LIMIT` mark. The [security guide](security.md#rate-limits) explains how limits work.
+
 ## Settings
 
 | Key | Default | Purpose |
@@ -180,6 +208,7 @@ In a project with controllers, mark a class with `CPPBOOT_MIDDLEWARE` instead. S
 | `cppboot.server.max_connections` | `1024` | Connections beyond this are closed at once |
 | `cppboot.server.request_timeout_seconds` | `30` | The longest a client can take to send a request or read a response |
 | `cppboot.server.shutdown_timeout_seconds` | `30` | How long shutdown waits for connections to finish |
+| `cppboot.server.trusted_proxies` | None | Proxies whose `X-Forwarded-For` header can be believed, separated by commas, such as `10.0.0.5, 10.1.0.0/16`. An invalid entry, or a range covering every address, stops startup |
 
 ## Handlers and threads
 

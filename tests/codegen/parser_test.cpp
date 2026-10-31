@@ -25,6 +25,7 @@ constexpr const char* kPreamble = R"(
 #define PUBLIC_ROUTE [[clang::annotate("cppboot:public")]]
 #define ROLE(role) [[clang::annotate("cppboot:role:" role)]]
 #define MIDDLEWARE(order) [[clang::annotate("cppboot:middleware:" #order)]]
+#define RATE_LIMIT(limit) [[clang::annotate("cppboot:rate_limit:" limit)]]
 namespace cppboot::web {
 class Request {};
 class Response {};
@@ -336,6 +337,57 @@ TEST_F(ParserTest, RejectsAControllerWithNoRoutes) {
 TEST_F(ParserTest, RejectsARouteOutsideAController) {
     expectError(R"(class SERVICE C { public: GET("/") int f(); };)",
                 "must be in a class marked with CPPBOOT_CONTROLLER");
+}
+
+TEST_F(ParserTest, ReadsRateLimits) {
+    const Route route = parseOneRoute(R"(RATE_LIMIT("5/minute") GET("/") int f();)");
+    ASSERT_TRUE(route.rate_limit.has_value());
+    EXPECT_EQ(route.rate_limit->requests, 5U);
+    EXPECT_EQ(route.rate_limit->window_seconds, 60U);
+
+    EXPECT_EQ(parseOneRoute(R"(RATE_LIMIT("1/second") GET("/") int f();)").rate_limit->window_seconds,
+              1U);
+    EXPECT_EQ(parseOneRoute(R"(RATE_LIMIT("1/hour") GET("/") int f();)").rate_limit->window_seconds,
+              3600U);
+    EXPECT_FALSE(parseOneRoute(R"(GET("/") int f();)").rate_limit.has_value());
+}
+
+TEST_F(ParserTest, FunctionRateLimitReplacesControllerRateLimit) {
+    const auto result = parse(R"(
+        class CONTROLLER("/a") RATE_LIMIT("5/minute") C {
+        public:
+            GET("/x") int x();
+            RATE_LIMIT("1/hour") GET("/y") int y();
+        };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    const auto& routes = result.value().controllers[0].routes;
+    EXPECT_EQ(routes[0].rate_limit->requests, 5U);
+    EXPECT_EQ(routes[1].rate_limit->window_seconds, 3600U);
+}
+
+TEST_F(ParserTest, RejectsRateLimitsThatCannotBeRead) {
+    for (const char* limit : {"5", "/minute", "0/minute", "-1/minute", "5/day", "5/Minute",
+                              "5 /minute", "5/minute ", "1000001/second", ""}) {
+        expectError(std::string{"class CONTROLLER(\"/a\") C { public: RATE_LIMIT(\""} + limit +
+                        "\") GET(\"/\") int f(); };",
+                    "must look like");
+    }
+}
+
+TEST_F(ParserTest, RejectsTwoRateLimitsOnOneRoute) {
+    expectError(R"(class CONTROLLER("/a") C {
+        public: RATE_LIMIT("1/minute") RATE_LIMIT("2/minute") GET("/") int f(); };)",
+                "more than one rate limit");
+}
+
+TEST_F(ParserTest, RejectsRateLimitsThatWouldDoNothing) {
+    expectError(R"(class CONTROLLER("/a") C { public: GET("/") int f();
+                                                       RATE_LIMIT("1/minute") int g(); };)",
+                "isn't a route");
+    expectError(R"(class SERVICE RATE_LIMIT("1/minute") S {};)", "must be on a class marked");
+    expectError(R"(class S { public: RATE_LIMIT("1/minute") int f(); };)",
+                "must be in a class marked");
 }
 
 TEST_F(ParserTest, RoutesAreNotPublicUnlessMarked) {

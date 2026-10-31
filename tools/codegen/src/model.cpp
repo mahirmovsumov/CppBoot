@@ -133,6 +133,16 @@ bool usesSecurity(const Declarations& declarations) {
     return false;
 }
 
+bool usesRateLimits(const Declarations& declarations) {
+    return std::any_of(declarations.controllers.begin(), declarations.controllers.end(),
+                       [](const Controller& controller) {
+                           return std::any_of(controller.routes.begin(), controller.routes.end(),
+                                              [](const Route& route) {
+                                                  return route.rate_limit.has_value();
+                                              });
+                       });
+}
+
 void renderDatabase(const std::vector<MappedStruct>& row_types, std::string& text) {
     text += "    auto row_mappers = std::make_shared<cppboot::data::RowMappers>();\n";
     for (const MappedStruct& row_type : row_types) {
@@ -217,10 +227,28 @@ void renderGuard(const Route& route, std::string& text) {
 void renderRoute(const Route& route, bool uses_security, std::string& text) {
     const bool guarded = uses_security && !route.is_public;
 
+    std::string captures = "controller";
+    if (guarded) {
+        captures += ", tokens";
+    }
+    if (route.rate_limit) {
+        captures += ", limiter = std::make_shared<cppboot::web::RateLimiter>("
+                    "cppboot::web::RateLimit{" +
+                    std::to_string(route.rate_limit->requests) + ", std::chrono::seconds{" +
+                    std::to_string(route.rate_limit->window_seconds) + "}}, rate_limit_options)";
+    }
+
     text += "            router->add(cppboot::web::Method::" + route.method + ", " +
-            quoted(route.path) + ", [controller" + (guarded ? ", tokens" : "") +
+            quoted(route.path) + ", [" + captures +
             "]([[maybe_unused]] const cppboot::web::Request& request) -> "
             "cppboot::web::Response {\n";
+
+    // Comes first, so that it also limits attempts to guess a token.
+    if (route.rate_limit) {
+        text += "                if (auto rejected = limiter->check(request)) {\n";
+        text += "                    return *std::move(rejected);\n";
+        text += "                }\n";
+    }
 
     if (guarded) {
         renderGuard(route, text);
@@ -297,6 +325,12 @@ void renderRouter(const Declarations& declarations, bool uses_database, bool use
     if (uses_security) {
         // Resolved here even if every route is public, so that a missing secret stops startup.
         text += "        auto tokens = resolver.resolve<cppboot::security::TokenService>();\n";
+    }
+    if (usesRateLimits(declarations)) {
+        text += "        const auto rate_limit_options = "
+                "cppboot::web::RateLimiterOptions::fromSettings("
+                "*resolver.resolve<cppboot::config::Config>(), "
+                "*resolver.resolve<cppboot::logging::Logger>());\n";
     }
     if (actuator) {
         renderActuator(uses_database, uses_security, text);
@@ -427,6 +461,9 @@ std::string renderRegistration(const Declarations& declarations,
     }
     if (has_router || !declarations.json_types.empty()) {
         text += "#include <cppboot/web/binding.hpp>\n";
+    }
+    if (usesRateLimits(declarations)) {
+        text += "#include <chrono>\n#include <cppboot/web/rate_limit.hpp>\n";
     }
     if (has_router) {
         text += "#include <cppboot/web/router.hpp>\n#include <cppboot/web/server_module.hpp>\n";

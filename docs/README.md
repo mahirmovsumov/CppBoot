@@ -27,7 +27,8 @@ Start with the tutorial, then use the guides as a reference.
 - [Phase 3 roadmap](roadmap/phase-3.md): the finished web framework
 - [Phase 5 roadmap](roadmap/phase-5.md): the finished database support
 - [Phase 6 roadmap](roadmap/phase-6.md): the finished security support
-- [Phase 8 roadmap](roadmap/phase-8.md): observability
+- [Phase 8 roadmap](roadmap/phase-8.md): the finished observability support
+- [Phase 9 roadmap](roadmap/phase-9.md): production readiness, in progress
 
 ## Contributing to CppBoot
 
@@ -41,4 +42,5 @@ Start with the tutorial, then use the guides as a reference.
 - [Data access](architecture/011-data-access.md)
 - [Security](architecture/012-security.md)
 - [Observability](architecture/013-observability.md)
+- [Rate limiting](architecture/014-rate-limiting.md)
 - [C++20 coding standard](standards/cpp20-coding-standard.md)

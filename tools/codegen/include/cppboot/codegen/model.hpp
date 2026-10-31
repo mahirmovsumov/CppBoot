@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -68,6 +70,12 @@ struct RouteParameter {
 
 enum class ReturnKind { Nothing, Response, Value };
 
+/// A route marked with CPPBOOT_RATE_LIMIT.
+struct RouteRateLimit {
+    std::uint32_t requests{0};
+    std::uint32_t window_seconds{0};
+};
+
 struct Route {
     /// An enumerator of cppboot::web::Method, such as "Get".
     std::string method;
@@ -81,6 +89,7 @@ struct Route {
     bool is_public{false};
     /// With any of these, a user may call this route. Empty means any signed-in user.
     std::vector<std::string> roles;
+    std::optional<RouteRateLimit> rate_limit;
 };
 
 struct Controller {

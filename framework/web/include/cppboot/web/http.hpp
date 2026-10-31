@@ -46,6 +46,11 @@ public:
     /// this rather than the path in logs and metrics, because clients choose the paths they send.
     const std::string& route() const noexcept { return route_; }
 
+    /// The address of the client, or empty if the request didn't come from a server. Behind a
+    /// proxy, this needs cppboot.server.trusted_proxies, or it's the address of the proxy.
+    const std::string& clientAddress() const noexcept { return client_address_; }
+    void setClientAddress(std::string address) { client_address_ = std::move(address); }
+
 private:
     friend class Router;
 
@@ -57,6 +62,7 @@ private:
     std::map<std::string, std::string, std::less<>> query_;
     std::map<std::string, std::string, std::less<>> params_;
     std::string route_;
+    std::string client_address_;
     Headers headers_;
     std::string body_;
 };

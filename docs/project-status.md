@@ -53,7 +53,8 @@ auto user = database_->queryOne<User>("SELECT * FROM users WHERE id = $1", id);
 To protect an API, add `--security`. Once a project uses it, every route needs a valid token unless you mark it public, so a forgotten mark leaves a route locked:
 
 ```cpp
-CPPBOOT_PUBLIC CPPBOOT_POST("/login") TokenReply login(const Credentials& credentials) const;
+CPPBOOT_PUBLIC CPPBOOT_RATE_LIMIT("10/minute") CPPBOOT_POST("/login")
+TokenReply login(const Credentials& credentials) const;
 CPPBOOT_GET("/me") Profile me(const cppboot::security::Principal& who) const;
 CPPBOOT_ROLE("admin") CPPBOOT_GET("/report") Report report() const;
 ```
@@ -78,7 +79,7 @@ The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in 
 | 6. Security | Complete | JWT sign-in, roles, password hashing, deny by default |
 | 7. Enterprise integration | After 1.0 | Redis, Kafka, RabbitMQ and similar |
 | 8. Observability | Complete | Health checks and Prometheus metrics |
-| 9. Production readiness | Not started | Stress testing, packaging and service integration |
+| 9. Production readiness | In progress | Rate limiting is done. HTTPS, service integration and stress testing are next |
 
 ## What has been built
 
@@ -93,7 +94,7 @@ The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in 
 | `cppboot` CLI | Creates, builds and runs projects | [CLI](guides/cli.md) |
 | Web framework | Serves HTTP with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |
 | Database | Connects to PostgreSQL and SQLite, with pooling, transactions and migrations | [Database](guides/database.md) |
-| Security | Signs users in with tokens, and protects routes by default | [Security](guides/security.md) |
+| Security | Signs users in with tokens, protects routes by default, and limits request rates | [Security](guides/security.md) |
 | Actuator | Reports health and metrics | [Health and metrics](guides/actuator.md) |
 
 ## How it's tested
@@ -122,5 +123,5 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 - Marked classes are always singletons. Transient and scoped components need manual registration.
 - Every header in `src` adds time to the build, because the generator parses each one.
 - Tokens can't be revoked, so they stay valid until they expire.
-- There's no rate limiting yet, which matters for sign-in routes.
+- Rate limits only apply to routes you mark, count per address and per process, and reset when the application restarts.
 - A struct used with a query but not marked with `CPPBOOT_ROW` fails when it runs, not when it builds.

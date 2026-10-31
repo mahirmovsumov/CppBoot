@@ -97,6 +97,14 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot create --actuator`, and `cppboot_generate_components(... ACTUATOR ...)`.
 - All `cppboot create` options can now be combined.
 
+### Rate limits
+
+- `CPPBOOT_RATE_LIMIT("10/minute")` on a route or controller, which sends a 429 with `Retry-After` to a client over its limit, before the route's function or token check runs. A limit that can't be read fails the build.
+- `RateLimiter` and `rateLimit()`, for hand-written routes and for middleware.
+- Memory is bounded, with settings under `cppboot.rate_limit`.
+- `cppboot create --security` now limits its sign-in route.
+- `Request::clientAddress()`, with `cppboot.server.trusted_proxies` for servers behind a proxy. `X-Forwarded-For` is ignored unless it comes from a listed proxy.
+
 ### Fixes
 
 - Settings with underscores in their names can now be set from the environment, even when they aren't in YAML. For example, `CPPBOOT_SERVER_MAX_CONNECTIONS` had no effect before, unless the key was also in `cppboot.yaml`.
