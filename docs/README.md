@@ -43,4 +43,5 @@ Start with the tutorial, then use the guides as a reference.
 - [Security](architecture/012-security.md)
 - [Observability](architecture/013-observability.md)
 - [Rate limiting](architecture/014-rate-limiting.md)
+- [HTTPS](architecture/015-https.md)
 - [C++20 coding standard](standards/cpp20-coding-standard.md)

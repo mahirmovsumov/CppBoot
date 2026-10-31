@@ -17,7 +17,7 @@ The server keeps 64 accepts waiting at once. A single one takes one connection p
 
 ## Public headers
 
-Boost.Asio and Boost.Beast appear only in `server.cpp`. Public headers use CppBoot's own `Request`, `Response` and `Router`. This limits Boost's compile-time cost to one file, and allows replacing it without changing applications.
+Boost.Asio and Boost.Beast appear only in the server's source files. Public headers use CppBoot's own `Request`, `Response` and `Router`. This limits Boost's compile-time cost to one file, and allows replacing it without changing applications.
 
 ## Limits and failures
 
@@ -52,6 +52,7 @@ Routes are matched with a linear scan, which is simple and fast enough for the n
 
 - `SO_REUSEADDR` is set on Linux so that a restarted server can reuse its port. It isn't set on Windows, where it would let another process take over a port in use.
 - Asio requires Windows 10 APIs (`_WIN32_WINNT=0x0A00`) and links to `ws2_32` and `mswsock`.
+- With HTTPS added, a Debug build with Clang on Windows fails to link the web tests, with "relocation truncated to fit". The cause hasn't been found. A Release build with Clang on Windows works, as does Debug with GCC. CI's Clang job runs on Linux.
 
 ## ThreadSanitizer
 

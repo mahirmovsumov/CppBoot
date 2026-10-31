@@ -6,13 +6,13 @@
 
 - Rate limits with `CPPBOOT_RATE_LIMIT`, and on the sign-in route of new `--security` projects
 - `Request::clientAddress()`, and `cppboot.server.trusted_proxies` for servers behind a proxy
+- HTTPS in the server, with settings under `cppboot.server.tls`
 
 ## Next, in order
 
-1. HTTPS in the server, so that it can protect tokens and passwords without a proxy
-2. Running as a Linux service, with systemd, packaging and a standalone install
-3. Stress testing: long runs that look for memory leaks and failures under sustained load
-4. Preparing for 1.0: a stable API policy, and a full review of the documentation
+1. Running as a Linux service, with systemd, packaging and a standalone install
+2. Stress testing: long runs that look for memory leaks and failures under sustained load
+3. Preparing for 1.0: a stable API policy, and a full review of the documentation
 
 ## Done when
 
@@ -24,3 +24,4 @@ An independent security review should also happen before 1.0, because the projec
 
 - Limits by user or account, and limits shared between servers
 - CORS
+- HTTP/2, and loading a renewed certificate without a restart

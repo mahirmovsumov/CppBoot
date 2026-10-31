@@ -65,7 +65,7 @@ To monitor it, add `--actuator`, for health checks and Prometheus metrics. All o
 cppboot create banking-api --web --postgresql --security --actuator
 ```
 
-The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in production.
+To serve HTTPS, give the server a certificate and a key in its settings, or put a proxy in front of it.
 
 ## Progress
 
@@ -79,7 +79,7 @@ The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in 
 | 6. Security | Complete | JWT sign-in, roles, password hashing, deny by default |
 | 7. Enterprise integration | After 1.0 | Redis, Kafka, RabbitMQ and similar |
 | 8. Observability | Complete | Health checks and Prometheus metrics |
-| 9. Production readiness | In progress | Rate limiting is done. HTTPS, service integration and stress testing are next |
+| 9. Production readiness | In progress | Rate limiting and HTTPS are done. Service integration and stress testing are next |
 
 ## What has been built
 
@@ -92,7 +92,7 @@ The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in 
 | Dependency injection | Creates components and manages their lifetimes | [Dependency injection](guides/dependency-injection.md) |
 | Code generator | Reads marked classes and generates their registration | [Code generation](architecture/009-code-generation.md) |
 | `cppboot` CLI | Creates, builds and runs projects | [CLI](guides/cli.md) |
-| Web framework | Serves HTTP with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |
+| Web framework | Serves HTTP and HTTPS with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |
 | Database | Connects to PostgreSQL and SQLite, with pooling, transactions and migrations | [Database](guides/database.md) |
 | Security | Signs users in with tokens, protects routes by default, and limits request rates | [Security](guides/security.md) |
 | Actuator | Reports health and metrics | [Health and metrics](guides/actuator.md) |
@@ -123,5 +123,7 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 - Marked classes are always singletons. Transient and scoped components need manual registration.
 - Every header in `src` adds time to the build, because the generator parses each one.
 - Tokens can't be revoked, so they stay valid until they expire.
+- An open HTTPS connection uses about 95 KB, against 6 KB for plain HTTP, and all encryption runs on one thread.
+- A renewed certificate needs a restart, and there's no HTTP/2.
 - Rate limits only apply to routes you mark, count per address and per process, and reset when the application restarts.
 - A struct used with a query but not marked with `CPPBOOT_ROW` fails when it runs, not when it builds.

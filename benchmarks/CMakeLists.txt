@@ -3,7 +3,7 @@ target_link_libraries(cppboot-bench-server PRIVATE cppboot::web cppboot::data cp
 cppboot_apply_compiler_options(cppboot-bench-server)
 
 add_executable(cppboot-load http_load.cpp)
-target_link_libraries(cppboot-load PRIVATE Boost::headers Threads::Threads)
+target_link_libraries(cppboot-load PRIVATE Boost::headers OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 if(WIN32)
     target_compile_definitions(cppboot-load PRIVATE _WIN32_WINNT=0x0A00)
     target_link_libraries(cppboot-load PRIVATE ws2_32 mswsock)

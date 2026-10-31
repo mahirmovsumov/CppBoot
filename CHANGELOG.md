@@ -105,6 +105,15 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot create --security` now limits its sign-in route.
 - `Request::clientAddress()`, with `cppboot.server.trusted_proxies` for servers behind a proxy. `X-Forwarded-For` is ignored unless it comes from a listed proxy.
 
+### HTTPS
+
+- `cppboot.server.tls.certificate_file` and `private_key_file`, which make the server use HTTPS. Any mistake in them stops startup, so it can't fall back to plain HTTP.
+- TLS 1.2 and 1.3 only, with `cppboot.server.tls.min_version` to require 1.3. TLS 1.2 is limited to ciphers with forward secrecy and authenticated encryption, and compression and renegotiation are refused.
+- A warning when a server listens on a public address with plain HTTP and no proxy.
+- `cppboot-web` now needs OpenSSL, including in projects that don't use HTTPS.
+- Responses are no longer held back by Nagle's algorithm, because connections now set `TCP_NODELAY`.
+- The load generator can test HTTPS and new connections, and reports the first error it sees.
+
 ### Fixes
 
 - Settings with underscores in their names can now be set from the environment, even when they aren't in YAML. For example, `CPPBOOT_SERVER_MAX_CONNECTIONS` had no effect before, unless the key was also in `cppboot.yaml`.

@@ -3,6 +3,14 @@ name: Benchmark
 # Only runs when started by hand, because it uses minutes and its results vary between machines.
 on:
   workflow_dispatch:
+    inputs:
+      sections:
+        description: Which measurements to run
+        type: choice
+        default: all
+        options:
+          - all
+          - https
 
 jobs:
   linux:
@@ -19,4 +27,6 @@ jobs:
             -DCPPBOOT_BUILD_EXAMPLES=OFF -DCPPBOOT_BUILD_CODEGEN=OFF
           cmake --build build/bench --target cppboot-bench-server cppboot-load
       - name: Run
-        run: bash scripts/benchmark-linux.sh build/bench
+        env:
+          SECTIONS: ${{ inputs.sections }}
+        run: bash scripts/benchmark-linux.sh build/bench "$SECTIONS"

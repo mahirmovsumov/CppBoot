@@ -224,11 +224,10 @@ Tokens can't be revoked. A token stays valid until it expires, even if the user 
 
 The token's contents are signed but not encrypted, so anyone holding a token can read them. Don't put secrets in roles or subjects.
 
-Tokens are sent with each request, so **use HTTPS in production**. CppBoot doesn't serve HTTPS yet, so put a TLS proxy in front of it.
+Tokens are sent with each request, so **use HTTPS in production**, either [in the server itself](web.md#https) or through a proxy. If the server listens on a public address with neither, it logs a warning.
 
 ## Not supported yet
 
-- HTTPS in the server itself
 - CORS
 - Limits by user or account, or shared between servers
 - OAuth2 and OpenID Connect

@@ -6,9 +6,14 @@
 //
 // With --hold-idle, it opens every connection, prints a HOLDING line, waits, then sends one request
 // on each to check that it still works.
+//
+// --tls uses HTTPS, without checking the certificate. --new-connections opens a new connection for
+// every request, which measures the cost of connecting, and of the TLS handshake with --tls.
 #include <algorithm>
 #include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
+#include <boost/beast/ssl.hpp>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -43,6 +48,8 @@ struct Options {
     bool hold_idle{false};
     bool many_sources{false};
     int connects_per_second{5000};
+    bool tls{false};
+    bool new_connections{false};
 };
 
 /// Only one thread writes each of these, so they need no locks.
@@ -53,6 +60,13 @@ struct Stats {
     std::uint64_t connected{0};
     std::uint64_t verified{0};
     std::vector<std::uint32_t> latencies_us;
+    std::string first_error;
+
+    void noteError(std::string_view stage, const boost::system::error_code& error) {
+        if (first_error.empty()) {
+            first_error = std::string{stage} + ": " + error.message();
+        }
+    }
 };
 
 struct Shared {
@@ -61,19 +75,29 @@ struct Shared {
     tcp::endpoint server;
 };
 
-asio::awaitable<bool> connectSocket(tcp::socket& socket, const Shared& shared, std::size_t index) {
+using TlsStream = beast::ssl_stream<tcp::socket>;
+
+template <typename Stream>
+tcp::socket& lowestSocket(Stream& stream) {
+    return beast::get_lowest_layer(stream);
+}
+
+asio::awaitable<bool> connectSocket(tcp::socket& socket, const Shared& shared, std::size_t index,
+                                    Stats& stats) {
     boost::system::error_code error;
     if (shared.options.many_sources) {
         const auto source_index = static_cast<unsigned>(index / kConnectionsPerSource);
         socket.open(tcp::v4(), error);
         socket.bind(tcp::endpoint{asio::ip::make_address_v4(0x7F000002U + source_index), 0}, error);
         if (error) {
+            stats.noteError("bind", error);
             co_return false;
         }
     }
 
     auto [connect_error] = co_await socket.async_connect(shared.server, kAsTuple);
     if (connect_error) {
+        stats.noteError("connect", connect_error);
         co_return false;
     }
     socket.set_option(tcp::no_delay(true), error);
@@ -81,19 +105,22 @@ asio::awaitable<bool> connectSocket(tcp::socket& socket, const Shared& shared, s
 }
 
 /// Sends one request and reads its response. Returns false if the connection failed.
-asio::awaitable<bool> exchange(tcp::socket& socket, beast::flat_buffer& buffer,
+template <typename Stream>
+asio::awaitable<bool> exchange(Stream& stream, beast::flat_buffer& buffer,
                                const std::string& request, Stats& stats) {
     auto [write_error, written] =
-        co_await asio::async_write(socket, asio::buffer(request), kAsTuple);
+        co_await asio::async_write(stream, asio::buffer(request), kAsTuple);
     if (write_error) {
         ++stats.request_errors;
+        stats.noteError("write", write_error);
         co_return false;
     }
 
     http::response_parser<http::string_body> parser;
-    auto [read_error, read] = co_await http::async_read(socket, buffer, parser, kAsTuple);
+    auto [read_error, read] = co_await http::async_read(stream, buffer, parser, kAsTuple);
     if (read_error) {
         ++stats.request_errors;
+        stats.noteError("read", read_error);
         co_return false;
     }
     if (parser.get().result_int() != 200) {
@@ -102,15 +129,58 @@ asio::awaitable<bool> exchange(tcp::socket& socket, beast::flat_buffer& buffer,
     co_return true;
 }
 
+/// Returns false if the handshake failed. A plain socket has none.
+asio::awaitable<bool> startTls(tcp::socket&, Stats&) {
+    co_return true;
+}
+
+asio::awaitable<bool> startTls(TlsStream& stream, Stats& stats) {
+    auto [error] = co_await stream.async_handshake(asio::ssl::stream_base::client, kAsTuple);
+    if (error) {
+        stats.noteError("handshake", error);
+    }
+    co_return !error;
+}
+
+void record(Stats& stats, Clock::time_point before) {
+    stats.latencies_us.push_back(static_cast<std::uint32_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - before).count()));
+}
+
+template <typename MakeStream>
 asio::awaitable<void> runActive(const Shared& shared, std::size_t index, Clock::time_point start,
-                                Clock::time_point deadline, Stats& stats) {
+                                Clock::time_point deadline, Stats& stats, MakeStream make_stream) {
     auto executor = co_await asio::this_coro::executor;
 
     asio::steady_timer timer{executor, start};
     static_cast<void>(co_await timer.async_wait(kAsTuple));
 
-    tcp::socket socket{executor};
-    if (!co_await connectSocket(socket, shared, index)) {
+    if (shared.options.new_connections) {
+        while (Clock::now() < deadline) {
+            const auto before = Clock::now();
+            auto stream = make_stream(executor);
+            if (!co_await connectSocket(lowestSocket(stream), shared, index, stats) ||
+                !co_await startTls(stream, stats)) {
+                ++stats.connect_errors;
+                continue;
+            }
+            beast::flat_buffer buffer;
+            if (co_await exchange(stream, buffer, shared.request, stats)) {
+                record(stats, before);
+            }
+
+            // Otherwise each closed connection holds a port for minutes, and they soon run out. This
+            // has to close the socket itself, because destroying it turns the option off again.
+            boost::system::error_code ignored;
+            lowestSocket(stream).set_option(asio::socket_base::linger(true, 0), ignored);
+            lowestSocket(stream).close(ignored);
+        }
+        co_return;
+    }
+
+    auto stream = make_stream(executor);
+    if (!co_await connectSocket(lowestSocket(stream), shared, index, stats) ||
+        !co_await startTls(stream, stats)) {
         ++stats.connect_errors;
         co_return;
     }
@@ -118,23 +188,24 @@ asio::awaitable<void> runActive(const Shared& shared, std::size_t index, Clock::
     beast::flat_buffer buffer;
     while (Clock::now() < deadline) {
         const auto before = Clock::now();
-        if (!co_await exchange(socket, buffer, shared.request, stats)) {
+        if (!co_await exchange(stream, buffer, shared.request, stats)) {
             co_return;
         }
-        stats.latencies_us.push_back(static_cast<std::uint32_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - before).count()));
+        record(stats, before);
     }
 }
 
+template <typename MakeStream>
 asio::awaitable<void> runIdle(const Shared& shared, std::size_t index, Clock::time_point start,
-                              Clock::time_point verify_at, Stats& stats) {
+                              Clock::time_point verify_at, Stats& stats, MakeStream make_stream) {
     auto executor = co_await asio::this_coro::executor;
 
     asio::steady_timer timer{executor, start};
     static_cast<void>(co_await timer.async_wait(kAsTuple));
 
-    tcp::socket socket{executor};
-    if (!co_await connectSocket(socket, shared, index)) {
+    auto stream = make_stream(executor);
+    if (!co_await connectSocket(lowestSocket(stream), shared, index, stats) ||
+        !co_await startTls(stream, stats)) {
         ++stats.connect_errors;
         co_return;
     }
@@ -144,7 +215,7 @@ asio::awaitable<void> runIdle(const Shared& shared, std::size_t index, Clock::ti
     static_cast<void>(co_await timer.async_wait(kAsTuple));
 
     beast::flat_buffer buffer;
-    if (co_await exchange(socket, buffer, shared.request, stats)) {
+    if (co_await exchange(stream, buffer, shared.request, stats)) {
         ++stats.verified;
     }
 }
@@ -179,6 +250,10 @@ Options parseOptions(int argc, char* argv[]) {
             options.hold_idle = true;
         } else if (argument == "--many-sources") {
             options.many_sources = true;
+        } else if (argument == "--tls") {
+            options.tls = true;
+        } else if (argument == "--new-connections") {
+            options.new_connections = true;
         } else {
             std::cerr << "Unknown option " << argument << '\n';
             std::exit(2);
@@ -211,9 +286,11 @@ int main(int argc, char* argv[]) {
 
     // One event loop per thread, so that each connection and its stats stay on one thread.
     std::vector<std::unique_ptr<asio::io_context>> contexts;
+    std::vector<std::unique_ptr<asio::ssl::context>> tls_contexts;
     std::vector<Stats> stats(thread_count);
     for (std::size_t i = 0; i < thread_count; ++i) {
         contexts.push_back(std::make_unique<asio::io_context>(1));
+        tls_contexts.push_back(std::make_unique<asio::ssl::context>(asio::ssl::context::tls_client));
     }
 
     const auto ramp = std::chrono::milliseconds{
@@ -229,12 +306,23 @@ int main(int argc, char* argv[]) {
         const auto start = begin + ramp * static_cast<std::int64_t>(i) /
                                        static_cast<std::int64_t>(options.connections);
         asio::io_context& context = *contexts[owner];
-        if (options.hold_idle) {
-            asio::co_spawn(context, runIdle(shared, i, start, deadline, stats[owner]),
-                           asio::detached);
+
+        const auto spawn = [&](auto make_stream) {
+            if (options.hold_idle) {
+                asio::co_spawn(context,
+                               runIdle(shared, i, start, deadline, stats[owner], make_stream),
+                               asio::detached);
+            } else {
+                asio::co_spawn(context,
+                               runActive(shared, i, start, deadline, stats[owner], make_stream),
+                               asio::detached);
+            }
+        };
+
+        if (options.tls) {
+            spawn([&tls = *tls_contexts[owner]](auto executor) { return TlsStream{executor, tls}; });
         } else {
-            asio::co_spawn(context, runActive(shared, i, start, deadline, stats[owner]),
-                           asio::detached);
+            spawn([](auto executor) { return tcp::socket{executor}; });
         }
     }
 
@@ -258,6 +346,12 @@ int main(int argc, char* argv[]) {
         total.verified += part.verified;
         total.latencies_us.insert(total.latencies_us.end(), part.latencies_us.begin(),
                                   part.latencies_us.end());
+        if (total.first_error.empty()) {
+            total.first_error = part.first_error;
+        }
+    }
+    if (!total.first_error.empty()) {
+        std::cout << "first error: " << total.first_error << std::endl;
     }
 
     if (options.hold_idle) {

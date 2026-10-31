@@ -36,10 +36,13 @@ add_executable(cppboot-web-tests
     web/rate_limit_test.cpp
     web/router_test.cpp
     web/server_test.cpp
+    web/tls_test.cpp
 )
 target_link_libraries(cppboot-web-tests PRIVATE
     cppboot::web
     Boost::headers
+    OpenSSL::SSL
+    OpenSSL::Crypto
     GTest::gtest_main
 )
 if(WIN32)

@@ -3,14 +3,20 @@
 #include <algorithm>
 #include <atomic>
 #include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
+#include <boost/beast/ssl.hpp>
 #include <charconv>
 #include <iterator>
 #include <list>
+#include <memory>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
+
+#include "tls.hpp"
 
 namespace cppboot::web {
 
@@ -26,6 +32,16 @@ constexpr auto kAsTuple = asio::as_tuple(asio::use_awaitable);
 // One waiting accept takes one connection per turn of the event loop, which is only a few hundred
 // per second under load, so new clients would queue for seconds while existing ones are served.
 constexpr int kConcurrentAccepts = 64;
+
+// A handshake costs the server real work before it knows anything about the client, so it gets
+// less time than a request does.
+constexpr std::chrono::milliseconds kMostHandshakeTime = std::chrono::seconds{10};
+
+// Closing cleanly waits for the client to agree, and a client that doesn't must not hold it open.
+constexpr std::chrono::milliseconds kTlsCloseTime = std::chrono::seconds{2};
+
+using PlainStream = beast::tcp_stream;
+using TlsStream = beast::ssl_stream<beast::tcp_stream>;
 
 http::response<http::string_body> toBeastResponse(const Response& response, unsigned version,
                                                   bool keep_alive, bool head_request) {
@@ -65,12 +81,24 @@ asio::awaitable<Response> runHandler(const Router& router, Request request) {
 
 /// Keeps per-connection state on the network thread, which is the only thread to touch it.
 struct Connection {
-    Connection(tcp::socket socket, std::string peer_in, bool peer_is_trusted_in)
-        : stream(std::move(socket)),
+    Connection(tcp::socket socket, asio::ssl::context* tls_context, std::string peer_in,
+               bool peer_is_trusted_in)
+        : stream(tls_context != nullptr
+                     ? std::variant<PlainStream, TlsStream>{std::in_place_type<TlsStream>,
+                                                            std::move(socket), *tls_context}
+                     : std::variant<PlainStream, TlsStream>{std::in_place_type<PlainStream>,
+                                                            std::move(socket)}),
           peer(std::move(peer_in)),
           peer_is_trusted(peer_is_trusted_in) {}
 
-    beast::tcp_stream stream;
+    /// The layer that holds the socket and its timer, whether or not TLS is in use.
+    beast::tcp_stream& transport() {
+        return std::visit(
+            [](auto& layer) -> beast::tcp_stream& { return beast::get_lowest_layer(layer); },
+            stream);
+    }
+
+    std::variant<PlainStream, TlsStream> stream;
     std::string peer;
     bool peer_is_trusted;
     bool busy{false};
@@ -235,7 +263,11 @@ struct Server::Impl {
                 continue;
             }
 
-            connections.emplace_back(std::move(socket),
+            // Otherwise a short response can wait for the client to acknowledge earlier data.
+            boost::system::error_code ignored;
+            socket.set_option(tcp::no_delay(true), ignored);
+
+            connections.emplace_back(std::move(socket), tls_context.get(),
                                      normalized(remote.address()).to_string(),
                                      isTrusted(trusted_proxies, remote.address()));
             asio::co_spawn(io, serve(std::prev(connections.end())), asio::detached);
@@ -243,28 +275,70 @@ struct Server::Impl {
     }
 
     asio::awaitable<void> serve(std::list<Connection>::iterator connection) {
+        if (auto* const tls = std::get_if<TlsStream>(&connection->stream)) {
+            co_await serveTls(*connection, *tls);
+        } else {
+            static_cast<void>(co_await exchange(*connection, std::get<PlainStream>(connection->stream)));
+        }
+
+        boost::system::error_code ignored;
+        beast::tcp_stream& transport = connection->transport();
+        transport.socket().shutdown(tcp::socket::shutdown_send, ignored);
+        transport.socket().close(ignored);
+        connections.erase(connection);
+
+        if (stopping && connections.empty()) {
+            drain_timer.cancel();
+        }
+    }
+
+    asio::awaitable<void> serveTls(Connection& connection, TlsStream& stream) {
+        beast::tcp_stream& transport = connection.transport();
+
+        transport.expires_after(std::min(options.request_timeout, kMostHandshakeTime));
+        auto [handshake_error] =
+            co_await stream.async_handshake(asio::ssl::stream_base::server, kAsTuple);
+        if (handshake_error) {
+            // Only the client can see this usefully, and logging it would let anyone fill the log.
+            co_return;
+        }
+
+        if (co_await exchange(connection, stream)) {
+            transport.expires_after(kTlsCloseTime);
+            static_cast<void>(co_await stream.async_shutdown(kAsTuple));
+        }
+    }
+
+    /// Handles requests until the connection ends. Returns false if it failed, rather than
+    /// finishing normally, which means it can't be closed cleanly.
+    template <typename Stream>
+    asio::awaitable<bool> exchange(Connection& connection, Stream& stream) {
         beast::flat_buffer buffer;
+        beast::tcp_stream& transport = connection.transport();
 
         while (!stopping) {
             http::request_parser<http::string_body> parser;
             parser.body_limit(options.max_body_bytes);
 
-            connection->busy = false;
-            connection->stream.expires_after(options.request_timeout);
-            auto [read_error, read_size] =
-                co_await http::async_read(connection->stream, buffer, parser, kAsTuple);
-            connection->busy = true;
+            connection.busy = false;
+            transport.expires_after(options.request_timeout);
+            auto [read_error, read_size] = co_await http::async_read(stream, buffer, parser, kAsTuple);
+            connection.busy = true;
 
             if (read_error) {
-                if (read_error == http::error::body_limit) {
-                    co_await sendError(*connection, 413);
-                } else if (read_error.category() ==
-                               beast::error_code{http::error::bad_method}.category() &&
-                           read_error != http::error::end_of_stream &&
-                           read_error != http::error::partial_message) {
-                    co_await sendError(*connection, 400);
+                if (read_error == http::error::end_of_stream) {
+                    co_return true;
                 }
-                break;
+                if (read_error == http::error::body_limit) {
+                    co_await sendError(connection, stream, 413);
+                    co_return true;
+                }
+                if (read_error.category() == beast::error_code{http::error::bad_method}.category() &&
+                    read_error != http::error::partial_message) {
+                    co_await sendError(connection, stream, 400);
+                    co_return true;
+                }
+                co_return false;
             }
 
             auto& beast_request = parser.get();
@@ -275,9 +349,9 @@ struct Server::Impl {
             auto request = toRequest(beast_request);
             if (request) {
                 request.value().setClientAddress(
-                    connection->peer_is_trusted
-                        ? forwardedClient(beast_request, trusted_proxies, connection->peer)
-                        : connection->peer);
+                    connection.peer_is_trusted
+                        ? forwardedClient(beast_request, trusted_proxies, connection.peer)
+                        : connection.peer);
             }
             Response response = !request ? errorResponse(400, statusReason(400))
                                          : co_await asio::co_spawn(
@@ -288,28 +362,24 @@ struct Server::Impl {
             const bool keep_alive = wants_keep_alive && !stopping;
             auto beast_response = toBeastResponse(response, version, keep_alive, head_request);
 
-            connection->stream.expires_after(options.request_timeout);
+            transport.expires_after(options.request_timeout);
             auto [write_error, write_size] =
-                co_await http::async_write(connection->stream, beast_response, kAsTuple);
-            if (write_error || !keep_alive) {
-                break;
+                co_await http::async_write(stream, beast_response, kAsTuple);
+            if (write_error) {
+                co_return false;
+            }
+            if (!keep_alive) {
+                co_return true;
             }
         }
-
-        boost::system::error_code ignored;
-        connection->stream.socket().shutdown(tcp::socket::shutdown_send, ignored);
-        connection->stream.socket().close(ignored);
-        connections.erase(connection);
-
-        if (stopping && connections.empty()) {
-            drain_timer.cancel();
-        }
+        co_return true;
     }
 
-    asio::awaitable<void> sendError(Connection& connection, int status) {
+    template <typename Stream>
+    asio::awaitable<void> sendError(Connection& connection, Stream& stream, int status) {
         auto response = toBeastResponse(errorResponse(status, statusReason(status)), 11, false, false);
-        connection.stream.expires_after(options.request_timeout);
-        static_cast<void>(co_await http::async_write(connection.stream, response, kAsTuple));
+        connection.transport().expires_after(options.request_timeout);
+        static_cast<void>(co_await http::async_write(stream, response, kAsTuple));
     }
 
     /// Runs on the network thread. Idle connections close now, and busy ones after their response.
@@ -321,7 +391,7 @@ struct Server::Impl {
 
         for (Connection& connection : connections) {
             if (!connection.busy) {
-                connection.stream.cancel();
+                connection.transport().cancel();
             }
         }
 
@@ -330,7 +400,7 @@ struct Server::Impl {
             drain_timer.async_wait([this](const boost::system::error_code& error) {
                 if (!error) {
                     for (Connection& connection : connections) {
-                        connection.stream.cancel();
+                        connection.transport().cancel();
                     }
                 }
             });
@@ -346,6 +416,7 @@ struct Server::Impl {
     tcp::acceptor acceptor;
     asio::steady_timer drain_timer;
     asio::thread_pool workers;
+    std::unique_ptr<asio::ssl::context> tls_context;
     std::list<Connection> connections;
     // Only read and written on the network thread.
     bool stopping{false};
@@ -381,6 +452,14 @@ Result<void> Server::start() {
             return range.error();
         }
         impl.trusted_proxies.push_back(std::move(range).value());
+    }
+
+    if (impl.options.tls) {
+        auto context = makeTlsContext(*impl.options.tls, impl.log_error);
+        if (!context) {
+            return context.error();
+        }
+        impl.tls_context = std::move(context).value();
     }
 
     boost::system::error_code error;

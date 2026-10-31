@@ -67,6 +67,9 @@ int main(int argc, char* argv[]) {
         return Response::json(body.dump());
     });
 
+    // Shows the cost of moving data, which grows with size, unlike the other routes.
+    router->get("/large", [](const Request&) { return Response::text(std::string(64 * 1024, 'x')); });
+
     router->get("/users/{id}/posts/{post}", [](const Request& request) {
         return Response::text(*request.param("id") + "/" + *request.param("post"));
     });

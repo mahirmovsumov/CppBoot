@@ -4,6 +4,7 @@ add_library(cppboot-web
     src/router.cpp
     src/server.cpp
     src/server_module.cpp
+    src/tls.cpp
 )
 add_library(cppboot::web ALIAS cppboot-web)
 
@@ -18,6 +19,8 @@ target_link_libraries(cppboot-web
         nlohmann_json::nlohmann_json
     PRIVATE
         Boost::headers
+        OpenSSL::SSL
+        OpenSSL::Crypto
 )
 
 if(WIN32)

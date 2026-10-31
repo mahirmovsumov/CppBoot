@@ -14,7 +14,7 @@ These results measure CppBoot on one CPU core with a 2 GB memory limit, in Relea
 
 The Linux load generator shares a physical core with the server, so that machine's results are lower than a dedicated core would give. An earlier run on a different cloud CPU, an AMD EPYC 9V45, reached about 61,000 requests per second for the same test, before the accept fix.
 
-Every request is over loopback, with no real network or TLS, and responses are small. Each connection sends a request, waits for the response and repeats, as fast as it can.
+Every request is over loopback, with no real network, and responses are small. Only the [HTTPS](#https) section uses TLS. Each connection sends a request, waits for the response and repeats, as fast as it can.
 
 ## Throughput on one core
 
@@ -65,7 +65,7 @@ A real 2 GB server also needs memory for its operating system and your applicati
 ## What this doesn't show
 
 - **Comparison:** nothing here measures another framework, so these results don't show whether CppBoot is faster than any of them.
-- **Real networks and TLS:** both add cost, and neither is measured.
+- **Real networks:** these add cost, and aren't measured. The [HTTPS](#https) results are also over loopback.
 - **PostgreSQL:** the database test uses SQLite on the same machine. A networked database is much slower, and usually becomes the limit before the framework does.
 - **Your CPU:** results changed by up to 4 times between the machines tested. Measure on your own hardware.
 
@@ -78,6 +78,26 @@ Recording [metrics](guides/actuator.md) on every request took about 4% of throug
 | 1 | 12,945 requests/second | 12,337 requests/second |
 | 2 | 12,992 requests/second | 12,595 requests/second |
 | 3 | 13,292 requests/second | 12,627 requests/second |
+
+## HTTPS
+
+These compare HTTP and HTTPS on the Windows laptop, with the server on one logical core and 1 worker thread, over loopback.
+
+| Test | HTTP | HTTPS | Change |
+|---|---|---|---|
+| Small response, connection kept open | 12,700 to 14,600 requests/second | 11,000 to 11,700 | About 20% fewer |
+| 64 KB response, connection kept open | 5,100 to 6,900 requests/second | 2,100 to 2,200 | About 65% fewer |
+| New connection for every request, ECDSA certificate | 5,986 requests/second | 952 | About 84% fewer |
+| New connection for every request, RSA 2048 certificate | 5,986 requests/second | 586 | About 90% fewer |
+| Memory for each open connection | About 6 KB | About 95 KB | About 15 times more |
+
+During a flood of new HTTPS connections from 16 clients, one open connection still worked with no errors, at a median of 6 ms and a 99th percentile of 18 ms per request.
+
+What this means for planning:
+
+- **Keep connections open.** A handshake costs about the same as 12 requests on an open connection.
+- **Prefer ECDSA certificates,** which handled about 60% more new connections than RSA here.
+- **Plan memory around connections.** At 95 KB each, 10,000 open HTTPS connections need about 1 GB.
 
 ## The effect of rate limits
 

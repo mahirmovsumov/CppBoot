@@ -135,7 +135,7 @@ You forgot to protect it, and it's protected anyway. To open a route, you have t
 The sample has one account, to keep it short. For a real application:
 
 - Keep accounts in a [database](database.md), with hashes from `hashPassword()`.
-- Put a proxy with HTTPS in front of the server, and list it in `cppboot.server.trusted_proxies`. Otherwise, all your users share one sign-in limit.
+- [Serve HTTPS](../guides/web.md#https). If you use a proxy for this, list it in `cppboot.server.trusted_proxies`, or all your users will share one sign-in limit.
 - Generate a real secret with `openssl rand -base64 48`.
 
 ## Next steps

@@ -90,6 +90,23 @@ Result<ServerOptions> readServerOptions(const config::Config& config) {
             options.trusted_proxies.emplace_back(entry);
         }
     }
+
+    // Any of these means HTTPS was wanted, so a mistake stops startup rather than serving plain HTTP.
+    const std::string certificate = config.getString("cppboot.server.tls.certificate_file");
+    const std::string private_key = config.getString("cppboot.server.tls.private_key_file");
+    const std::string min_version = config.getString("cppboot.server.tls.min_version");
+    if (!certificate.empty() || !private_key.empty() || !min_version.empty()) {
+        if (certificate.empty() || private_key.empty()) {
+            return Error{ErrorCode::InvalidArgument,
+                         "HTTPS needs both cppboot.server.tls.certificate_file and "
+                         "cppboot.server.tls.private_key_file"};
+        }
+        TlsOptions tls{certificate, private_key};
+        if (!min_version.empty()) {
+            tls.min_version = min_version;
+        }
+        options.tls = std::move(tls);
+    }
     return options;
 }
 
@@ -104,6 +121,15 @@ Result<void> ServerModule::start(ApplicationContext& context) {
     }
 
     const logging::Logger& logger = context.logger();
+    const bool uses_tls = options.value().tls.has_value();
+    if (!uses_tls && !options.value().host.starts_with("127.") && options.value().host != "::1" &&
+        options.value().trusted_proxies.empty()) {
+        logger.warn("Serving plain HTTP on {}, so anyone on the network can read tokens and "
+                    "passwords. Set cppboot.server.tls.certificate_file, or put a TLS proxy in "
+                    "front and list it in cppboot.server.trusted_proxies",
+                    options.value().host);
+    }
+
     router_->onUnhandledException(
         [&logger](std::string_view what) { logger.error("Request failed: {}", what); });
 
@@ -114,7 +140,7 @@ Result<void> ServerModule::start(ApplicationContext& context) {
         return started;
     }
 
-    logger.info("Server listening on port {}", server_->port());
+    logger.info("Server listening on port {}{}", server_->port(), uses_tls ? " with HTTPS" : "");
     return {};
 }
 

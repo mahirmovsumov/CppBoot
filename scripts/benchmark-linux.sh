@@ -3,11 +3,15 @@
 # other cores. Run it from the repository root after building with -DCPPBOOT_BUILD_BENCHMARKS=ON:
 #
 #   scripts/benchmark-linux.sh build/bench
+#   scripts/benchmark-linux.sh build/bench https
+#
+# The second form only runs the HTTPS measurements.
 #
 # It needs sudo, to set the memory limit and raise the limits on open files.
 set -u
 
 build_dir="${1:-build/bench}"
+sections="${2:-all}"
 server_bin="$(realpath "$build_dir/benchmarks/cppboot-bench-server")"
 load_bin="$(realpath "$build_dir/benchmarks/cppboot-load")"
 
@@ -102,29 +106,16 @@ load() {
     taskset -c "$load_cores" "$load_bin" "$@"
 }
 
-echo
-echo "=== Throughput and latency: 1 core, 1 network thread, 1 worker thread"
-start_server --cppboot.server.worker_threads=1
-echo "Memory at start: $(rss_mb) MB"
-for target in /plaintext /json /users/7/posts/9 /db; do
-    load --connections 64 --seconds 10 --target "$target"
-done
-for connections in 1 16 256 1024 4096 10000; do
-    load --connections "$connections" --seconds 10 --target /plaintext --many-sources
-    echo "  server memory: $(rss_mb) MB"
-done
-stop_server
-
-echo
-echo "=== Open connections with 2 GB: each size gets a fresh server. They open, wait, then all send"
-echo "=== one request at the same moment, which is the worst case for memory."
-for connections in 1000 10000 50000 100000 150000 200000 250000 300000; do
-    start_server --cppboot.server.worker_threads=1
+# Opens connections on a running server, waits, then sends one request on each at the same moment.
+# Sets survived to yes or no.
+hold_connections() {
+    local connections="$1"
+    shift
     base="$(rss_mb)"
 
     output_file="$(mktemp)"
-    load --connections "$connections" --hold-idle --seconds 15 --many-sources \
-        --connects-per-second 8000 >"$output_file" 2>&1 &
+    load --connections "$connections" --hold-idle --seconds 15 --many-sources "$@" \
+        >"$output_file" 2>&1 &
     load_pid=$!
 
     while kill -0 "$load_pid" 2>/dev/null && ! grep -q HOLDING "$output_file"; do
@@ -144,7 +135,7 @@ for connections in 1000 10000 50000 100000 150000 200000 250000 300000; do
     fi
 
     wait "$load_pid"
-    tail -n 1 "$output_file"
+    tail -n 2 "$output_file"
     rm -f "$output_file"
     echo "  while idle: server $memory MB, with kernel sockets $total MB, $per_connection KB per connection"
     sleep 1
@@ -153,6 +144,106 @@ for connections in 1000 10000 50000 100000 150000 200000 250000 300000; do
     survived=yes
     server_alive || survived=no
     echo "  server survived: $survived"
+}
+
+run_https() {
+    local certs ec rsa
+    certs="$(mktemp -d)"
+    chmod 755 "$certs"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+        -keyout "$certs/ec-key.pem" -out "$certs/ec-cert.pem" -days 2 -subj /CN=localhost 2>/dev/null
+    openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout "$certs/rsa-key.pem" -out "$certs/rsa-cert.pem" -days 2 -subj /CN=localhost 2>/dev/null
+    chmod 644 "$certs"/*
+    ec="--cppboot.server.tls.certificate_file=$certs/ec-cert.pem --cppboot.server.tls.private_key_file=$certs/ec-key.pem"
+    rsa="--cppboot.server.tls.certificate_file=$certs/rsa-cert.pem --cppboot.server.tls.private_key_file=$certs/rsa-key.pem"
+
+    echo
+    echo "=== HTTP against HTTPS: 64 reused connections, 3 rounds each"
+    for _ in 1 2 3; do
+        for target in /plaintext /large; do
+            start_server --cppboot.server.worker_threads=1
+            echo "http:  $(load --connections 64 --seconds 8 --target "$target")"
+            stop_server
+            # shellcheck disable=SC2086
+            start_server --cppboot.server.worker_threads=1 $ec
+            echo "https: $(load --connections 64 --seconds 8 --target "$target" --tls)"
+            stop_server
+        done
+    done
+
+    echo
+    echo "=== A new connection for every request: 16 clients"
+    start_server --cppboot.server.worker_threads=1
+    echo "http:        $(load --connections 16 --seconds 8 --new-connections)"
+    stop_server
+    # shellcheck disable=SC2086
+    start_server --cppboot.server.worker_threads=1 $ec
+    echo "https ecdsa: $(load --connections 16 --seconds 8 --new-connections --tls)"
+    stop_server
+    # shellcheck disable=SC2086
+    start_server --cppboot.server.worker_threads=1 $rsa
+    echo "https rsa:   $(load --connections 16 --seconds 8 --new-connections --tls)"
+    stop_server
+
+    echo
+    echo "=== An open connection during a flood of handshakes"
+    # shellcheck disable=SC2086
+    start_server --cppboot.server.worker_threads=1 $ec
+    load --connections 16 --seconds 14 --new-connections --tls >/tmp/bench-flood.log 2>&1 &
+    flood_pid=$!
+    sleep 2
+    echo "open connection: $(load --connections 1 --seconds 8 --tls)"
+    wait "$flood_pid"
+    echo "flood:           $(tail -n 1 /tmp/bench-flood.log)"
+    stop_server
+    start_server --cppboot.server.worker_threads=1
+    echo "with no flood, plain HTTP: $(load --connections 1 --seconds 4)"
+    stop_server
+    # shellcheck disable=SC2086
+    start_server --cppboot.server.worker_threads=1 $ec
+    echo "with no flood, HTTPS:      $(load --connections 1 --seconds 4 --tls)"
+    stop_server
+
+    echo
+    echo "=== Open HTTPS connections with 2 GB: each size gets a fresh server"
+    for connections in 1000 5000 10000 15000 20000 25000 30000 40000; do
+        # shellcheck disable=SC2086
+        start_server --cppboot.server.worker_threads=1 $ec
+        hold_connections "$connections" --tls --connects-per-second 700
+        stop_server
+        if [ "$survived" = no ]; then
+            break
+        fi
+    done
+}
+
+if [ "$sections" = https ]; then
+    run_https
+    echo
+    echo "Done."
+    exit 0
+fi
+
+echo
+echo "=== Throughput and latency: 1 core, 1 network thread, 1 worker thread"
+start_server --cppboot.server.worker_threads=1
+echo "Memory at start: $(rss_mb) MB"
+for target in /plaintext /json /users/7/posts/9 /db; do
+    load --connections 64 --seconds 10 --target "$target"
+done
+for connections in 1 16 256 1024 4096 10000; do
+    load --connections "$connections" --seconds 10 --target /plaintext --many-sources
+    echo "  server memory: $(rss_mb) MB"
+done
+stop_server
+
+echo
+echo "=== Open connections with 2 GB: each size gets a fresh server. They open, wait, then all send"
+echo "=== one request at the same moment, which is the worst case for memory."
+for connections in 1000 10000 50000 100000 150000 200000 250000 300000; do
+    start_server --cppboot.server.worker_threads=1
+    hold_connections "$connections" --connects-per-second 8000
     stop_server
 
     if [ "$survived" = no ]; then
@@ -177,6 +268,8 @@ start_server --cppboot.server.worker_threads=1
 load --connections 1000 --seconds 20 --target /db --many-sources
 echo "  server memory: $(rss_mb) MB"
 stop_server
+
+run_https
 
 echo
 echo "Done."
