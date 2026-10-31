@@ -27,7 +27,9 @@ Any state before `Failed` can move to `Failed`, and `Failed` can move only to `T
 4. Flush logs.
 5. Destroy modules, then the context, logger and configuration.
 
-Requests can't be drained yet because there is no web module. A configurable shutdown timeout will arrive with it, since a timeout means nothing until there's work to cut short.
+The web server is a module, so step 1 stops it and lets running requests finish, for up to `cppboot.server.shutdown_timeout_seconds`. See [010](010-web-server.md#shutdown).
+
+When systemd starts the application, it's told `READY=1` once every module has started, and `STOPPING=1` when shutdown begins. A failure to start sends nothing, so systemd reports the failure.
 
 ## Configuration
 

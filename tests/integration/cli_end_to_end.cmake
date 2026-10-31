@@ -326,6 +326,70 @@ public:
     file(REMOVE ${CHECKS_DIR}/src/racy.hpp)
 endif()
 
+# The code in the tutorials and guides has to work as printed, or it goes stale without anyone noticing.
+# This returns the first code block after a piece of text in a document.
+function(read_code_block document marker result_var)
+    file(READ ${SOURCE_DIR}/docs/${document} text)
+    string(FIND "${text}" "${marker}" position)
+    if(position EQUAL -1)
+        message(FATAL_ERROR "${document} doesn't contain '${marker}'")
+    endif()
+    string(SUBSTRING "${text}" ${position} -1 text)
+    string(FIND "${text}" "```cpp\n" position)
+    math(EXPR position "${position} + 7")
+    string(SUBSTRING "${text}" ${position} -1 text)
+    string(FIND "${text}" "```" position)
+    string(SUBSTRING "${text}" 0 ${position} code)
+    set(${result_var} "${code}" PARENT_SCOPE)
+endfunction()
+
+# Getting started: the component it adds.
+run_cli(code output ${WORK_DIR} create tutorial-start)
+expect_exit_code("${code}" 0 "create for the first tutorial" "${output}")
+read_code_block(tutorials/getting-started.md "Create `src/clock.hpp`" clock_code)
+file(WRITE ${WORK_DIR}/tutorial-start/src/clock.hpp "${clock_code}")
+run_cli(code output ${WORK_DIR}/tutorial-start run --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "the first tutorial's component" "${output}")
+expect_contains("${output}" "Hello from CppBoot! Good morning." "the first tutorial's component")
+
+# Getting started: the change it makes to that component.
+read_code_block(tutorials/getting-started.md "replace the line that logs" setting_code)
+file(READ ${WORK_DIR}/tutorial-start/src/clock.hpp clock_text)
+string(REPLACE [=[context.logger().info("{} Good {}.", greetings_.greeting(), time_.period());]=]
+       "${setting_code}" clock_text "${clock_text}")
+file(WRITE ${WORK_DIR}/tutorial-start/src/clock.hpp "${clock_text}")
+run_cli(code output ${WORK_DIR}/tutorial-start run
+    --cppboot.runtime.shutdown_after_start=true --greeting.name=Alex)
+expect_exit_code("${code}" 0 "the first tutorial's setting" "${output}")
+expect_contains("${output}" "Good morning, world." "the first tutorial's setting")
+
+# The REST API tutorial, which replaces a whole file. The build must also stay free of warnings
+# about its store, because it's what the tutorial teaches.
+run_cli(code output ${WORK_DIR} create tutorial-api --web)
+expect_exit_code("${code}" 0 "create for the REST tutorial" "${output}")
+read_code_block(tutorials/rest-api.md "Replace `src/users.hpp` with this" users_code)
+file(WRITE ${WORK_DIR}/tutorial-api/src/users.hpp "${users_code}")
+run_cli(code output ${WORK_DIR}/tutorial-api run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "the REST tutorial" "${output}")
+string(FIND "${output}" "warning: Field" warning_position)
+if(NOT warning_position EQUAL -1)
+    message(FATAL_ERROR "the REST tutorial: its code gets a warning:\n${output}")
+endif()
+
+# The security guide's middleware, in a project that uses it.
+run_cli(code output ${WORK_DIR} create guide-limit --web)
+expect_exit_code("${code}" 0 "create for the rate limit guide" "${output}")
+read_code_block(guides/security.md "### Limit every route" limit_code)
+file(WRITE ${WORK_DIR}/guide-limit/src/api_limit.hpp "#pragma once
+#include <chrono>
+#include <cppboot/cppboot.hpp>
+#include <cppboot/web/rate_limit.hpp>
+${limit_code}")
+run_cli(code output ${WORK_DIR}/guide-limit run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "the rate limit guide's middleware" "${output}")
+
 # A package has to run from another folder, with no build folder and no SDK to rely on.
 run_cli(code output ${WORK_DIR}/demo-store package)
 expect_exit_code("${code}" 0 "package" "${output}")

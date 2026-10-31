@@ -22,7 +22,10 @@ Start with the tutorial, then use the guides as a reference.
 ## Project status
 
 - [Project status](project-status.md): what works today, what's next, and the main decisions
-- [Benchmarks](benchmarks.md): speed and capacity on one core with 2 GB
+- [Benchmarks](benchmarks.md): speed and capacity on one core with 2 GB, and stress tests
+- [What 1.0 promises](stability.md): what stays stable, and what can change
+- [Release checklist](release-checklist.md): what a release needs, including what's still to decide
+- [Security policy](../SECURITY.md): how to report a problem
 - [Changelog](../CHANGELOG.md): what has been added so far
 - [Phase 1 roadmap](roadmap/phase-1.md): the finished runtime and CLI
 - [Phase 2 roadmap](roadmap/phase-2.md): the finished dependency injection

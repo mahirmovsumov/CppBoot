@@ -33,11 +33,9 @@ Replace `src/users.hpp` with this:
 #include <cppboot/web/binding.hpp>
 #include <cppboot/web/http.hpp>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 struct CPPBOOT_JSON User {

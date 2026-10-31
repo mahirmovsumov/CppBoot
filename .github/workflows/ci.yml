@@ -45,6 +45,12 @@ jobs:
           echo "$output" | tail -n 2
           ! echo "$output" | grep -q SKIPPED
 
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check-docs.py
+
   # Installs a real application as a systemd service, and packages it for a clean container.
   linux-service:
     runs-on: ubuntu-24.04

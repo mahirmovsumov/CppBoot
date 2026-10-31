@@ -71,6 +71,29 @@ target_link_libraries(cppboot-actuator-tests PRIVATE
 cppboot_apply_compiler_options(cppboot-actuator-tests)
 add_test(NAME cppboot-actuator-tests COMMAND cppboot-actuator-tests)
 
+# Every public header has to compile by itself, so that its own includes are complete. Nothing runs
+# this: building it is the test.
+file(GLOB public_headers CONFIGURE_DEPENDS
+    ${PROJECT_SOURCE_DIR}/framework/*/include/cppboot/*.hpp
+    ${PROJECT_SOURCE_DIR}/framework/*/include/cppboot/*/*.hpp
+)
+set(header_test_sources)
+foreach(header IN LISTS public_headers)
+    string(MD5 header_id ${header})
+    set(source ${CMAKE_CURRENT_BINARY_DIR}/header-tests/${header_id}.cpp)
+    file(GENERATE OUTPUT ${source} CONTENT "#include \"${header}\"\n")
+    list(APPEND header_test_sources ${source})
+endforeach()
+add_library(cppboot-header-tests OBJECT ${header_test_sources})
+target_link_libraries(cppboot-header-tests PRIVATE
+    cppboot::boot
+    cppboot::web
+    cppboot::data
+    cppboot::security
+    cppboot::actuator
+)
+cppboot_apply_compiler_options(cppboot-header-tests)
+
 # PostgreSQL tests run only if CPPBOOT_TEST_POSTGRESQL_URL names a test database.
 add_executable(cppboot-data-tests data/data_test.cpp)
 target_link_libraries(cppboot-data-tests PRIVATE
@@ -161,6 +184,7 @@ if(CPPBOOT_BUILD_CODEGEN)
             -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/end-to-end
             -DEXE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
             -DEXPECTED_VERSION=${PROJECT_VERSION}
+            -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/integration/cli_end_to_end.cmake
     )
     # Sanitizer flags have to reach the generated project too, or it won't link.

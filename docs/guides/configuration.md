@@ -94,7 +94,9 @@ if (!enabled) {
 | `cppboot.runtime.shutdown_after_start` | `false` | Stop as soon as the application is running, for startup checks |
 | `cppboot.server.*` | | See the [web server guide](web.md#settings) |
 | `cppboot.database.*` | | See the [database guide](database.md#set-up-the-connection) |
+| `cppboot.server.tls.*` | | See [HTTPS](web.md#https) |
 | `cppboot.security.jwt.*` | | See the [security guide](security.md#settings) |
+| `cppboot.rate_limit.*` | | See [rate limits](security.md#rate-limit-settings) |
 | `cppboot.actuator.metrics_token` | None | See the [health and metrics guide](actuator.md#who-can-see-metrics) |
 
 ## Sensitive values

@@ -184,7 +184,7 @@ private:
 
 This needs `#include <cppboot/web/rate_limit.hpp>`. It also applies to `/actuator` routes, so allow for your health checks and metrics scrapes.
 
-### Settings
+### Rate limit settings
 
 | Key | Default | Purpose |
 |---|---|---|

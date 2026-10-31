@@ -17,7 +17,7 @@ Header with CPPBOOT_SERVICE classes
   -> the build compiles that header into the application
 ```
 
-`CPPBOOT_SERVICE` compiles to nothing in a normal build. When the generator defines `CPPBOOT_CODEGEN`, it becomes `[[clang::annotate("cppboot:service")]]`, which libclang can read. This keeps applications buildable with GCC, Clang and MSVC, and only the generator needs libclang.
+`CPPBOOT_SERVICE` compiles to nothing in a normal build. When the generator defines `CPPBOOT_CODEGEN`, it becomes `[[clang::annotate("cppboot:service")]]`, which libclang can read. So applications don't need any compiler extension, and only the generator needs libclang. CI builds with GCC and Clang, and MSVC hasn't been tried.
 
 ## Rules for components
 

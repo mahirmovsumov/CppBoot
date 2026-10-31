@@ -23,4 +23,4 @@ Startup stops at the first module that fails. Modules that already started are s
 
 ## Registration
 
-In Phase 1, applications register modules explicitly with `Application::addModule()` or `emplaceModule()`. Generated registration code will call the same functions later, so the runtime doesn't depend on the generator.
+Applications can register modules explicitly with `Application::addModule()` or `emplaceModule()`. `runApplication()` adds every component in the `cppboot::Module` group through a module provider, which the runtime calls during `RegisteringModules`. So the runtime doesn't depend on the container or the generator.

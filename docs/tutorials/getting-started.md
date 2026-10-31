@@ -2,7 +2,7 @@
 
 In this tutorial, you install CppBoot on Windows, create an application and add your own component to it. It takes about 15 minutes, and most of that is installing the compiler.
 
-CppBoot has no web or database support yet. Today, you can use it to build background services and command-line applications.
+This tutorial builds a background service. The [next ones](../README.md#using-cppboot) add a web API, a database and sign-in.
 
 ## Install the tools
 
@@ -130,7 +130,7 @@ Modules can read settings through the context. In `src/clock.hpp`, replace the l
 
 ```cpp
 const std::string who = context.config().getString("greeting.name", "world");
-context.logger().info("{} Good {}, {}.", greetings_->greeting(), time_->period(), who);
+context.logger().info("{} Good {}, {}.", greetings_.greeting(), time_.period(), who);
 ```
 
 Then add a section to `cppboot.yaml`:
@@ -148,6 +148,7 @@ cppboot run --greeting.name=Alex
 
 ## Next steps
 
+- [Build a REST API](rest-api.md).
 - Learn about lifetimes and scopes in the [dependency injection guide](../guides/dependency-injection.md).
 - Add background work with the [modules guide](../guides/modules.md).
 - See every way to set a value in the [configuration guide](../guides/configuration.md).

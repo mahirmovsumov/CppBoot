@@ -27,7 +27,7 @@ Each layer may depend only on the layers below it. Modules in the same layer may
 ```text
 Application code
       |
-Feature modules      web, data, security, messaging, actuator
+Feature modules      web, data, security, actuator
       |
 cppboot-core         Application, lifecycle, modules, workers
       |
@@ -36,7 +36,7 @@ cppboot-config  cppboot-logging  cppboot-platform
 cppboot-base         Result, Error, Exception, version
 ```
 
-`cppboot-di` depends only on `cppboot-base`, and the core doesn't depend on it. `cppboot-boot` sits above both and connects them. See [004](004-dependency-injection.md).
+`cppboot-di` depends only on `cppboot-base`, and the core doesn't depend on it. `cppboot-boot` sits above both and connects them. See [004](004-dependency-injection.md). `cppboot-security` and `cppboot-actuator` also use `cppboot-web`, because they work with requests and routes.
 
 This replaces the original diagram, which had configuration and logging depending on core while `Application` in core needed both to start. The fix is a small base library at the bottom, with `Application` above the services it starts.
 
@@ -44,7 +44,7 @@ This replaces the original diagram, which had configuration and logging dependin
 
 1. Core never depends on web, data or security modules.
 2. Optional features stay optional.
-3. Public headers don't expose third-party types. yaml-cpp, spdlog and Boost are private dependencies. The one exception is `cppboot::web::Json`, which is `nlohmann::ordered_json`, because applications work with JSON directly and a wrapper would add a large API for no benefit.
+3. Public headers don't expose third-party types. yaml-cpp, spdlog, Boost, OpenSSL, libpq and SQLite are private dependencies. The one exception is `cppboot::web::Json`, which is `nlohmann::ordered_json`, because applications work with JSON directly and a wrapper would add a large API for no benefit.
 4. Module dependency cycles are rejected at startup.
 5. Modules start as folders with a few CMake targets. A module gets its own target only when something needs to use it separately.
 
@@ -61,13 +61,13 @@ public:
 
 The macros compile to nothing in a normal build. When the generator parses the code, they become `[[clang::annotate(...)]]` attributes that it reads through libclang's stable C API.
 
-Registration is generated code, compiled directly into the application by a CMake function such as `cppboot_add_application()`. Self-registering static objects aren't used, for two reasons: linkers can drop them from static libraries, and they would break the rule against global mutable state.
+Registration is generated code, which the CMake function `cppboot_generate_components()` compiles directly into the application. Self-registering static objects aren't used, for two reasons: linkers can drop them from static libraries, and they would break the rule against global mutable state.
 
 The generator was the largest technical risk, so it got a prototype right after Phase 1 rather than waiting for Phase 4. See [009](009-code-generation.md) for the results.
 
 ## Execution model
 
-Synchronous handlers must not run on the network event loop, because one blocking call would stall every request sharing that thread. They run on a worker pool. Coroutine handlers use CppBoot's own `Task<T>`, which keeps Asio out of public headers.
+Handlers must not run on the network event loop, because one blocking call would stall every request sharing that thread. They run on a worker pool. Handlers are ordinary functions, and there's no coroutine API for them yet.
 
 ## Error handling
 
@@ -81,10 +81,10 @@ CppBoot is built by one developer working with an AI assistant, so 1.0 is limite
 
 - Core runtime
 - Dependency injection
-- Web framework
-- PostgreSQL access
+- Web framework, with HTTPS and rate limits
+- PostgreSQL and SQLite access
 - Basic JWT authentication
 - Actuator
-- CLI
+- CLI, with packaging and Linux services
 
-Full ORM, Kafka, RabbitMQ, service discovery, OAuth2 and MSVC support come after 1.0.
+Full ORM, Kafka, RabbitMQ, service discovery, OAuth2 and MSVC support come after 1.0. [What 1.0 promises](../stability.md) covers which of these stay stable.
