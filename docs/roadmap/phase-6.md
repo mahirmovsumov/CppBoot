@@ -1,6 +1,6 @@
 # Phase 6: Security
 
-**Status:** Complete on Windows. It's finished once CI passes on Linux.
+**Status:** Complete. CI passes on Linux with GCC, Clang and the sanitizers, and on Windows with GCC.
 
 ## Done
 
