@@ -268,9 +268,9 @@ The server reads its certificate once, at startup. **After renewing, restart it,
 
 Every connection costs more with HTTPS, so a server's limits are lower. The [benchmarks](../benchmarks.md#https) have the details:
 
-- **Memory:** an open connection used about 95 KB, against 6 KB for plain HTTP. Plan `cppboot.server.max_connections` around this.
+- **Memory:** an open connection used 76 to 95 KB, against 4 to 6 KB for plain HTTP. With a 2 GB limit on one core, 25,000 open HTTPS connections worked and 30,000 killed the server, so set `cppboot.server.max_connections` below what your memory can hold.
 - **New connections:** these cost the most, because of the handshake. Certificates using an elliptic curve (ECDSA) are faster than RSA, so prefer them.
-- **Reused connections:** these cost much less, so clients that keep connections open are much cheaper to serve.
+- **Reused connections:** these cost much less. Small responses lost about 20% of their throughput, so clients that keep connections open are much cheaper to serve.
 
 All encryption runs on the server's one network thread, so more cores don't make it faster yet. A flood of handshakes slows requests on open connections, and rate limits can't help, because they apply after the handshake.
 

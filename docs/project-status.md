@@ -105,7 +105,7 @@ The tests include an end-to-end test that installs the framework, creates a new 
 
 ## Performance
 
-On one Linux cloud core, CppBoot served about 37,000 small requests per second. With a 2 GB limit, 150,000 open connections stayed open and working. The [benchmarks](benchmarks.md) give full results and their limits, and no other framework has been measured for comparison.
+On one Linux cloud core, CppBoot served about 37,000 small requests per second. With a 2 GB limit, 150,000 open connections stayed open and working, or 25,000 with HTTPS. The [benchmarks](benchmarks.md) give full results and their limits, and no other framework has been measured for comparison.
 
 ## Main decisions
 
@@ -123,7 +123,7 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 - Marked classes are always singletons. Transient and scoped components need manual registration.
 - Every header in `src` adds time to the build, because the generator parses each one.
 - Tokens can't be revoked, so they stay valid until they expire.
-- An open HTTPS connection uses about 95 KB, against 6 KB for plain HTTP, and all encryption runs on one thread.
+- An open HTTPS connection uses 76 to 95 KB, against 4 to 6 KB for plain HTTP, and all encryption runs on one thread.
 - A renewed certificate needs a restart, and there's no HTTP/2.
 - Rate limits only apply to routes you mark, count per address and per process, and reset when the application restarts.
 - A struct used with a query but not marked with `CPPBOOT_ROW` fails when it runs, not when it builds.

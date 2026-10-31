@@ -44,7 +44,7 @@ All TLS work runs on the one network thread, so that connection state needs no l
 
 - **No use of more cores.** Handshakes and encryption can't spread across cores. More network threads could fix this, and benchmarks showing a need for them should come first.
 - **Handshakes delay other connections.** A flood of them slows requests on open connections. Rate limits can't help, because they apply after the handshake. A later version could run handshakes on the worker pool.
-- **Memory.** An open connection uses about 95 KB. Turning off the session cache barely changed this, and where the rest goes hasn't been measured. This is the largest limit on how many connections a small server can hold.
+- **Memory.** An open connection uses 76 to 95 KB. Turning off the session cache barely changed this, and where the rest goes hasn't been measured. This is the largest limit on how many connections a small server can hold, at about 25,000 with 2 GB, against 150,000 for plain HTTP.
 
 ## Left for later
 

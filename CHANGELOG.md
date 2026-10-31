@@ -111,7 +111,7 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - TLS 1.2 and 1.3 only, with `cppboot.server.tls.min_version` to require 1.3. TLS 1.2 is limited to ciphers with forward secrecy and authenticated encryption, and compression and renegotiation are refused.
 - A warning when a server listens on a public address with plain HTTP and no proxy.
 - `cppboot-web` now needs OpenSSL, including in projects that don't use HTTPS.
-- Responses are no longer held back by Nagle's algorithm, because connections now set `TCP_NODELAY`.
+- Connections now set `TCP_NODELAY`.
 - The load generator can test HTTPS and new connections, and reports the first error it sees.
 
 ### Fixes

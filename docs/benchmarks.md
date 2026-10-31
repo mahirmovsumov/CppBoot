@@ -81,23 +81,55 @@ Recording [metrics](guides/actuator.md) on every request took about 4% of throug
 
 ## HTTPS
 
-These compare HTTP and HTTPS on the Windows laptop, with the server on one logical core and 1 worker thread, over loopback.
+These compare HTTP and HTTPS on the same machines as above, with 1 network thread and 1 worker thread, over loopback. Each number is requests per second, and kept-open results are from 3 rounds on Linux, and 2 or 3 on Windows.
 
-| Test | HTTP | HTTPS | Change |
-|---|---|---|---|
-| Small response, connection kept open | 12,700 to 14,600 requests/second | 11,000 to 11,700 | About 20% fewer |
-| 64 KB response, connection kept open | 5,100 to 6,900 requests/second | 2,100 to 2,200 | About 65% fewer |
-| New connection for every request, ECDSA certificate | 5,986 requests/second | 952 | About 84% fewer |
-| New connection for every request, RSA 2048 certificate | 5,986 requests/second | 586 | About 90% fewer |
-| Memory for each open connection | About 6 KB | About 95 KB | About 15 times more |
+| Test | Linux HTTP | Linux HTTPS | Windows HTTP | Windows HTTPS |
+|---|---|---|---|---|
+| Small response, connection kept open, 64 connections | 46,100 to 47,300 | 34,000 to 37,200 | 12,700 to 14,600 | 11,000 to 11,700 |
+| 64 KB response, connection kept open, 64 connections | 4,700 to 4,800 | 5,400 to 5,500 | 5,100 to 6,900 | 2,100 to 2,200 |
+| New connection for every request, ECDSA certificate | 15,036 | 1,357 | 5,986 | 952 |
+| New connection for every request, RSA 2048 certificate | 15,036 | 1,150 | 5,986 | 586 |
 
-During a flood of new HTTPS connections from 16 clients, one open connection still worked with no errors, at a median of 6 ms and a 99th percentile of 18 ms per request.
+Some cautions about these numbers:
 
-What this means for planning:
+- **The 64 KB result on Linux is unexplained.** HTTPS came out slightly faster than HTTP there, and much slower on Windows. Don't conclude that HTTPS is faster. On Linux, the load generator shares a physical core with the server, and its own work can affect the result.
+- **The handshake numbers may be limited by the client.** The load generator does its half of every handshake too. On Linux, it does that on the other half of the server's core, so a dedicated server could do better.
+- **The small-response HTTP number is higher than the table at the top of this page,** at 46,000 against 37,000, on the same CPU model. These are different runs, with `TCP_NODELAY` added in between. Whether that caused the difference hasn't been tested.
 
-- **Keep connections open.** A handshake costs about the same as 12 requests on an open connection.
-- **Prefer ECDSA certificates,** which handled about 60% more new connections than RSA here.
-- **Plan memory around connections.** At 95 KB each, 10,000 open HTTPS connections need about 1 GB.
+### Open connections with 2 GB
+
+On Linux, with the same real 2 GB limit as above. Connections opened at 700 per second and waited, then all sent one request at the same moment:
+
+| Open HTTPS connections | Server memory while idle | With kernel sockets | Peak during the burst | Result |
+|---|---|---|---|---|
+| 1,000 | 90 MB | 80 MB | 83 MB | All worked |
+| 5,000 | 386 MB | 392 MB | 405 MB | All worked |
+| 10,000 | 756 MB | 782 MB | 809 MB | All worked |
+| 20,000 | 1,463 MB | 1,528 MB | 1,581 MB | All worked |
+| 25,000 | 1,865 MB | 1,950 MB | 2,013 MB | All worked, very close to the limit |
+| 30,000 | | | 2,043 MB | The server died, and no requests worked |
+
+Each open HTTPS connection costs about 76 KB in the server on Linux, and about 95 KB on Windows, against about 4 to 6 KB for HTTP. **That lowers the limit from 150,000 connections with HTTP to about 25,000 with HTTPS.** A real server also needs memory for its operating system and your application, so plan for less. The server's peak was at the limit when it died, though the kill counter wasn't captured.
+
+Set `cppboot.server.max_connections` below what your memory can hold. The default of 1,024 is safe, but with HTTPS, its limit is what stands between a connection flood and running out of memory.
+
+### During a flood of handshakes
+
+One open connection kept working, with no errors, while 16 clients kept opening new HTTPS connections:
+
+| One open connection, on Linux | No flood | During the flood |
+|---|---|---|
+| Requests/second | 14,415 | 2,142 |
+| p50 | 64 µs | 235 µs |
+| p99 | 137 µs | 4,002 µs |
+
+On Windows during the flood, its p50 was 6 ms and its p99 18 ms.
+
+### What this means for planning
+
+- **Keep connections open.** On both machines, a request on a new HTTPS connection cost more than 10 times what one on an open connection did.
+- **Prefer ECDSA certificates.** They handled more new connections than RSA: about 18% more on Linux, and about 60% more on Windows.
+- **Plan memory around connections.** 10,000 open HTTPS connections need about 800 MB to 1 GB.
 
 ## The effect of rate limits
 
