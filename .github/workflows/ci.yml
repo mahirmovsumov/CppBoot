@@ -57,6 +57,22 @@ jobs:
       - run: cmake --install build/release --prefix "$RUNNER_TEMP/sdk"
       - run: bash scripts/test-linux-service.sh "$RUNNER_TEMP/sdk"
 
+  # A short stress run under the memory checker. The Stress workflow does long runs.
+  linux-stress:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+      - name: Build
+        run: |
+          cmake -S . -B build/stress -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCPPBOOT_BUILD_BENCHMARKS=ON -DCPPBOOT_BUILD_TESTS=OFF \
+            -DCPPBOOT_BUILD_EXAMPLES=OFF -DCPPBOOT_BUILD_CODEGEN=OFF
+          cmake --build build/stress --target cppboot-stress-server cppboot-stress-client cppboot-load
+      - run: bash scripts/stress-linux.sh build/stress 90 https sanitized
+
   windows:
     runs-on: windows-latest
     defaults:
