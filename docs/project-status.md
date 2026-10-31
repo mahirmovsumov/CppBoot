@@ -80,7 +80,7 @@ To deploy it, run `cppboot package`. The result runs on another machine with no 
 | 6. Security | Complete | JWT sign-in, roles, password hashing, deny by default |
 | 7. Enterprise integration | After 1.0 | Redis, Kafka, RabbitMQ and similar |
 | 8. Observability | Complete | Health checks and Prometheus metrics |
-| 9. Production readiness | In progress | Rate limiting, HTTPS, memory safety tools and Linux services are done. Stress testing is next |
+| 9. Production readiness | Complete | Rate limiting, HTTPS, memory safety tools, Linux services and stress tests |
 
 ## What has been built
 
@@ -102,11 +102,17 @@ To deploy it, run `cppboot package`. The result runs on another machine with no 
 
 Every push runs on Linux with GCC and Clang, on Linux with memory and thread checkers (AddressSanitizer, UBSan and ThreadSanitizer), and on Windows with GCC. The database tests run against SQLite everywhere, and against a real PostgreSQL server on Linux.
 
-The tests include an end-to-end test that installs the framework, creates a new project with the CLI, adds a marked class, then builds, runs and packages it. Another CI job installs a real application as a systemd service, crashes, upgrades and removes it, and runs its package in a clean container. A real Ctrl+C on Windows can't be sent automatically in CI, so that's checked by hand.
+The tests include an end-to-end test that installs the framework, creates a new project with the CLI, adds a marked class, then builds, runs and packages it. Another CI job installs a real application as a systemd service, crashes, upgrades and removes it, and runs its package in a clean container. It also builds the code printed in the tutorials and guides. A short stress run under the memory checker runs on every push, and long ones on request. A real Ctrl+C on Windows can't be sent automatically in CI, so that's checked by hand.
 
 ## Performance
 
 On one Linux cloud core, CppBoot served about 37,000 small requests per second. With a 2 GB limit, 150,000 open connections stayed open and working, or 25,000 with HTTPS. The [benchmarks](benchmarks.md) give full results and their limits, and no other framework has been measured for comparison.
+
+Over 30 minutes in each of 5 builds, [stress tests](benchmarks.md#stress-tests) checked about 20 million results, with none unexpected, and memory stayed flat. Earlier runs found two ways that overload could stop the server from serving, which are fixed.
+
+## Before 1.0
+
+All the planned phases for 1.0 are complete, but 1.0 hasn't been released. The [release checklist](release-checklist.md) lists what's left, and these need the owner's decision: a license, an independent security review, whether to make the repository public, and how people get the SDK.
 
 ## Main decisions
 

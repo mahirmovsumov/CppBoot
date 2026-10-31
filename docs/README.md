@@ -33,7 +33,7 @@ Start with the tutorial, then use the guides as a reference.
 - [Phase 5 roadmap](roadmap/phase-5.md): the finished database support
 - [Phase 6 roadmap](roadmap/phase-6.md): the finished security support
 - [Phase 8 roadmap](roadmap/phase-8.md): the finished observability support
-- [Phase 9 roadmap](roadmap/phase-9.md): production readiness, in progress
+- [Phase 9 roadmap](roadmap/phase-9.md): the finished production readiness work
 
 ## Contributing to CppBoot
 

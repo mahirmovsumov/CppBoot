@@ -144,6 +144,53 @@ This was one run. The other user's own sign-in used one of the 10 attempts, beca
 
 The check itself [costs under 1% of a request for IPv4, and about 2% for IPv6](architecture/014-rate-limiting.md#cost), on routes that have a limit.
 
+## Stress tests
+
+These check that the server keeps working correctly over time, rather than how fast it is. For 30 minutes, many kinds of client ran at once: ones that check every response, including bodies and database rollbacks, and ones that leave mid-request, send garbage, stall, or send too much. Any response a client didn't expect counts as a failure, and so does doing too little work.
+
+Each ran on a GitHub Actions runner with 2 cores and 2 worker threads, over loopback:
+
+| Build | Results checked | Unexpected | Memory, early to late | Most open files | Stopped under load |
+|---|---|---|---|---|---|
+| Release, HTTP, SQLite | 7.2 million | 0 | 16.4 to 16.3 MB | 70 | Exit code 0 |
+| Release, HTTPS, SQLite | 5.5 million | 0 | 28.1 to 28.1 MB | 69 | Exit code 0 |
+| Release, HTTP, PostgreSQL | 3.5 million | 0 | 19.2 to 19.1 MB | 62 | Exit code 0 |
+| AddressSanitizer and UBSan, HTTPS | 1.8 million | 0 | Not judged | 67 | Exit code 0, no leaks |
+| ThreadSanitizer, HTTP | 1.4 million | 0 | Not judged | 71 | Exit code 0, no races |
+
+With 5,000 connections and a limit of 200, the release builds stayed up, and served normally straight afterwards.
+
+### What the stress tests found
+
+The first long run failed. Clients could send a slow request and leave at once, and the workers still ran it. The queue only grew, and open connections reached the 4,096 limit. Well-behaved clients waited over 30 seconds, although the server kept running and used no extra memory. Short runs never showed this.
+
+Rejecting requests that waited too long fixed the waiting, but the second run showed a quieter failure. It had very few errors, while serving about 7 requests per second, because requests from clients that had gone still filled the queue. Now a queued request doesn't run if its client has gone.
+
+| Same test, 30 minutes, release over HTTP | First run | Second run | Final run |
+|---|---|---|---|
+| Unexpected results | 426,496 | 96 | 0 |
+| Most open files | 4,111 | 807 | 70 |
+| `keep-alive` requests served | Not recorded | 355 | 1,767,725 |
+
+The client now fails a run that does too little work, because the second run nearly passed for a server that had almost stopped serving.
+
+### What this doesn't show
+
+- **Longer runs:** 30 minutes finds fast leaks. A slow one could take days to show.
+- **Real networks:** clients and server shared a machine.
+- **Your handlers:** a handler that has already started can't be stopped, and these handlers are short.
+
+To run them yourself:
+
+```bash
+cmake -S . -B build/stress -G Ninja -DCMAKE_BUILD_TYPE=Release -DCPPBOOT_BUILD_BENCHMARKS=ON \
+    -DCPPBOOT_BUILD_TESTS=OFF -DCPPBOOT_BUILD_EXAMPLES=OFF -DCPPBOOT_BUILD_CODEGEN=OFF
+cmake --build build/stress --target cppboot-stress-server cppboot-stress-client cppboot-load
+bash scripts/stress-linux.sh build/stress 1800 https
+```
+
+You can also start the Stress workflow by hand on GitHub, and `scripts/stress-windows.ps1` runs them on Windows.
+
 ## Before running in production
 
 - **`cppboot.server.max_connections`:** the default is 1,024, and connections beyond it are closed. Raise it if you need more.

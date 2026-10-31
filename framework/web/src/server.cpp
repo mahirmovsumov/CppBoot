@@ -43,9 +43,8 @@ constexpr std::chrono::milliseconds kMostHandshakeTime = std::chrono::seconds{10
 // Closing cleanly waits for the client to agree, and a client that doesn't must not hold it open.
 constexpr std::chrono::milliseconds kTlsCloseTime = std::chrono::seconds{2};
 
-// Checking on a client costs a system call, so a busy server that's keeping up doesn't pay for it. At
-// 1 ms, this cost about 15% of throughput on a busy core. A queue built by clients that leave at once
-// soon passes this.
+// Checking on a client costs a system call, so a busy server that's keeping up doesn't pay for it. A
+// queue built by clients that leave at once soon passes this.
 constexpr std::chrono::milliseconds kLongEnoughToCheckClient{10};
 
 // Rejected requests come in floods, so this is how often the log mentions them.
