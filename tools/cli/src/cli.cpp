@@ -26,6 +26,7 @@ Commands:
   create <name>     Create a new project in a new folder
                     Add --web for a web API with a sample controller
                     Add --sqlite or --postgresql with --web to store its data in a database
+                    Add --security with --web for sign-in and protected routes
   build             Build the project in the current folder
   run [arguments]   Build and run the project, passing arguments to the application
   info              Show version and installation details
@@ -42,7 +43,7 @@ constexpr std::array<std::string_view, 30> kReservedNames = {
     "lpt4", "lpt5",  "lpt6", "lpt7",    "lpt8", "lpt9",
 };
 
-enum class ProjectFiles { Always, PlainOnly, WebWithoutDatabase, WithDatabase };
+enum class ProjectFiles { Always, PlainOnly, WebWithoutDatabase, WithDatabase, WithSecurity };
 
 struct ProjectFile {
     std::string_view path;
@@ -69,9 +70,18 @@ constexpr std::string_view kPostgresqlSettings = R"(
     migrations: db/migrations
 )";
 
+// There's no secret here on purpose. It has to come from the environment, and the application won't
+// start without one.
+constexpr std::string_view kSecuritySettings = R"(
+  security:
+    jwt:
+      issuer: @NAME@
+      lifetime_seconds: 3600
+)";
+
 // "@NAME@" is replaced with the project name. "@LIBRARIES@", "@SETTINGS@" and "@ID_COLUMN@" depend
 // on the project kind.
-constexpr std::array<ProjectFile, 9> kProjectFiles = {{
+constexpr std::array<ProjectFile, 10> kProjectFiles = {{
     {"CMakeLists.txt", R"(cmake_minimum_required(VERSION 3.25)
 
 project(@NAME@ LANGUAGES CXX)
@@ -239,6 +249,87 @@ private:
 };
 )",
      ProjectFiles::WithDatabase},
+    {"src/auth.hpp", R"(#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <cppboot/security/password.hpp>
+#include <cppboot/security/token.hpp>
+#include <cppboot/web/http.hpp>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+struct CPPBOOT_JSON Credentials {
+    std::string name;
+    std::string password;
+};
+
+struct CPPBOOT_JSON TokenReply {
+    std::string token;
+};
+
+struct CPPBOOT_JSON Profile {
+    std::string name;
+    std::vector<std::string> roles;
+};
+
+// A sample with one account, whose password comes from the CPPBOOT_MYAPP_PASSWORD environment
+// variable. Store real accounts in a database, with hashes from hashPassword().
+class CPPBOOT_SERVICE Accounts {
+public:
+    explicit Accounts(std::shared_ptr<const cppboot::config::Config> config) {
+        const std::string password = config->getString("cppboot.myapp.password");
+        if (password.empty()) {
+            throw cppboot::Exception(cppboot::Error{
+                cppboot::ErrorCode::InvalidArgument,
+                "Set the sample account's password with CPPBOOT_MYAPP_PASSWORD"});
+        }
+        hash_ = cppboot::security::hashPassword(password);
+    }
+
+    bool check(const Credentials& credentials) const {
+        // Checks the password whatever the name is, so that timing doesn't reveal valid names.
+        const bool password_matches =
+            cppboot::security::verifyPassword(credentials.password, hash_);
+        return password_matches && credentials.name == "admin";
+    }
+
+private:
+    std::string hash_;
+};
+
+class CPPBOOT_CONTROLLER("/api") ApiController {
+public:
+    ApiController(std::shared_ptr<Accounts> accounts,
+                  std::shared_ptr<cppboot::security::TokenService> tokens)
+        : accounts_(std::move(accounts)), tokens_(std::move(tokens)) {}
+
+    // Every route in a project with security needs a token, unless it's marked public.
+    CPPBOOT_PUBLIC CPPBOOT_POST("/login") TokenReply login(const Credentials& credentials) const {
+        if (!accounts_->check(credentials)) {
+            throw cppboot::web::HttpError(401, "Wrong name or password");
+        }
+        return {tokens_->issue(credentials.name, {"admin"})};
+    }
+
+    // This has no mark, so it needs a token. A Principal parameter says who sent the request.
+    CPPBOOT_GET("/me") Profile me(const cppboot::security::Principal& who) const {
+        return {who.subject, who.roles};
+    }
+
+    // This needs a token from a user with the admin role.
+    CPPBOOT_ROLE("admin") CPPBOOT_GET("/report") Profile report(
+        const cppboot::security::Principal& who) const {
+        return {who.subject, who.roles};
+    }
+
+private:
+    std::shared_ptr<Accounts> accounts_;
+    std::shared_ptr<cppboot::security::TokenService> tokens_;
+};
+)",
+     ProjectFiles::WithSecurity},
     {"db/migrations/001_create_users.sql", R"(CREATE TABLE users (
     id @ID_COLUMN@,
     name TEXT NOT NULL
@@ -294,6 +385,10 @@ std::string fillTemplate(std::string_view content, std::string_view name, Projec
         libraries += " cppboot::data";
         settings += kind == ProjectKind::WebSqlite ? kSqliteSettings : kPostgresqlSettings;
     }
+    if (kind == ProjectKind::WebSecured) {
+        libraries += " cppboot::security";
+        settings += kSecuritySettings;
+    }
 
     // Settings go first, because they contain the project name.
     std::string result = replaceAll(content, "@SETTINGS@", settings);
@@ -314,6 +409,8 @@ bool isIncluded(ProjectFiles included, ProjectKind kind) {
             return kind == ProjectKind::Web;
         case ProjectFiles::WithDatabase:
             return hasDatabase(kind);
+        case ProjectFiles::WithSecurity:
+            return kind == ProjectKind::WebSecured;
     }
     return false;
 }
@@ -520,6 +617,7 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
         bool web = false;
         bool sqlite = false;
         bool postgresql = false;
+        bool secured = false;
         for (const std::string& argument : rest) {
             if (argument == "--web") {
                 web = true;
@@ -527,6 +625,8 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
                 sqlite = true;
             } else if (argument == "--postgresql") {
                 postgresql = true;
+            } else if (argument == "--security") {
+                secured = true;
             } else {
                 names.push_back(argument);
             }
@@ -535,14 +635,21 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
             err << kUsage;
             return kExitUsage;
         }
-        if ((sqlite || postgresql) && !web) {
-            err << "cppboot: --sqlite and --postgresql need --web, because the sample that uses "
-                   "the database is a web API\n";
+        if ((sqlite || postgresql || secured) && !web) {
+            err << "cppboot: --sqlite, --postgresql and --security need --web, because their "
+                   "samples are web APIs\n";
+            return kExitUsage;
+        }
+        if (secured && (sqlite || postgresql)) {
+            err << "cppboot: --security can't be combined with a database option yet. Create the "
+                   "project with one, then add the other by following the guides\n";
             return kExitUsage;
         }
 
         ProjectKind kind = ProjectKind::Plain;
-        if (sqlite) {
+        if (secured) {
+            kind = ProjectKind::WebSecured;
+        } else if (sqlite) {
             kind = ProjectKind::WebSqlite;
         } else if (postgresql) {
             kind = ProjectKind::WebPostgresql;

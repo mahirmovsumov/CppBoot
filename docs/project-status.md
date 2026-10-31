@@ -50,7 +50,15 @@ struct CPPBOOT_ROW User {
 auto user = database_->queryOne<User>("SELECT * FROM users WHERE id = $1", id);
 ```
 
-There's no HTTPS or authentication support yet.
+To protect an API, add `--security`. Once a project uses it, every route needs a valid token unless you mark it public, so a forgotten mark leaves a route locked:
+
+```cpp
+CPPBOOT_PUBLIC CPPBOOT_POST("/login") TokenReply login(const Credentials& credentials) const;
+CPPBOOT_GET("/me") Profile me(const cppboot::security::Principal& who) const;
+CPPBOOT_ROLE("admin") CPPBOOT_GET("/report") Report report() const;
+```
+
+The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in production.
 
 ## Progress
 
@@ -61,7 +69,7 @@ There's no HTTPS or authentication support yet.
 | 3. Web framework | Complete | Controllers, JSON, routing, middleware and an HTTP server |
 | 4. Developer experience | Mostly done early | The CLI and generator were needed for Phases 1 and 2 |
 | 5. Database | Complete | PostgreSQL, SQLite, connection pooling, transactions, migrations |
-| 6. Security | Not started | Basic JWT authentication for 1.0 |
+| 6. Security | Complete | JWT sign-in, roles, password hashing, deny by default |
 | 7. Enterprise integration | After 1.0 | Redis, Kafka, RabbitMQ and similar |
 | 8. Observability | Not started | Health and metrics endpoints for 1.0 |
 | 9. Production readiness | Not started | Stress testing, packaging and service integration |
@@ -79,6 +87,7 @@ There's no HTTPS or authentication support yet.
 | `cppboot` CLI | Creates, builds and runs projects | [CLI](guides/cli.md) |
 | Web framework | Serves HTTP with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |
 | Database | Connects to PostgreSQL and SQLite, with pooling, transactions and migrations | [Database](guides/database.md) |
+| Security | Signs users in with tokens, and protects routes by default | [Security](guides/security.md) |
 
 ## How it's tested
 
@@ -105,5 +114,6 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 - The SDK isn't a standalone download, because it needs the compiler, libraries and libclang installed.
 - Marked classes are always singletons. Transient and scoped components need manual registration.
 - Every header in `src` adds time to the build, because the generator parses each one.
-- A project that uses controllers can't add middleware yet.
+- Tokens can't be revoked, so they stay valid until they expire.
+- There's no rate limiting yet, which matters for sign-in routes.
 - A struct used with a query but not marked with `CPPBOOT_ROW` fails when it runs, not when it builds.

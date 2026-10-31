@@ -62,4 +62,3 @@ The SDK installs a copy of Clang's built-in headers, about 15 MB, in `lib/cppboo
 - **Changes in included files:** only listed headers trigger the generator, so a change in a header outside `src` that affects a constructor won't run it again.
 - **Absolute includes:** generated headers include their inputs by absolute path, so they can't be moved between machines. That's acceptable because they are build output.
 - **Interfaces:** only direct abstract base classes count, and each interface can have only one provider. Choosing between providers needs a qualifier feature.
-- **Middleware:** the generated code creates the router, so a project with controllers has no way to add middleware yet.

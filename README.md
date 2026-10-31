@@ -53,7 +53,7 @@ cd examples\hello-world
 ## Build on Linux
 
 ```bash
-sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev
+sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev

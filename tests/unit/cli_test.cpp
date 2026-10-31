@@ -98,6 +98,25 @@ TEST_F(CliTest, PostgresqlProjectUsesItsOwnSettingsAndColumnType) {
               std::string::npos);
 }
 
+TEST_F(CliTest, SecuredProjectHasSignInAndNoSecret) {
+    ASSERT_TRUE(createProject("safe", directory_, cppboot::cli::ProjectKind::WebSecured));
+
+    const auto root = directory_ / "safe";
+    EXPECT_NE(readFile(root / "src" / "auth.hpp").find("CPPBOOT_PUBLIC"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(root / "src" / "users.hpp"));
+    EXPECT_NE(readFile(root / "CMakeLists.txt").find("cppboot::security"), std::string::npos);
+    EXPECT_NE(readFile(root / "cppboot.yaml").find("issuer: safe"), std::string::npos);
+    EXPECT_EQ(readFile(root / "cppboot.yaml").find("secret"), std::string::npos);
+}
+
+TEST_F(CliTest, SecurityOptionNeedsWebAndNoDatabase) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cppboot::cli::run({"create", "a", "--security"}, out, err), cppboot::cli::kExitUsage);
+    EXPECT_EQ(cppboot::cli::run({"create", "a", "--web", "--security", "--sqlite"}, out, err),
+              cppboot::cli::kExitUsage);
+}
+
 TEST_F(CliTest, DatabaseOptionsNeedWebAndCannotBeCombined) {
     std::ostringstream out;
     std::ostringstream err;

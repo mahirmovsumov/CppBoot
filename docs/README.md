@@ -7,10 +7,12 @@ Start with the tutorial, then use the guides as a reference.
 - [Getting started](tutorials/getting-started.md): install CppBoot and create your first application
 - [Build a REST API](tutorials/rest-api.md): controllers, JSON and error handling
 - [Store data in a database](tutorials/database.md): queries, migrations and schema changes
+- [Add sign-in and protected routes](tutorials/security.md): tokens, roles and passwords
 - [Modules and workers](guides/modules.md): add functionality and background work
 - [Dependency injection](guides/dependency-injection.md): components, lifetimes and scopes
 - [Web server](guides/web.md): controllers, JSON, routes and middleware
 - [Database](guides/database.md): queries, row mapping, transactions and migrations
+- [Security](guides/security.md): protected routes, tokens, passwords and middleware
 - [Configuration](guides/configuration.md): settings, profiles and overrides
 - [Command-line tool](guides/cli.md): every `cppboot` command
 
@@ -22,7 +24,8 @@ Start with the tutorial, then use the guides as a reference.
 - [Phase 1 roadmap](roadmap/phase-1.md): the finished runtime and CLI
 - [Phase 2 roadmap](roadmap/phase-2.md): the finished dependency injection
 - [Phase 3 roadmap](roadmap/phase-3.md): the finished web framework
-- [Phase 5 roadmap](roadmap/phase-5.md): the database
+- [Phase 5 roadmap](roadmap/phase-5.md): the finished database support
+- [Phase 6 roadmap](roadmap/phase-6.md): security
 
 ## Contributing to CppBoot
 
@@ -34,4 +37,5 @@ Start with the tutorial, then use the guides as a reference.
 - [Code generation](architecture/009-code-generation.md)
 - [Web server](architecture/010-web-server.md)
 - [Data access](architecture/011-data-access.md)
+- [Security](architecture/012-security.md)
 - [C++20 coding standard](standards/cpp20-coding-standard.md)

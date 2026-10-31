@@ -22,9 +22,15 @@ constexpr const char* kPreamble = R"(
 #define CONTROLLER(path) [[clang::annotate("cppboot:controller:" path)]]
 #define GET(path) [[clang::annotate("cppboot:route:Get:" path)]]
 #define POST(path) [[clang::annotate("cppboot:route:Post:" path)]]
+#define PUBLIC_ROUTE [[clang::annotate("cppboot:public")]]
+#define ROLE(role) [[clang::annotate("cppboot:role:" role)]]
+#define MIDDLEWARE(order) [[clang::annotate("cppboot:middleware:" #order)]]
 namespace cppboot::web {
 class Request {};
 class Response {};
+}
+namespace cppboot::security {
+struct Principal {};
 }
 )";
 
@@ -330,6 +336,118 @@ TEST_F(ParserTest, RejectsAControllerWithNoRoutes) {
 TEST_F(ParserTest, RejectsARouteOutsideAController) {
     expectError(R"(class SERVICE C { public: GET("/") int f(); };)",
                 "must be in a class marked with CPPBOOT_CONTROLLER");
+}
+
+TEST_F(ParserTest, RoutesAreNotPublicUnlessMarked) {
+    const Route route = parseOneRoute(R"(GET("/") int f();)");
+    EXPECT_FALSE(route.is_public);
+    EXPECT_TRUE(route.roles.empty());
+}
+
+TEST_F(ParserTest, ReadsSecurityMarksOnAFunction) {
+    EXPECT_TRUE(parseOneRoute(R"(PUBLIC_ROUTE GET("/") int f();)").is_public);
+    EXPECT_EQ(parseOneRoute(R"(ROLE("admin") ROLE("editor") GET("/") int f();)").roles,
+              (std::vector<std::string>{"admin", "editor"}));
+}
+
+TEST_F(ParserTest, ControllerMarksApplyToItsRoutes) {
+    const auto roles = parse(R"(
+        class CONTROLLER("/a") ROLE("admin") C { public: GET("/") int f(); };
+    )");
+    ASSERT_TRUE(roles) << roles.error().message();
+    EXPECT_EQ(roles.value().controllers[0].routes[0].roles, std::vector<std::string>{"admin"});
+
+    const auto open = parse(R"(
+        class CONTROLLER("/a") PUBLIC_ROUTE C { public: GET("/") int f(); };
+    )");
+    ASSERT_TRUE(open) << open.error().message();
+    EXPECT_TRUE(open.value().controllers[0].routes[0].is_public);
+}
+
+TEST_F(ParserTest, FunctionMarksReplaceControllerMarks) {
+    const auto result = parse(R"(
+        class CONTROLLER("/a") ROLE("admin") C {
+        public:
+            PUBLIC_ROUTE GET("/open") int open();
+            ROLE("editor") GET("/edit") int edit();
+        };
+        class CONTROLLER("/b") PUBLIC_ROUTE D {
+        public:
+            ROLE("admin") GET("/secret") int secret();
+        };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+
+    const auto& first = result.value().controllers[0].routes;
+    EXPECT_TRUE(first[0].is_public);
+    EXPECT_TRUE(first[0].roles.empty());
+    EXPECT_EQ(first[1].roles, std::vector<std::string>{"editor"});
+
+    // A role on a function inside a public controller must still protect that function.
+    const Route& secret = result.value().controllers[1].routes[0];
+    EXPECT_FALSE(secret.is_public);
+    EXPECT_EQ(secret.roles, std::vector<std::string>{"admin"});
+}
+
+TEST_F(ParserTest, BindsThePrincipal) {
+    const Route route =
+        parseOneRoute(R"(GET("/") int f(const cppboot::security::Principal& who);)");
+    ASSERT_EQ(route.parameters.size(), 1U);
+    EXPECT_EQ(route.parameters[0].source, ParameterSource::Principal);
+}
+
+TEST_F(ParserTest, RejectsAPrincipalOnAPublicRoute) {
+    expectError(R"(class CONTROLLER("/a") C { public:
+        PUBLIC_ROUTE GET("/") int f(const cppboot::security::Principal& who); };)",
+                "can't take a Principal");
+}
+
+TEST_F(ParserTest, RejectsBothPublicAndRole) {
+    expectError(R"(class CONTROLLER("/a") C { public: PUBLIC_ROUTE ROLE("x") GET("/") int f(); };)",
+                "both CPPBOOT_PUBLIC and CPPBOOT_ROLE");
+    expectError(R"(class CONTROLLER("/a") PUBLIC_ROUTE ROLE("x") C { public: GET("/") int f(); };)",
+                "both CPPBOOT_PUBLIC and CPPBOOT_ROLE");
+}
+
+TEST_F(ParserTest, RejectsASecurityMarkThatWouldDoNothing) {
+    expectError(R"(class CONTROLLER("/a") C { public: GET("/") int f(); ROLE("x") int g(); };)",
+                "isn't a route");
+    expectError(R"(class SERVICE C { public: ROLE("x") int g(); };)",
+                "must be in a class marked with CPPBOOT_CONTROLLER");
+    expectError(R"(class SERVICE ROLE("x") C {};)",
+                "must be on a class marked with CPPBOOT_CONTROLLER");
+}
+
+TEST_F(ParserTest, RejectsAnEmptyRole) {
+    expectError(R"(class CONTROLLER("/a") C { public: ROLE("") GET("/") int f(); };)",
+                "empty role");
+}
+
+TEST_F(ParserTest, ReadsMiddlewareAsAComponent) {
+    const auto result = parse(R"(
+        class SERVICE Log {};
+        class MIDDLEWARE(20) Audit {
+        public:
+            explicit Audit(std::shared_ptr<Log> log);
+            int handle(int request, int next);
+        };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    ASSERT_EQ(result.value().middleware.size(), 1U);
+    EXPECT_EQ(result.value().middleware[0].type, "Audit");
+    EXPECT_EQ(result.value().middleware[0].order, 20);
+    EXPECT_EQ(result.value().components[1].dependencies, std::vector<std::string>{"Log"});
+}
+
+TEST_F(ParserTest, RejectsMiddlewareWithoutAHandleFunction) {
+    expectError("class MIDDLEWARE(1) Empty {};", "public function named handle");
+    expectError("class MIDDLEWARE(1) Hidden { int handle(int a, int b); };",
+                "public function named handle");
+}
+
+TEST_F(ParserTest, RejectsMiddlewareWithABadOrder) {
+    expectError("class MIDDLEWARE(early) Bad { public: int handle(int a, int b); };",
+                "must be a whole number");
 }
 
 TEST_F(ParserTest, RejectsARoutePathWithoutASlash) {

@@ -48,6 +48,16 @@ endif()
 cppboot_apply_compiler_options(cppboot-web-tests)
 add_test(NAME cppboot-web-tests COMMAND cppboot-web-tests)
 
+add_executable(cppboot-security-tests security/security_test.cpp)
+target_link_libraries(cppboot-security-tests PRIVATE
+    cppboot::security
+    nlohmann_json::nlohmann_json
+    OpenSSL::Crypto
+    GTest::gtest_main
+)
+cppboot_apply_compiler_options(cppboot-security-tests)
+add_test(NAME cppboot-security-tests COMMAND cppboot-security-tests)
+
 # PostgreSQL tests run only if CPPBOOT_TEST_POSTGRESQL_URL names a test database.
 add_executable(cppboot-data-tests data/data_test.cpp)
 target_link_libraries(cppboot-data-tests PRIVATE
@@ -105,6 +115,19 @@ if(CPPBOOT_BUILD_CODEGEN)
     )
     cppboot_apply_compiler_options(cppboot-generated-repository-tests)
     add_test(NAME cppboot-generated-repository-tests COMMAND cppboot-generated-repository-tests)
+
+    add_executable(cppboot-generated-secured-tests codegen/secured_test.cpp)
+    target_link_libraries(cppboot-generated-secured-tests PRIVATE
+        cppboot::boot
+        cppboot::security
+        cppboot::web
+        GTest::gtest_main
+    )
+    cppboot_generate_components(cppboot-generated-secured-tests
+        HEADERS codegen/sample_secured.hpp
+    )
+    cppboot_apply_compiler_options(cppboot-generated-secured-tests)
+    add_test(NAME cppboot-generated-secured-tests COMMAND cppboot-generated-secured-tests)
 
     # Installs the framework, then creates, builds and runs a project using the installed CLI.
     add_test(NAME cppboot-cli-end-to-end

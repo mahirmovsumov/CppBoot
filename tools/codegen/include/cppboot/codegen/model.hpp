@@ -15,11 +15,15 @@ inline constexpr std::string_view kModuleInterface = "cppboot::Module";
 
 /// Types that cppboot::runApplication() provides, so components can depend on them without any
 /// component declaring them.
-inline constexpr std::array<std::string_view, 3> kFrameworkTypes = {
+inline constexpr std::array<std::string_view, 4> kFrameworkTypes = {
     "cppboot::config::Config",
     "cppboot::logging::Logger",
     "cppboot::data::Database",
+    "cppboot::security::TokenService",
 };
+
+/// Generated code protects every route when something depends on this, or a route uses security.
+inline constexpr std::string_view kTokenServiceType = "cppboot::security::TokenService";
 
 /// Generated code registers the database when something depends on this, or a struct is mapped.
 inline constexpr std::string_view kDatabaseType = "cppboot::data::Database";
@@ -48,7 +52,7 @@ struct MappedStruct {
     std::vector<StructField> fields;
 };
 
-enum class ParameterSource { Path, Query, Body, Request };
+enum class ParameterSource { Path, Query, Body, Request, Principal };
 
 struct RouteParameter {
     ParameterSource source;
@@ -68,11 +72,22 @@ struct Route {
     std::string location;
     std::vector<RouteParameter> parameters;
     ReturnKind return_kind{ReturnKind::Value};
+    /// Marked CPPBOOT_PUBLIC. Once a project uses security, every other route needs a token.
+    bool is_public{false};
+    /// With any of these, a user may call this route. Empty means any signed-in user.
+    std::vector<std::string> roles;
 };
 
 struct Controller {
     std::string type;
     std::vector<Route> routes;
+};
+
+struct Middleware {
+    std::string type;
+    std::string location;
+    /// Lower numbers run first.
+    int order{0};
 };
 
 /// Everything marked in one or more headers.
@@ -81,12 +96,14 @@ struct Declarations {
     std::vector<MappedStruct> json_types;
     std::vector<MappedStruct> row_types;
     std::vector<Controller> controllers;
+    std::vector<Middleware> middleware;
 
     void append(Declarations other);
 };
 
-/// Fails if a dependency has no provider, a type has two providers, dependencies form a cycle, or
-/// two routes have the same method and path.
+/// Fails if a dependency has no provider, a type has two providers, dependencies form a cycle, two
+/// routes have the same method and path, or there's middleware with no controllers for it to run
+/// around.
 Result<void> validateDeclarations(const Declarations& declarations);
 
 /// Returns a header defining JSON conversions and cppboot::generated::registerComponents(), which

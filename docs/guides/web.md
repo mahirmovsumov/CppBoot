@@ -1,6 +1,6 @@
 # Web server
 
-`cppboot::web` serves HTTP requests. There are two ways to use it. Most applications should write controllers, and you can define routes by hand when you need more control, or need middleware.
+`cppboot::web` serves HTTP requests. There are two ways to use it. Most applications should write controllers, and you can define routes by hand when you need more control.
 
 To start a project with a controller, run `cppboot create my-api --web`. The [REST API tutorial](../tutorials/rest-api.md) builds a complete one.
 
@@ -167,6 +167,8 @@ router->use([](const Request& request, const Next& next) {
 
 Middleware sees failures as normal responses, so it can log or change them after calling `next`.
 
+In a project with controllers, mark a class with `CPPBOOT_MIDDLEWARE` instead. See the [security guide](security.md#middleware).
+
 ## Settings
 
 | Key | Default | Purpose |
@@ -188,6 +190,5 @@ Shutdown stops accepting connections, closes idle ones and lets running requests
 ## Not supported yet
 
 - HTTPS, so run the server behind a TLS proxy if it's exposed to a network
-- Middleware in a project that uses controllers, because the generated code creates the router
 - WebSockets and streaming responses
 - `Expect: 100-continue`

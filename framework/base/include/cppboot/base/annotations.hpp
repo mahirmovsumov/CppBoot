@@ -29,3 +29,16 @@
 #define CPPBOOT_PUT(path) CPPBOOT_ANNOTATE("cppboot:route:Put:" path)
 #define CPPBOOT_PATCH(path) CPPBOOT_ANNOTATE("cppboot:route:Patch:" path)
 #define CPPBOOT_DELETE(path) CPPBOOT_ANNOTATE("cppboot:route:Delete:" path)
+
+/// Makes a class a component that runs around every request. It needs this public function:
+///   cppboot::web::Response handle(const cppboot::web::Request&, const cppboot::web::Next&);
+/// Lower numbers run first: class CPPBOOT_MIDDLEWARE(10) RequestLog { ... };
+#define CPPBOOT_MIDDLEWARE(order) CPPBOOT_ANNOTATE("cppboot:middleware:" #order)
+
+/// Once a project uses security, every route needs a valid token unless it has this mark. It can go
+/// on a controller or on a route function.
+#define CPPBOOT_PUBLIC CPPBOOT_ANNOTATE("cppboot:public")
+
+/// Limits a controller or route function to users with this role. With several marks, any one of
+/// the roles is enough. A mark on a function replaces those on its controller.
+#define CPPBOOT_ROLE(role) CPPBOOT_ANNOTATE("cppboot:role:" role)

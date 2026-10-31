@@ -3,6 +3,7 @@
 #include <clang-c/Index.h>
 
 #include <algorithm>
+#include <charconv>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -21,6 +22,9 @@ constexpr std::string_view kJsonAnnotation = "cppboot:json";
 constexpr std::string_view kRowAnnotation = "cppboot:row";
 constexpr std::string_view kControllerPrefix = "cppboot:controller:";
 constexpr std::string_view kRoutePrefix = "cppboot:route:";
+constexpr std::string_view kMiddlewarePrefix = "cppboot:middleware:";
+constexpr std::string_view kPublicAnnotation = "cppboot:public";
+constexpr std::string_view kRolePrefix = "cppboot:role:";
 constexpr std::string_view kAnyPrefix = "cppboot:";
 
 std::string toString(CXString text) {
@@ -86,6 +90,22 @@ std::optional<std::string> findWithPrefix(const std::vector<std::string>& annota
         }
     }
     return std::nullopt;
+}
+
+std::vector<std::string> allWithPrefix(const std::vector<std::string>& annotations,
+                                       std::string_view prefix) {
+    std::vector<std::string> values;
+    for (const std::string& annotation : annotations) {
+        if (annotation.starts_with(prefix)) {
+            values.push_back(annotation.substr(prefix.size()));
+        }
+    }
+    return values;
+}
+
+bool hasSecurityMark(const std::vector<std::string>& annotations) {
+    return hasAnnotation(annotations, kPublicAnnotation) ||
+           findWithPrefix(annotations, kRolePrefix).has_value();
 }
 
 CXType withoutReference(CXType parameter_type) {
@@ -312,6 +332,10 @@ Result<std::vector<RouteParameter>> readRouteParameters(CXCursor method, const s
             parameters.push_back(RouteParameter{ParameterSource::Request, name, type_name});
             continue;
         }
+        if (type_name == "cppboot::security::Principal") {
+            parameters.push_back(RouteParameter{ParameterSource::Principal, name, type_name});
+            continue;
+        }
         if (name.empty()) {
             return errorAt(parameter, "Route parameters need a name");
         }
@@ -382,18 +406,66 @@ Result<Route> readRoute(CXCursor method, std::string_view annotation, std::strin
     return route;
 }
 
-Result<Controller> readController(CXCursor cursor, std::string_view base_path) {
+/// Applies a route's security marks. A mark on a function replaces those on its controller.
+std::optional<Error> applySecurityMarks(CXCursor method, const std::vector<std::string>& method_marks,
+                                        const std::vector<std::string>& class_marks, Route& route) {
+    const std::vector<std::string> method_roles = allWithPrefix(method_marks, kRolePrefix);
+    const std::vector<std::string> class_roles = allWithPrefix(class_marks, kRolePrefix);
+    const bool method_public = hasAnnotation(method_marks, kPublicAnnotation);
+
+    if (method_public && !method_roles.empty()) {
+        return errorAt(method, "Route function " + route.function +
+                                   " can't be both CPPBOOT_PUBLIC and CPPBOOT_ROLE");
+    }
+
+    route.is_public = method_public ||
+                      (method_roles.empty() && hasAnnotation(class_marks, kPublicAnnotation));
+    if (!route.is_public) {
+        route.roles = method_roles.empty() ? class_roles : method_roles;
+    }
+
+    const bool takes_principal =
+        std::any_of(route.parameters.begin(), route.parameters.end(),
+                    [](const RouteParameter& parameter) {
+                        return parameter.source == ParameterSource::Principal;
+                    });
+    if (route.is_public && takes_principal) {
+        return errorAt(method, "Public route function " + route.function +
+                                   " can't take a Principal, because nobody has signed in");
+    }
+    if (std::find(route.roles.begin(), route.roles.end(), "") != route.roles.end()) {
+        return errorAt(method, "Route function " + route.function + " has an empty role name");
+    }
+    return std::nullopt;
+}
+
+Result<Controller> readController(CXCursor cursor, std::string_view base_path,
+                                  const std::vector<std::string>& class_marks) {
     Controller controller;
     controller.type = qualifiedName(clang_getCursorType(cursor));
 
     if (!base_path.empty() && base_path.front() != '/') {
         return errorAt(cursor, "The base path of " + controller.type + " must start with '/'");
     }
+    if (hasAnnotation(class_marks, kPublicAnnotation) &&
+        findWithPrefix(class_marks, kRolePrefix)) {
+        return errorAt(cursor,
+                       controller.type + " can't be both CPPBOOT_PUBLIC and CPPBOOT_ROLE");
+    }
 
     std::optional<Error> error;
     visitChildren(cursor, [&](CXCursor child) {
         if (clang_getCursorKind(child) == CXCursor_CXXMethod) {
-            for (const std::string& annotation : annotationsOf(child)) {
+            const std::vector<std::string> marks = annotationsOf(child);
+
+            // A security mark that does nothing would look like protection that isn't there.
+            if (hasSecurityMark(marks) && !findWithPrefix(marks, kRoutePrefix)) {
+                error = errorAt(child, "Function " + spelling(child) +
+                                           " has a security mark but isn't a route");
+                return CXChildVisit_Break;
+            }
+
+            for (const std::string& annotation : marks) {
                 if (!annotation.starts_with(kRoutePrefix)) {
                     continue;
                 }
@@ -401,6 +473,11 @@ Result<Controller> readController(CXCursor cursor, std::string_view base_path) {
                     child, std::string_view{annotation}.substr(kRoutePrefix.size()), base_path);
                 if (!route) {
                     error = route.error();
+                    return CXChildVisit_Break;
+                }
+                if (auto mark_error =
+                        applySecurityMarks(child, marks, class_marks, route.value())) {
+                    error = std::move(mark_error);
                     return CXChildVisit_Break;
                 }
                 controller.routes.push_back(std::move(route).value());
@@ -419,19 +496,51 @@ Result<Controller> readController(CXCursor cursor, std::string_view base_path) {
     return controller;
 }
 
-/// Finds route macros on a class that isn't a controller, where they'd otherwise do nothing.
-std::optional<Error> findStrayRoute(CXCursor cursor) {
+/// Finds route and security marks on a class that isn't a controller, where they'd otherwise do
+/// nothing. A forgotten controller mark must not look like a protected route.
+std::optional<Error> findStrayMark(CXCursor cursor, const std::vector<std::string>& class_marks) {
+    if (hasSecurityMark(class_marks)) {
+        return errorAt(cursor, "Security marks must be on a class marked with CPPBOOT_CONTROLLER");
+    }
+
     std::optional<Error> error;
     visitChildren(cursor, [&](CXCursor child) {
-        if (clang_getCursorKind(child) == CXCursor_CXXMethod &&
-            findWithPrefix(annotationsOf(child), kRoutePrefix)) {
-            error = errorAt(child, "Route function " + spelling(child) +
-                                       " must be in a class marked with CPPBOOT_CONTROLLER");
-            return CXChildVisit_Break;
+        if (clang_getCursorKind(child) == CXCursor_CXXMethod) {
+            const std::vector<std::string> marks = annotationsOf(child);
+            if (findWithPrefix(marks, kRoutePrefix) || hasSecurityMark(marks)) {
+                error = errorAt(child, "Route function " + spelling(child) +
+                                           " must be in a class marked with CPPBOOT_CONTROLLER");
+                return CXChildVisit_Break;
+            }
         }
         return CXChildVisit_Continue;
     });
     return error;
+}
+
+Result<Middleware> readMiddleware(CXCursor cursor, std::string_view order_text) {
+    Middleware middleware;
+    middleware.type = qualifiedName(clang_getCursorType(cursor));
+    middleware.location = locationOf(cursor);
+
+    const char* const end = order_text.data() + order_text.size();
+    const auto [parsed_end, error] = std::from_chars(order_text.data(), end, middleware.order);
+    if (error != std::errc{} || parsed_end != end) {
+        return errorAt(cursor, "The order of " + middleware.type + " must be a whole number");
+    }
+
+    bool has_handle = false;
+    visitChildren(cursor, [&](CXCursor child) {
+        if (clang_getCursorKind(child) == CXCursor_CXXMethod && spelling(child) == "handle" &&
+            clang_getCXXAccessSpecifier(child) == CX_CXXPublic) {
+            has_handle = true;
+        }
+        return CXChildVisit_Continue;
+    });
+    if (!has_handle) {
+        return errorAt(cursor, middleware.type + " needs a public function named handle");
+    }
+    return middleware;
 }
 
 struct Walk {
@@ -442,9 +551,10 @@ struct Walk {
 void readClass(CXCursor cursor, Walk& walk) {
     const std::vector<std::string> annotations = annotationsOf(cursor);
     const auto controller_path = findWithPrefix(annotations, kControllerPrefix);
+    const auto middleware_order = findWithPrefix(annotations, kMiddlewarePrefix);
     const bool is_service = hasAnnotation(annotations, kServiceAnnotation);
 
-    if (is_service || controller_path) {
+    if (is_service || controller_path || middleware_order) {
         auto component = readComponent(cursor);
         if (!component) {
             walk.error = component.error();
@@ -453,14 +563,23 @@ void readClass(CXCursor cursor, Walk& walk) {
         walk.declarations.components.push_back(std::move(component).value());
     }
 
+    if (middleware_order) {
+        auto middleware = readMiddleware(cursor, *middleware_order);
+        if (!middleware) {
+            walk.error = middleware.error();
+            return;
+        }
+        walk.declarations.middleware.push_back(std::move(middleware).value());
+    }
+
     if (controller_path) {
-        auto controller = readController(cursor, *controller_path);
+        auto controller = readController(cursor, *controller_path, annotations);
         if (!controller) {
             walk.error = controller.error();
             return;
         }
         walk.declarations.controllers.push_back(std::move(controller).value());
-    } else if (auto stray = findStrayRoute(cursor)) {
+    } else if (auto stray = findStrayMark(cursor, annotations)) {
         walk.error = std::move(stray);
         return;
     }

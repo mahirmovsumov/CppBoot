@@ -102,6 +102,33 @@ bool usesDatabase(const Declarations& declarations) {
                        });
 }
 
+/// Fails safe: one mark anywhere protects every route that isn't marked public.
+bool usesSecurity(const Declarations& declarations) {
+    const bool has_dependency = std::any_of(
+        declarations.components.begin(), declarations.components.end(),
+        [](const Component& component) {
+            return std::find(component.dependencies.begin(), component.dependencies.end(),
+                             kTokenServiceType) != component.dependencies.end();
+        });
+    if (has_dependency) {
+        return true;
+    }
+
+    for (const Controller& controller : declarations.controllers) {
+        for (const Route& route : controller.routes) {
+            const bool takes_principal =
+                std::any_of(route.parameters.begin(), route.parameters.end(),
+                            [](const RouteParameter& parameter) {
+                                return parameter.source == ParameterSource::Principal;
+                            });
+            if (route.is_public || !route.roles.empty() || takes_principal) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void renderDatabase(const std::vector<MappedStruct>& row_types, std::string& text) {
     text += "    auto row_mappers = std::make_shared<cppboot::data::RowMappers>();\n";
     for (const MappedStruct& row_type : row_types) {
@@ -160,15 +187,40 @@ std::string renderArgument(const RouteParameter& parameter) {
             return "cppboot::web::bodyAs<" + parameter.type + ">(request)";
         case ParameterSource::Request:
             return "request";
+        case ParameterSource::Principal:
+            return "*principal";
     }
     return "request";
 }
 
-void renderRoute(const Route& route, std::string& text) {
+void renderGuard(const Route& route, std::string& text) {
+    text += "                const auto principal = cppboot::security::authenticate(*tokens, request);\n";
+    text += "                if (!principal) {\n";
+    text += "                    return cppboot::security::unauthorizedResponse();\n";
+    text += "                }\n";
+    if (!route.roles.empty()) {
+        std::string roles;
+        for (const std::string& role : route.roles) {
+            roles += roles.empty() ? "" : ", ";
+            roles += quoted(role);
+        }
+        text += "                if (!principal->hasAnyRole({" + roles + "})) {\n";
+        text += "                    return cppboot::security::forbiddenResponse();\n";
+        text += "                }\n";
+    }
+}
+
+void renderRoute(const Route& route, bool uses_security, std::string& text) {
+    const bool guarded = uses_security && !route.is_public;
+
     text += "            router->add(cppboot::web::Method::" + route.method + ", " +
-            quoted(route.path) +
-            ", [controller]([[maybe_unused]] const cppboot::web::Request& request) -> "
+            quoted(route.path) + ", [controller" + (guarded ? ", tokens" : "") +
+            "]([[maybe_unused]] const cppboot::web::Request& request) -> "
             "cppboot::web::Response {\n";
+
+    if (guarded) {
+        renderGuard(route, text);
+    }
 
     std::string call = "controller->" + route.function + "(";
     for (std::size_t i = 0; i < route.parameters.size(); ++i) {
@@ -192,14 +244,36 @@ void renderRoute(const Route& route, std::string& text) {
     text += "            });\n";
 }
 
-void renderRouter(const std::vector<Controller>& controllers, std::string& text) {
+void renderMiddleware(std::vector<Middleware> middleware, std::string& text) {
+    std::stable_sort(middleware.begin(), middleware.end(),
+                     [](const Middleware& left, const Middleware& right) {
+                         return left.order < right.order;
+                     });
+
+    for (const Middleware& entry : middleware) {
+        text += "        {\n";
+        text += "            auto middleware = resolver.resolve<" + entry.type + ">();\n";
+        text += "            router->use([middleware](const cppboot::web::Request& request, "
+                "const cppboot::web::Next& next) {\n";
+        text += "                return middleware->handle(request, next);\n";
+        text += "            });\n";
+        text += "        }\n";
+    }
+}
+
+void renderRouter(const Declarations& declarations, bool uses_security, std::string& text) {
     text += "    container.registerSingleton<cppboot::web::Router>([](cppboot::di::Resolver& resolver) {\n";
     text += "        auto router = std::make_shared<cppboot::web::Router>();\n";
-    for (const Controller& controller : controllers) {
+    if (uses_security) {
+        // Resolved here even if every route is public, so that a missing secret stops startup.
+        text += "        auto tokens = resolver.resolve<cppboot::security::TokenService>();\n";
+    }
+    renderMiddleware(declarations.middleware, text);
+    for (const Controller& controller : declarations.controllers) {
         text += "        {\n";
         text += "            auto controller = resolver.resolve<" + controller.type + ">();\n";
         for (const Route& route : controller.routes) {
-            renderRoute(route, text);
+            renderRoute(route, uses_security, text);
         }
         text += "        }\n";
     }
@@ -220,6 +294,8 @@ void Declarations::append(Declarations other) {
                      std::make_move_iterator(other.row_types.end()));
     controllers.insert(controllers.end(), std::make_move_iterator(other.controllers.begin()),
                        std::make_move_iterator(other.controllers.end()));
+    middleware.insert(middleware.end(), std::make_move_iterator(other.middleware.begin()),
+                      std::make_move_iterator(other.middleware.end()));
 }
 
 Result<void> validateDeclarations(const Declarations& declarations) {
@@ -258,6 +334,13 @@ Result<void> validateDeclarations(const Declarations& declarations) {
         }
     }
 
+    if (!declarations.middleware.empty() && declarations.controllers.empty()) {
+        const Middleware& middleware = declarations.middleware.front();
+        return Error{ErrorCode::DependencyError,
+                     middleware.type + " (" + middleware.location +
+                         ") is middleware, but there are no controllers for it to run around"};
+    }
+
     std::map<std::string, const Route*> routes;
     for (const Controller& controller : declarations.controllers) {
         for (const Route& route : controller.routes) {
@@ -277,6 +360,7 @@ std::string renderRegistration(const Declarations& declarations,
                                const std::vector<std::string>& headers) {
     const bool has_controllers = !declarations.controllers.empty();
     const bool uses_database = usesDatabase(declarations);
+    const bool uses_security = usesSecurity(declarations);
 
     std::string text =
         "// Generated by cppboot-codegen. Do not edit.\n"
@@ -285,6 +369,9 @@ std::string renderRegistration(const Declarations& declarations,
     if (uses_database) {
         text +=
             "#include <cppboot/data/database.hpp>\n#include <cppboot/data/database_module.hpp>\n";
+    }
+    if (uses_security) {
+        text += "#include <cppboot/security/guard.hpp>\n";
     }
     if (has_controllers || !declarations.json_types.empty()) {
         text += "#include <cppboot/web/binding.hpp>\n";
@@ -312,6 +399,13 @@ std::string renderRegistration(const Declarations& declarations,
         renderDatabase(declarations.row_types, text);
     }
 
+    if (uses_security) {
+        text += "    container.registerSingleton<cppboot::security::TokenService>("
+                "[](cppboot::di::Resolver& resolver) {\n";
+        text += "        return cppboot::security::TokenService::fromSettings("
+                "*resolver.resolve<cppboot::config::Config>());\n    });\n";
+    }
+
     for (const Component& component : declarations.components) {
         text += "    container.registerSingleton<" + component.type + ">(cppboot::di::Deps<";
         for (std::size_t i = 0; i < component.dependencies.size(); ++i) {
@@ -328,7 +422,7 @@ std::string renderRegistration(const Declarations& declarations,
     }
 
     if (has_controllers) {
-        renderRouter(declarations.controllers, text);
+        renderRouter(declarations, uses_security, text);
     }
 
     text += "}\n\n}  // namespace cppboot::generated\n";

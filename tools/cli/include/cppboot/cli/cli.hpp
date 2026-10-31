@@ -15,7 +15,7 @@ inline constexpr int kExitUsage = 2;
 /// Accepts names that work as a folder, a CMake target and an executable on every platform.
 Result<void> validateProjectName(std::string_view name);
 
-enum class ProjectKind { Plain, Web, WebSqlite, WebPostgresql };
+enum class ProjectKind { Plain, Web, WebSqlite, WebPostgresql, WebSecured };
 
 /// Creates a new project folder inside parent. Never touches a folder that already exists.
 Result<void> createProject(std::string_view name, const std::filesystem::path& parent,

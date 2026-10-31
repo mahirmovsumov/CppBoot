@@ -77,6 +77,16 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot create --web --sqlite` and `--postgresql`.
 - `cppboot.database.url` is hidden in configuration logs, and left out of CppBoot's error messages.
 
+### Security
+
+- `TokenService`, which issues and verifies JSON Web Tokens signed with HS256.
+- `CPPBOOT_PUBLIC` and `CPPBOOT_ROLE`. Once a project uses security, every other route needs a valid token, so a forgotten mark leaves a route locked.
+- `Principal` parameters on route functions, which say who sent a request.
+- `hashPassword` and `verifyPassword`, using salted scrypt.
+- `CPPBOOT_MIDDLEWARE`, for middleware in projects that use controllers.
+- The application won't start with a missing or short signing secret, and security marks that would do nothing fail the build.
+- `cppboot create --web --security`.
+
 ### Fixes
 
 - Routes with no parameters no longer generate an unused variable, which broke builds using `-Werror`.

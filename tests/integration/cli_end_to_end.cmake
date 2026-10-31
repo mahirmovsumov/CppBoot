@@ -164,6 +164,25 @@ if(NOT password_position EQUAL -1)
     message(FATAL_ERROR "run with a bad database: the output shows the password:\n${output}")
 endif()
 
+# A secured project must refuse to start without its secret, and start with one.
+run_cli(code output ${WORK_DIR} create demo-safe --web --security)
+expect_exit_code("${code}" 0 "create --security" "${output}")
+set(ENV{CPPBOOT_MYAPP_PASSWORD} "end-to-end-password")
+run_cli(code output ${WORK_DIR}/demo-safe run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+if(code EQUAL 0)
+    message(FATAL_ERROR "run a secured project with no secret: expected a failure:\n${output}")
+endif()
+expect_contains("${output}" "CPPBOOT_SECURITY_JWT_SECRET" "run a secured project with no secret")
+
+set(ENV{CPPBOOT_SECURITY_JWT_SECRET} "an-end-to-end-secret-that-is-long-enough")
+run_cli(code output ${WORK_DIR}/demo-safe run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run a secured project" "${output}")
+expect_contains("${output}" "Server listening on port" "run a secured project")
+unset(ENV{CPPBOOT_SECURITY_JWT_SECRET})
+unset(ENV{CPPBOOT_MYAPP_PASSWORD})
+
 run_cli(code output ${WORK_DIR} build)
 expect_exit_code("${code}" 1 "build outside a project" "${output}")
 expect_contains("${output}" "No CppBoot project here" "build outside a project")

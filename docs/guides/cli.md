@@ -36,6 +36,12 @@ cppboot create my-api --web --sqlite
 cppboot create my-api --web --postgresql
 ```
 
+Add `--security` instead for sign-in and protected routes. The project then has a sample in `src/auth.hpp`, and needs a secret in the environment to start. It also needs `--web`, and can't be combined with a database option yet:
+
+```powershell
+cppboot create my-api --web --security
+```
+
 ### `cppboot build`
 
 Builds the project in the current folder into `build/`. The first build configures the project as a debug build.

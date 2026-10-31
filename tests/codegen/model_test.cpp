@@ -159,6 +159,87 @@ TEST(RenderRegistrationTest, WritesJsonConversions) {
     EXPECT_EQ(text.find("Router"), std::string::npos);
 }
 
+TEST(ValidateDeclarationsTest, RejectsMiddlewareWithNoControllers) {
+    Declarations declarations;
+    declarations.middleware = {{"Log", "a.hpp:1", 1}};
+    const auto result = validateDeclarations(declarations);
+    ASSERT_FALSE(result);
+    EXPECT_NE(result.error().message().find("no controllers"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, LeavesOutSecurityWhenNotUsed) {
+    Declarations declarations;
+    declarations.components = {{"C", "a.hpp:1", {}, {}}};
+    declarations.controllers = {{"C", {makeRoute("Get", "/")}}};
+    const std::string text = renderRegistration(declarations, {});
+
+    EXPECT_EQ(text.find("cppboot/security"), std::string::npos);
+    EXPECT_EQ(text.find("authenticate"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, OneSecurityMarkProtectsEveryOtherRoute) {
+    Route open = makeRoute("Post", "/login");
+    open.function = "login";
+    open.is_public = true;
+
+    Route forgotten = makeRoute("Get", "/forgotten");
+    forgotten.function = "forgotten";
+
+    Declarations declarations;
+    declarations.components = {{"C", "a.hpp:1", {}, {}}};
+    declarations.controllers = {{"C", {open, forgotten}}};
+    const std::string text = renderRegistration(declarations, {});
+
+    const auto login_at = text.find("\"/login\"");
+    const auto forgotten_at = text.find("\"/forgotten\"");
+    const auto guard_at = text.find("authenticate(*tokens, request)");
+    ASSERT_NE(guard_at, std::string::npos);
+    EXPECT_LT(login_at, forgotten_at);
+    EXPECT_GT(guard_at, forgotten_at);
+    EXPECT_EQ(text.find("authenticate(*tokens, request)", guard_at + 1), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, DependingOnTheTokenServiceTurnsOnSecurity) {
+    Declarations declarations;
+    declarations.components = {{"Login", "a.hpp:1", {}, {"cppboot::security::TokenService"}}};
+    declarations.controllers = {{"Login", {makeRoute("Get", "/anything")}}};
+    EXPECT_TRUE(validateDeclarations(declarations));
+
+    const std::string text = renderRegistration(declarations, {});
+    EXPECT_NE(text.find("TokenService::fromSettings"), std::string::npos);
+    EXPECT_NE(text.find("authenticate(*tokens, request)"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, WritesRoleChecksAndThePrincipal) {
+    Route route = makeRoute("Get", "/admin");
+    route.roles = {"admin", "owner"};
+    route.parameters = {{ParameterSource::Principal, "who", "cppboot::security::Principal"}};
+
+    Declarations declarations;
+    declarations.components = {{"C", "a.hpp:1", {}, {}}};
+    declarations.controllers = {{"C", {route}}};
+    const std::string text = renderRegistration(declarations, {});
+
+    EXPECT_NE(text.find("principal->hasAnyRole({\"admin\", \"owner\"})"), std::string::npos);
+    EXPECT_NE(text.find("forbiddenResponse()"), std::string::npos);
+    EXPECT_NE(text.find("controller->handle(*principal)"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, WritesMiddlewareInOrder) {
+    Declarations declarations;
+    declarations.components = {{"C", "a.hpp:1", {}, {}}};
+    declarations.controllers = {{"C", {makeRoute("Get", "/")}}};
+    declarations.middleware = {{"Second", "a.hpp:2", 20}, {"First", "a.hpp:3", 10}};
+    const std::string text = renderRegistration(declarations, {});
+
+    const auto first = text.find("resolver.resolve<First>()");
+    const auto second = text.find("resolver.resolve<Second>()");
+    ASSERT_NE(first, std::string::npos);
+    ASSERT_NE(second, std::string::npos);
+    EXPECT_LT(first, second);
+    EXPECT_NE(text.find("router->use("), std::string::npos);
+}
+
 TEST(RenderRegistrationTest, LeavesOutTheDatabaseWhenNotNeeded) {
     Declarations declarations;
     declarations.components = {{"Service", "a.hpp:1", {}, {}}};
