@@ -246,6 +246,64 @@ TEST_F(ServerTest, RejectsRequestsThatWaitedTooLongForAWorker) {
     EXPECT_NE(logged.front().find("Too busy"), std::string::npos);
 }
 
+TEST_F(ServerTest, DoesNotRunAQueuedRequestWhoseClientHasGone) {
+    std::promise<void> entered;
+    std::promise<void> release;
+    std::atomic<int> abandoned_calls{0};
+    std::atomic<int> waiting_calls{0};
+    router_.get("/block", [&](const Request&) {
+        entered.set_value();
+        release.get_future().wait();
+        return Response::text("done");
+    });
+    router_.get("/abandoned", [&](const Request&) {
+        abandoned_calls.fetch_add(1);
+        return Response::text("nobody reads this");
+    });
+    router_.get("/waiting", [&](const Request&) {
+        waiting_calls.fetch_add(1);
+        return Response::text("still here");
+    });
+
+    ServerOptions options = testOptions();
+    options.worker_threads = 1;
+    const auto port = startServer(std::move(options)).port();
+
+    Client blocker{port};
+    auto blocked = std::async(std::launch::async,
+                              [&] { return blocker.send(http::verb::get, "/block"); });
+    entered.get_future().wait();
+
+    // Each sends a request that has to wait, then one by resetting and one by closing normally.
+    for (const bool reset : {true, false}) {
+        asio::io_context io;
+        tcp::socket socket{io};
+        socket.connect(tcp::endpoint{asio::ip::make_address(kLoopback), port});
+        asio::write(socket, asio::buffer(std::string_view{
+                                "GET /abandoned HTTP/1.1\r\nHost: localhost\r\n\r\n"}));
+        std::this_thread::sleep_for(std::chrono::milliseconds{50});
+        if (reset) {
+            socket.set_option(asio::socket_base::linger(true, 0));
+        }
+        socket.close();
+    }
+
+    // This client stays, and has to get its answer after waiting behind the same handler.
+    Client stays{port};
+    auto waiting = std::async(std::launch::async,
+                              [&] { return stays.send(http::verb::get, "/waiting"); });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds{100});
+    release.set_value();
+
+    EXPECT_EQ(blocked.get().result_int(), 200);
+    const auto response = waiting.get();
+    EXPECT_EQ(response.result_int(), 200);
+    EXPECT_EQ(response.body(), "still here");
+    EXPECT_EQ(waiting_calls.load(), 1);
+    EXPECT_EQ(abandoned_calls.load(), 0);
+}
+
 TEST(ReadServerOptionsTest, ReadsTheQueueTimeout) {
     config::ConfigSources sources;
     sources.directory = std::filesystem::temp_directory_path() / "cppboot-absent-directory";

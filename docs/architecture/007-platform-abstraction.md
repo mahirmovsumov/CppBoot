@@ -15,6 +15,7 @@ Operating system headers and calls appear only in `framework/platform/windows` a
 | `runProcess()` | `CreateProcessW`, with a handler that waits for the child | `fork` and `execvp`, forwarding SIGINT and SIGTERM to the child |
 | `executablePath()` | `GetModuleFileNameW` | `/proc/self/exe` |
 | `residentMemoryBytes()` | `GetProcessMemoryInfo` | `/proc/self/statm` |
+| `peerHasClosed()` | `WSAPoll`, then `recv` with `MSG_PEEK` | `recv` with `MSG_PEEK` and `MSG_DONTWAIT` |
 | `notifyServiceManager()` | Does nothing | A datagram to `NOTIFY_SOCKET`, with no dependency on libsystemd |
 
 ## Platform differences

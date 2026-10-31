@@ -8,6 +8,7 @@
 #include <boost/beast/ssl.hpp>
 #include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -17,6 +18,7 @@
 #include <variant>
 #include <vector>
 
+#include "cppboot/platform/socket_state.hpp"
 #include "tls.hpp"
 
 namespace cppboot::web {
@@ -40,6 +42,11 @@ constexpr std::chrono::milliseconds kMostHandshakeTime = std::chrono::seconds{10
 
 // Closing cleanly waits for the client to agree, and a client that doesn't must not hold it open.
 constexpr std::chrono::milliseconds kTlsCloseTime = std::chrono::seconds{2};
+
+// Checking on a client costs a system call, so a busy server that's keeping up doesn't pay for it. At
+// 1 ms, this cost about 15% of throughput on a busy core. A queue built by clients that leave at once
+// soon passes this.
+constexpr std::chrono::milliseconds kLongEnoughToCheckClient{10};
 
 // Rejected requests come in floods, so this is how often the log mentions them.
 constexpr std::chrono::seconds kShedLogInterval{10};
@@ -239,9 +246,19 @@ struct Server::Impl {
     /// Runs on a worker. The workers take requests in order, so once the oldest is too old, this
     /// clears the rest of the backlog quickly rather than making everyone wait behind it.
     asio::awaitable<Response> runHandler(Request request,
-                                         std::chrono::steady_clock::time_point queued_at) {
+                                         std::chrono::steady_clock::time_point queued_at,
+                                         std::uintptr_t socket_handle) {
         const auto now = std::chrono::steady_clock::now();
-        if (now - queued_at <= options.queue_timeout) {
+        const auto waited = now - queued_at;
+
+        // A client that sends expensive requests and leaves at once could otherwise keep every
+        // worker busy for free. The network thread doesn't close this socket until this returns, so
+        // it's safe to look at from here. Nobody will read this response.
+        if (waited >= kLongEnoughToCheckClient && platform::peerHasClosed(socket_handle)) {
+            co_return Response{503};
+        }
+
+        if (waited <= options.queue_timeout) {
             co_return router.handle(std::move(request));
         }
 
@@ -384,7 +401,9 @@ struct Server::Impl {
                                          : co_await asio::co_spawn(
                                                workers,
                                                runHandler(std::move(request).value(),
-                                                          std::chrono::steady_clock::now()),
+                                                          std::chrono::steady_clock::now(),
+                                                          static_cast<std::uintptr_t>(
+                                                              transport.socket().native_handle())),
                                                asio::use_awaitable);
 
             const bool keep_alive = wants_keep_alive && !stopping;

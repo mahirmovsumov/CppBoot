@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -37,6 +38,12 @@ using TlsStream = beast::ssl_stream<tcp::socket>;
 
 constexpr auto kAsTuple = asio::as_tuple(asio::use_awaitable);
 constexpr auto kResponseTimeout = std::chrono::seconds{30};
+constexpr std::string_view kServerTooBusy = "server-too-busy";
+
+// A server that keeps running but hardly serves anything has still failed. Even a slow sanitizer
+// build on a small machine manages hundreds per second.
+constexpr std::uint64_t kLeastResultsPerSecond = 50;
+constexpr std::uint64_t kMostTooBusyPercent = 10;
 
 struct Options {
     unsigned short port{18090};
@@ -68,6 +75,29 @@ public:
             total += count.failed;
         }
         return total;
+    }
+
+    /// Returns why the amount of work done is too low, or nothing if it's fine.
+    std::optional<std::string> throughputProblem(int seconds) const {
+        const std::lock_guard lock{mutex_};
+        std::uint64_t total = 0;
+        std::uint64_t too_busy = 0;
+        for (const auto& [name, count] : counts_) {
+            total += count.ok;
+            if (name == kServerTooBusy) {
+                too_busy = count.ok;
+            }
+        }
+        const std::uint64_t served = total - too_busy;
+        if (served < kLeastResultsPerSecond * static_cast<std::uint64_t>(seconds)) {
+            return "only " + std::to_string(served) + " results in " + std::to_string(seconds) +
+                   " seconds";
+        }
+        if (too_busy * 100 > total * kMostTooBusyPercent) {
+            return "the server turned away " + std::to_string(too_busy) + " of " +
+                   std::to_string(total) + " requests";
+        }
+        return std::nullopt;
     }
 
     void print(std::ostream& out) const {
@@ -276,7 +306,8 @@ public:
         }
         // The server is allowed to turn work away when it's overloaded, if it says so properly.
         if (response.result_int() == 503 && !response[http::field::retry_after].empty()) {
-            shared_.results.ok("server-too-busy");
+            shared_.results.ok(kServerTooBusy);
+            turned_away_ = true;
             return true;
         }
         if (response.result_int() != static_cast<unsigned>(status)) {
@@ -385,10 +416,15 @@ public:
                 const std::string body = "body of item " + id;
                 const std::string path = "/items/" + id;
 
+                // Each step relies on the one before. A step the server turned away didn't happen, so
+                // the sequence starts again with a new item.
                 auto [add_error, added] =
                     co_await connection->send(request(http::verb::post, path, body));
                 if (!check("database", add_error, added, 201)) {
                     break;
+                }
+                if (wasTurnedAway()) {
+                    continue;
                 }
                 auto [read_error, read] = co_await connection->send(request(http::verb::get, path));
                 if (!check("database", read_error, read, 200, body)) {
@@ -403,6 +439,9 @@ public:
                 if (!check("database", gone_error, gone, 204)) {
                     break;
                 }
+                if (wasTurnedAway()) {
+                    continue;
+                }
 
                 // A rolled-back insert must leave nothing behind.
                 auto [back_error, back] =
@@ -414,6 +453,7 @@ public:
                 if (!check("database-rollback", none_error, none, 404)) {
                     break;
                 }
+                wasTurnedAway();
             }
             connection->abort();
         }
@@ -636,9 +676,13 @@ public:
     }
 
 private:
+    /// Returns whether the server turned away any request since the last time this was called.
+    bool wasTurnedAway() { return std::exchange(turned_away_, false); }
+
     Shared& shared_;
     asio::ssl::context* tls_;
     std::mt19937 random_;
+    bool turned_away_{false};
 };
 
 Options parseOptions(int argc, char* argv[]) {
@@ -733,7 +777,12 @@ int main(int argc, char* argv[]) {
 
     shared.results.print(std::cout);
     const auto failed = shared.results.totalFailed();
-    std::cout << (failed == 0 ? "PASSED" : "FAILED") << " with " << failed << " unexpected results"
+    const auto throughput_problem = shared.results.throughputProblem(shared.options.seconds);
+    if (throughput_problem) {
+        std::cout << "FAILURE too little work: " << *throughput_problem << std::endl;
+    }
+    const bool passed = failed == 0 && !throughput_problem;
+    std::cout << (passed ? "PASSED" : "FAILED") << " with " << failed << " unexpected results"
               << std::endl;
-    return failed == 0 ? 0 : 1;
+    return passed ? 0 : 1;
 }

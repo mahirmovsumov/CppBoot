@@ -42,7 +42,11 @@ A stress test found that clients could send a slow request and leave at once, an
 
 So each request records when it was queued, and a worker that picks up one older than `queue_timeout` answers 503 without running it. Workers take requests in order, so once a backlog is too old, the rest of it clears in microseconds per request, and new requests get served. Time is a better limit than a queue length, because the right length depends entirely on how slow the handlers are.
 
-This doesn't detect that a client has gone. A fresh request from one still runs, because the network thread isn't reading a connection while its request is running. Rejected requests skip middleware, because the point is to do no work for them, so metrics don't count them. The server logs them instead.
+Rejected requests skip middleware, because the point is to do no work for them, so metrics don't count them. The server logs them instead.
+
+That wasn't enough on its own. A later run kept the queue at its 5-second limit, because requests from clients that had gone arrived as fast as the workers could run them. The server served only about 7 requests per second, with very few errors. So a worker that picks up a request that waited at least 10 ms also asks the socket whether the client has gone, and skips the handler if it has. Checking every request that waited at least 1 ms cost about 15% of throughput on one busy core, and a queue built this way soon passes 10 ms anyway. This is a non-blocking peek in `platform::peerHasClosed`, which is safe from a worker because the network thread leaves a connection alone while its request is running.
+
+It has limits. A handler that has already started can't be stopped. A client that half-closes its connection after sending a request looks like one that has gone, so under load it gets an empty 503 rather than a response, which is close to how nginx treats it. With TLS, a client that sends `close_notify` looks like one with data to read, so only the TCP close that follows is seen. A client that stays connected still counts as real traffic, so rate limits and capacity are the only answer to it.
 
 ## Shutdown
 

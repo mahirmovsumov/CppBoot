@@ -136,6 +136,7 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 
 - `cppboot-stress-client`, `scripts/stress-linux.sh` and a Stress workflow, which check responses, memory, open files and threads over long runs.
 - A request that waits longer than `cppboot.server.queue_timeout_seconds` for a worker now gets a 503, and its handler doesn't run. Before this, an overloaded server could keep well-behaved clients waiting for over 30 seconds.
+- A request that waited for a worker no longer runs if its client has gone by then. Before this, clients could keep every worker busy by sending slow requests and leaving at once.
 
 ### Preparing for 1.0
 

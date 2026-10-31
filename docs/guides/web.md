@@ -283,6 +283,8 @@ Serving HTTPS directly means one less thing to run. A proxy such as nginx or Cad
 
 Handlers run on a pool of worker threads, so a slow handler can't stop the server from serving others. Several handlers can run at once, so shared data needs its own protection, such as a mutex.
 
+A request that had to wait for a worker doesn't run if its client has gone by then. A handler that has already started keeps running, so a slow handler should still have its own time limit.
+
 When requests arrive faster than the workers can handle them, the server rejects those that have waited too long, with a 503 and a `Retry-After` header. It logs this, at most every 10 seconds. These rejections don't reach middleware, so they don't appear in [metrics](actuator.md). If you see them often, your handlers are too slow for your traffic, so raise `cppboot.server.worker_threads` or add capacity. Raising the timeout only makes clients wait longer.
 
 Shutdown stops accepting connections, closes idle ones and lets running requests finish. A handler can't be interrupted, so shutdown waits for it, however long it takes. Long-running handlers should have their own time limits.
