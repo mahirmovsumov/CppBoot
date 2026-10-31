@@ -31,6 +31,7 @@ Use `clang-format` with the repository's `.clang-format`: 4-space indentation an
 6. No C++23 or later features.
 7. Every public API has a test.
 8. Every public interface has documentation.
+9. No `std::shared_mutex`, which fails under contention on MinGW. Use `std::mutex`. See [013](../architecture/013-observability.md).
 
 ## Errors
 

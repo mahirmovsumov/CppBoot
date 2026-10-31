@@ -87,7 +87,19 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - The application won't start with a missing or short signing secret, and security marks that would do nothing fail the build.
 - `cppboot create --web --security`.
 
+### Health and metrics
+
+- `/actuator/health`, with automatic database checks, and `HealthIndicator` for your own.
+- `/actuator/health/live`, for orchestrator liveness checks.
+- `/actuator/metrics` in Prometheus format, and `/actuator/info`, protected by a token.
+- `Metrics`, with counters, gauges and histograms that any component can use.
+- `Request::route()`, which gives the matched route pattern.
+- `cppboot create --actuator`, and `cppboot_generate_components(... ACTUATOR ...)`.
+- All `cppboot create` options can now be combined.
+
 ### Fixes
+
+- Settings with underscores in their names can now be set from the environment, even when they aren't in YAML. For example, `CPPBOOT_SERVER_MAX_CONNECTIONS` had no effect before, unless the key was also in `cppboot.yaml`.
 
 - Routes with no parameters no longer generate an unused variable, which broke builds using `-Werror`.
 - New connections no longer wait for seconds, or get refused, when the server is under load.

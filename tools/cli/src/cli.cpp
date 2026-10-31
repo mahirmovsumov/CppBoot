@@ -27,6 +27,7 @@ Commands:
                     Add --web for a web API with a sample controller
                     Add --sqlite or --postgresql with --web to store its data in a database
                     Add --security with --web for sign-in and protected routes
+                    Add --actuator for health and metrics routes
   build             Build the project in the current folder
   run [arguments]   Build and run the project, passing arguments to the application
   info              Show version and installation details
@@ -79,8 +80,8 @@ constexpr std::string_view kSecuritySettings = R"(
       lifetime_seconds: 3600
 )";
 
-// "@NAME@" is replaced with the project name. "@LIBRARIES@", "@SETTINGS@" and "@ID_COLUMN@" depend
-// on the project kind.
+// "@NAME@" is replaced with the project name. "@LIBRARIES@", "@GENERATE_OPTIONS@", "@SETTINGS@" and
+// "@ID_COLUMN@" depend on the project's options.
 constexpr std::array<ProjectFile, 10> kProjectFiles = {{
     {"CMakeLists.txt", R"(cmake_minimum_required(VERSION 3.25)
 
@@ -98,7 +99,7 @@ file(GLOB_RECURSE headers CONFIGURE_DEPENDS src/*.hpp)
 
 add_executable(@NAME@ ${sources})
 target_link_libraries(@NAME@ PRIVATE @LIBRARIES@)
-cppboot_generate_components(@NAME@ HEADERS ${headers})
+cppboot_generate_components(@NAME@ @GENERATE_OPTIONS@HEADERS ${headers})
 )"},
     {"cppboot.yaml", R"(cppboot:
   application:
@@ -370,22 +371,26 @@ std::string replaceAll(std::string_view content, std::string_view placeholder,
     }
 }
 
-bool hasDatabase(ProjectKind kind) {
-    return kind == ProjectKind::WebSqlite || kind == ProjectKind::WebPostgresql;
+bool hasDatabase(const ProjectOptions& options) {
+    return options.database != ProjectDatabase::None;
 }
 
-std::string fillTemplate(std::string_view content, std::string_view name, ProjectKind kind) {
+std::string fillTemplate(std::string_view content, std::string_view name,
+                         const ProjectOptions& options) {
     std::string libraries = "cppboot::boot";
     std::string settings;
-    if (kind != ProjectKind::Plain) {
-        libraries += " cppboot::web";
+    if (options.web || options.actuator) {
         settings += kWebSettings;
     }
-    if (hasDatabase(kind)) {
-        libraries += " cppboot::data";
-        settings += kind == ProjectKind::WebSqlite ? kSqliteSettings : kPostgresqlSettings;
+    if (options.web) {
+        libraries += " cppboot::web";
     }
-    if (kind == ProjectKind::WebSecured) {
+    if (hasDatabase(options)) {
+        libraries += " cppboot::data";
+        settings +=
+            options.database == ProjectDatabase::Sqlite ? kSqliteSettings : kPostgresqlSettings;
+    }
+    if (options.security) {
         libraries += " cppboot::security";
         settings += kSecuritySettings;
     }
@@ -394,23 +399,24 @@ std::string fillTemplate(std::string_view content, std::string_view name, Projec
     std::string result = replaceAll(content, "@SETTINGS@", settings);
     result = replaceAll(result, "@NAME@", name);
     result = replaceAll(result, "@LIBRARIES@", libraries);
+    result = replaceAll(result, "@GENERATE_OPTIONS@", options.actuator ? "ACTUATOR " : "");
     return replaceAll(result, "@ID_COLUMN@",
-                      kind == ProjectKind::WebPostgresql ? "BIGSERIAL PRIMARY KEY"
-                                                         : "INTEGER PRIMARY KEY");
+                      options.database == ProjectDatabase::Postgresql ? "BIGSERIAL PRIMARY KEY"
+                                                                      : "INTEGER PRIMARY KEY");
 }
 
-bool isIncluded(ProjectFiles included, ProjectKind kind) {
+bool isIncluded(ProjectFiles included, const ProjectOptions& options) {
     switch (included) {
         case ProjectFiles::Always:
             return true;
         case ProjectFiles::PlainOnly:
-            return kind == ProjectKind::Plain;
+            return !options.web;
         case ProjectFiles::WebWithoutDatabase:
-            return kind == ProjectKind::Web;
+            return options.web && !hasDatabase(options) && !options.security;
         case ProjectFiles::WithDatabase:
-            return hasDatabase(kind);
+            return hasDatabase(options);
         case ProjectFiles::WithSecurity:
-            return kind == ProjectKind::WebSecured;
+            return options.security;
     }
     return false;
 }
@@ -538,7 +544,8 @@ Result<void> validateProjectName(std::string_view name) {
     return {};
 }
 
-Result<void> createProject(std::string_view name, const fs::path& parent, ProjectKind kind) {
+Result<void> createProject(std::string_view name, const fs::path& parent,
+                           const ProjectOptions& options) {
     if (auto valid = validateProjectName(name); !valid) {
         return valid;
     }
@@ -550,7 +557,7 @@ Result<void> createProject(std::string_view name, const fs::path& parent, Projec
     }
 
     for (const ProjectFile& file : kProjectFiles) {
-        if (!isIncluded(file.included, kind)) {
+        if (!isIncluded(file.included, options)) {
             continue;
         }
 
@@ -564,7 +571,7 @@ Result<void> createProject(std::string_view name, const fs::path& parent, Projec
 
         // Binary mode keeps line endings the same on every platform.
         std::ofstream output{path, std::ios::binary};
-        output << fillTemplate(file.content, name, kind);
+        output << fillTemplate(file.content, name, options);
         output.close();
         if (!output) {
             return Error{ErrorCode::IoError, "Cannot write " + path.generic_string()};
@@ -614,19 +621,20 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
         printInfo(out);
     } else if (command == "create") {
         std::vector<std::string> names;
-        bool web = false;
+        ProjectOptions options;
         bool sqlite = false;
         bool postgresql = false;
-        bool secured = false;
         for (const std::string& argument : rest) {
             if (argument == "--web") {
-                web = true;
+                options.web = true;
             } else if (argument == "--sqlite") {
                 sqlite = true;
             } else if (argument == "--postgresql") {
                 postgresql = true;
             } else if (argument == "--security") {
-                secured = true;
+                options.security = true;
+            } else if (argument == "--actuator") {
+                options.actuator = true;
             } else {
                 names.push_back(argument);
             }
@@ -635,29 +643,18 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
             err << kUsage;
             return kExitUsage;
         }
-        if ((sqlite || postgresql || secured) && !web) {
+        if ((sqlite || postgresql || options.security) && !options.web) {
             err << "cppboot: --sqlite, --postgresql and --security need --web, because their "
                    "samples are web APIs\n";
             return kExitUsage;
         }
-        if (secured && (sqlite || postgresql)) {
-            err << "cppboot: --security can't be combined with a database option yet. Create the "
-                   "project with one, then add the other by following the guides\n";
-            return kExitUsage;
-        }
-
-        ProjectKind kind = ProjectKind::Plain;
-        if (secured) {
-            kind = ProjectKind::WebSecured;
-        } else if (sqlite) {
-            kind = ProjectKind::WebSqlite;
+        if (sqlite) {
+            options.database = ProjectDatabase::Sqlite;
         } else if (postgresql) {
-            kind = ProjectKind::WebPostgresql;
-        } else if (web) {
-            kind = ProjectKind::Web;
+            options.database = ProjectDatabase::Postgresql;
         }
 
-        if (auto created = createProject(names.front(), fs::current_path(), kind); !created) {
+        if (auto created = createProject(names.front(), fs::current_path(), options); !created) {
             result = created.error();
         } else {
             out << "Created " << names.front() << ". Next:\n  cd " << names.front()

@@ -16,11 +16,12 @@ namespace fs = std::filesystem;
 using namespace cppboot;
 
 constexpr std::string_view kUsage =
-    "Usage: cppboot-codegen --output <file> [<header>...] [-- <compiler arguments>...]\n"
+    "Usage: cppboot-codegen --output <file> [--actuator] [<header>...] [-- <compiler arguments>...]\n"
     "       cppboot-codegen --print-resource-dir\n";
 
 Result<void> generate(const fs::path& output, const std::vector<fs::path>& headers,
-                      const std::vector<std::string>& compiler_arguments) {
+                      const std::vector<std::string>& compiler_arguments,
+                      codegen::RenderOptions options) {
     codegen::Declarations declarations;
     std::vector<std::string> includes;
 
@@ -33,7 +34,7 @@ Result<void> generate(const fs::path& output, const std::vector<fs::path>& heade
         includes.push_back(fs::absolute(header).generic_string());
     }
 
-    if (auto valid = codegen::validateDeclarations(declarations); !valid) {
+    if (auto valid = codegen::validateDeclarations(declarations, options); !valid) {
         return valid;
     }
 
@@ -43,7 +44,7 @@ Result<void> generate(const fs::path& output, const std::vector<fs::path>& heade
     }
 
     std::ofstream file{output, std::ios::binary};
-    file << codegen::renderRegistration(declarations, includes);
+    file << codegen::renderRegistration(declarations, includes, options);
     file.close();
     if (!file) {
         return Error{ErrorCode::IoError, "Cannot write " + output.generic_string()};
@@ -57,6 +58,7 @@ int main(int argc, char* argv[]) {
     fs::path output;
     std::vector<fs::path> headers;
     std::vector<std::string> compiler_arguments;
+    codegen::RenderOptions options;
 
     for (int i = 1; i < argc; ++i) {
         const std::string_view argument{argv[i]};
@@ -68,7 +70,9 @@ int main(int argc, char* argv[]) {
             std::cout << codegen::clangResourceDirectory() << '\n';
             return 0;
         }
-        if (argument == "--output" && i + 1 < argc) {
+        if (argument == "--actuator") {
+            options.actuator = true;
+        } else if (argument == "--output" && i + 1 < argc) {
             output = argv[++i];
         } else {
             headers.emplace_back(argument);
@@ -80,7 +84,7 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    if (auto generated = generate(output, headers, compiler_arguments); !generated) {
+    if (auto generated = generate(output, headers, compiler_arguments, options); !generated) {
         std::cerr << "cppboot-codegen: " << generated.error().message() << '\n';
         return 1;
     }

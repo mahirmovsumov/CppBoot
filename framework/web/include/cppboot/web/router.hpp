@@ -49,6 +49,7 @@ private:
 
     struct Route {
         Method method;
+        std::string pattern;
         std::vector<Segment> segments;
         Handler handler;
     };

@@ -36,11 +36,17 @@ cppboot create my-api --web --sqlite
 cppboot create my-api --web --postgresql
 ```
 
-Add `--security` instead for sign-in and protected routes. The project then has a sample in `src/auth.hpp`, and needs a secret in the environment to start. It also needs `--web`, and can't be combined with a database option yet:
+Add `--security` for sign-in and protected routes. The project then has a sample in `src/auth.hpp`, and needs a secret in the environment to start. It also needs `--web`.
+
+Add `--actuator` for [health and metrics routes](actuator.md). It doesn't need `--web`.
+
+Options can be combined:
 
 ```powershell
-cppboot create my-api --web --security
+cppboot create banking-api --web --postgresql --security --actuator
 ```
+
+In a project with both `--security` and a database, the sample routes in `src/users.hpp` need a token too, because every route without `CPPBOOT_PUBLIC` does.
 
 ### `cppboot build`
 

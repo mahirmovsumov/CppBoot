@@ -75,6 +75,53 @@ TEST_F(ConfigTest, EnvironmentMatchesKnownKeysContainingUnderscores) {
     EXPECT_EQ(timeout.value(), 5);
 }
 
+TEST_F(ConfigTest, EnvironmentSetsKeysWithUnderscoresThatWereNeverDeclared) {
+    // This failed when only keys already in YAML could have underscores, which left settings like
+    // these impossible to set from the environment alone.
+    sources_.environment = {{"CPPBOOT_SERVER_MAX_CONNECTIONS", "5000"},
+                            {"CPPBOOT_ACTUATOR_METRICS_TOKEN", "scrape"},
+                            {"CPPBOOT_RUNTIME_SHUTDOWN_AFTER_START", "yes"},
+                            {"CPPBOOT_MYAPP_REQUEST_TIMEOUT", "7"}};
+
+    const auto config = Config::load(sources_);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config.value().getInt("cppboot.server.max_connections", 0).value(), 5000);
+    EXPECT_EQ(config.value().getString("cppboot.actuator.metrics_token"), "scrape");
+    EXPECT_TRUE(config.value().getBool("cppboot.runtime.shutdown_after_start", false).value());
+    EXPECT_EQ(config.value().getString("myapp.request_timeout"), "7");
+    EXPECT_TRUE(config.value().contains("cppboot.server.max_connections"));
+    EXPECT_EQ(config.value().find("cppboot.server.max_connections"), "5000");
+}
+
+TEST_F(ConfigTest, ReadingAnUnsetKeyStillGivesTheFallback) {
+    sources_.environment = {{"CPPBOOT_OTHER", "x"}, {"MYAPP_TIMEOUT", "9"}};
+
+    const auto config = Config::load(sources_);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config.value().getString("myapp.timeout", "fallback"), "fallback");
+    EXPECT_EQ(config.value().getInt("cppboot.absent", 3).value(), 3);
+    EXPECT_FALSE(config.value().contains("myapp.timeout"));
+}
+
+TEST_F(ConfigTest, ArgumentsStillBeatTheEnvironmentForUndeclaredKeys) {
+    sources_.environment = {{"CPPBOOT_SERVER_MAX_CONNECTIONS", "1"}};
+    sources_.arguments = {"--cppboot.server.max_connections=2"};
+
+    const auto config = Config::load(sources_);
+    ASSERT_TRUE(config);
+    EXPECT_EQ(config.value().getInt("cppboot.server.max_connections", 0).value(), 2);
+}
+
+TEST_F(ConfigTest, InvalidValueFromTheEnvironmentNamesTheKey) {
+    sources_.environment = {{"CPPBOOT_SERVER_MAX_CONNECTIONS", "many"}};
+
+    const auto config = Config::load(sources_);
+    ASSERT_TRUE(config);
+    const auto value = config.value().getInt("cppboot.server.max_connections", 0);
+    ASSERT_FALSE(value);
+    EXPECT_NE(value.error().message().find("cppboot.server.max_connections"), std::string::npos);
+}
+
 TEST_F(ConfigTest, EnvironmentMatchingTwoKeysIsAnError) {
     sources_.defaults = {{"cppboot.a_b", "1"}, {"cppboot.a.b", "2"}};
     sources_.environment = {{"CPPBOOT_A_B", "3"}};

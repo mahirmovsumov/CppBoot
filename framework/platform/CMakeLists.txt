@@ -6,12 +6,15 @@ if(WIN32)
         windows/environment.cpp
         windows/process.cpp
         windows/signals.cpp
+        windows/system_info.cpp
     )
+    target_link_libraries(cppboot-platform PRIVATE psapi)
 elseif(UNIX)
     target_sources(cppboot-platform PRIVATE
         linux/environment.cpp
         linux/process.cpp
         linux/signals.cpp
+        linux/system_info.cpp
     )
 else()
     message(FATAL_ERROR "CppBoot has no platform implementation for ${CMAKE_SYSTEM_NAME}")

@@ -142,6 +142,10 @@ public:
 
 Middleware is a component, so it can take other components in its constructor. It runs before the route's token check, so it sees every request, including those that get rejected, and it has no `Principal`.
 
+## Actuator routes
+
+In a project with the [actuator](actuator.md), health routes stay public, and show status only. Metrics and info stay locked until you set a separate metrics token, and a user's JWT doesn't open them.
+
 ## What tokens can and can't do
 
 Tokens can't be revoked. A token stays valid until it expires, even if the user signs out or their account is removed, because the server keeps no record of them. Keep lifetimes short, and check the database on sensitive routes if you need an immediate effect.

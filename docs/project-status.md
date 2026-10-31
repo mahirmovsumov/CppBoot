@@ -58,6 +58,12 @@ CPPBOOT_GET("/me") Profile me(const cppboot::security::Principal& who) const;
 CPPBOOT_ROLE("admin") CPPBOOT_GET("/report") Report report() const;
 ```
 
+To monitor it, add `--actuator`, for health checks and Prometheus metrics. All of these combine:
+
+```text
+cppboot create banking-api --web --postgresql --security --actuator
+```
+
 The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in production.
 
 ## Progress
@@ -71,7 +77,7 @@ The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in 
 | 5. Database | Complete | PostgreSQL, SQLite, connection pooling, transactions, migrations |
 | 6. Security | Complete | JWT sign-in, roles, password hashing, deny by default |
 | 7. Enterprise integration | After 1.0 | Redis, Kafka, RabbitMQ and similar |
-| 8. Observability | Not started | Health and metrics endpoints for 1.0 |
+| 8. Observability | Complete | Health checks and Prometheus metrics |
 | 9. Production readiness | Not started | Stress testing, packaging and service integration |
 
 ## What has been built
@@ -88,6 +94,7 @@ The server doesn't serve HTTPS itself yet, so put a TLS proxy in front of it in 
 | Web framework | Serves HTTP with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |
 | Database | Connects to PostgreSQL and SQLite, with pooling, transactions and migrations | [Database](guides/database.md) |
 | Security | Signs users in with tokens, and protects routes by default | [Security](guides/security.md) |
+| Actuator | Reports health and metrics | [Health and metrics](guides/actuator.md) |
 
 ## How it's tested
 

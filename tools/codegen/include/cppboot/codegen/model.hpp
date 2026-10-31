@@ -9,17 +9,22 @@
 
 namespace cppboot::codegen {
 
-/// A component with this interface is added to a group rather than bound to the interface, since
-/// an application has many modules.
+/// A component with one of these interfaces is added to a group rather than bound to the interface,
+/// since an application has many of them.
 inline constexpr std::string_view kModuleInterface = "cppboot::Module";
+inline constexpr std::string_view kHealthIndicatorInterface = "cppboot::actuator::HealthIndicator";
+
+/// Generated code registers this when the project asks for the actuator.
+inline constexpr std::string_view kMetricsType = "cppboot::actuator::Metrics";
 
 /// Types that cppboot::runApplication() provides, so components can depend on them without any
 /// component declaring them.
-inline constexpr std::array<std::string_view, 4> kFrameworkTypes = {
+inline constexpr std::array<std::string_view, 5> kFrameworkTypes = {
     "cppboot::config::Config",
     "cppboot::logging::Logger",
     "cppboot::data::Database",
     "cppboot::security::TokenService",
+    kMetricsType,
 };
 
 /// Generated code protects every route when something depends on this, or a route uses security.
@@ -101,16 +106,21 @@ struct Declarations {
     void append(Declarations other);
 };
 
+struct RenderOptions {
+    /// Adds the /actuator routes, and starts a web server even with no controllers.
+    bool actuator{false};
+};
+
 /// Fails if a dependency has no provider, a type has two providers, dependencies form a cycle, two
-/// routes have the same method and path, or there's middleware with no controllers for it to run
-/// around.
-Result<void> validateDeclarations(const Declarations& declarations);
+/// routes have the same method and path, there's middleware with nothing for it to run around, or
+/// something uses the actuator in a project that hasn't asked for it.
+Result<void> validateDeclarations(const Declarations& declarations, RenderOptions options = {});
 
 /// Returns a header defining JSON conversions and cppboot::generated::registerComponents(), which
 /// registers each component with a cppboot::di::Container. If there are controllers, it also
 /// registers a router with their routes, and a module that runs the server. If anything uses the
 /// database, it registers that first, so that it's ready before other modules start.
 std::string renderRegistration(const Declarations& declarations,
-                               const std::vector<std::string>& headers);
+                               const std::vector<std::string>& headers, RenderOptions options = {});
 
 }  // namespace cppboot::codegen

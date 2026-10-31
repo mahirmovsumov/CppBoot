@@ -180,6 +180,25 @@ run_cli(code output ${WORK_DIR}/demo-safe run
     --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
 expect_exit_code("${code}" 0 "run a secured project" "${output}")
 expect_contains("${output}" "Server listening on port" "run a secured project")
+
+# Every option together has to build and start. The plan calls this target "banking-api".
+run_cli(code output ${WORK_DIR} create banking-api --web --sqlite --security --actuator)
+expect_exit_code("${code}" 0 "create with every option" "${output}")
+run_cli(code output ${WORK_DIR}/banking-api run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run with every option" "${output}")
+expect_contains("${output}" "Applied 1 new database migrations" "run with every option")
+expect_contains("${output}" "Server listening on port" "run with every option")
+
+# The actuator alone has to give a plain project a server.
+run_cli(code output ${WORK_DIR} create demo-watched --actuator)
+expect_exit_code("${code}" 0 "create --actuator" "${output}")
+run_cli(code output ${WORK_DIR}/demo-watched run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run with the actuator" "${output}")
+expect_contains("${output}" "Hello from CppBoot!" "run with the actuator")
+expect_contains("${output}" "Server listening on port" "run with the actuator")
+
 unset(ENV{CPPBOOT_SECURITY_JWT_SECRET})
 unset(ENV{CPPBOOT_MYAPP_PASSWORD})
 

@@ -2,11 +2,20 @@
 # "cppboot_components.generated.hpp", which defines cppboot::generated::registerComponents().
 #
 #   cppboot_generate_components(my-app HEADERS src/services.hpp src/repositories.hpp)
+#
+# With ACTUATOR, it also adds the /actuator health and metrics routes, and starts a web server even
+# if there are no controllers.
 function(cppboot_generate_components target)
-    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "" "HEADERS")
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "ACTUATOR" "" "HEADERS")
 
     if(NOT TARGET cppboot::codegen)
         message(FATAL_ERROR "This CppBoot installation doesn't include cppboot-codegen.")
+    endif()
+
+    set(tool_options "")
+    if(ARG_ACTUATOR)
+        set(tool_options --actuator)
+        target_link_libraries(${target} PRIVATE cppboot::actuator)
     endif()
 
     set(headers "")
@@ -20,7 +29,7 @@ function(cppboot_generate_components target)
 
     add_custom_command(
         OUTPUT ${output}
-        COMMAND cppboot::codegen --output ${output} ${headers}
+        COMMAND cppboot::codegen --output ${output} ${tool_options} ${headers}
             -- "-I$<JOIN:$<TARGET_PROPERTY:${target},INCLUDE_DIRECTORIES>,;-I>"
         DEPENDS cppboot::codegen ${headers}
         COMMENT "Generating CppBoot components for ${target}"

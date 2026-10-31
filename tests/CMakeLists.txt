@@ -58,6 +58,15 @@ target_link_libraries(cppboot-security-tests PRIVATE
 cppboot_apply_compiler_options(cppboot-security-tests)
 add_test(NAME cppboot-security-tests COMMAND cppboot-security-tests)
 
+add_executable(cppboot-actuator-tests actuator/actuator_test.cpp)
+target_link_libraries(cppboot-actuator-tests PRIVATE
+    cppboot::actuator
+    nlohmann_json::nlohmann_json
+    GTest::gtest_main
+)
+cppboot_apply_compiler_options(cppboot-actuator-tests)
+add_test(NAME cppboot-actuator-tests COMMAND cppboot-actuator-tests)
+
 # PostgreSQL tests run only if CPPBOOT_TEST_POSTGRESQL_URL names a test database.
 add_executable(cppboot-data-tests data/data_test.cpp)
 target_link_libraries(cppboot-data-tests PRIVATE
@@ -128,6 +137,18 @@ if(CPPBOOT_BUILD_CODEGEN)
     )
     cppboot_apply_compiler_options(cppboot-generated-secured-tests)
     add_test(NAME cppboot-generated-secured-tests COMMAND cppboot-generated-secured-tests)
+
+    add_executable(cppboot-generated-monitored-tests codegen/monitored_test.cpp)
+    target_link_libraries(cppboot-generated-monitored-tests PRIVATE
+        cppboot::boot
+        GTest::gtest_main
+    )
+    cppboot_generate_components(cppboot-generated-monitored-tests
+        ACTUATOR
+        HEADERS codegen/sample_monitored.hpp
+    )
+    cppboot_apply_compiler_options(cppboot-generated-monitored-tests)
+    add_test(NAME cppboot-generated-monitored-tests COMMAND cppboot-generated-monitored-tests)
 
     # Installs the framework, then creates, builds and runs a project using the installed CLI.
     add_test(NAME cppboot-cli-end-to-end

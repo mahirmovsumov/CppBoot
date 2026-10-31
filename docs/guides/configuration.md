@@ -27,7 +27,7 @@ cppboot:
 
 ## Your own settings
 
-You can use any key name for your application's settings. To override one with an environment variable or a command-line argument, the key must already be set in YAML or in the defaults:
+You can use any key name for your application's settings:
 
 ```yaml
 myapp:
@@ -39,7 +39,7 @@ $env:CPPBOOT_MYAPP_TIMEOUT = "5"
 cppboot run --myapp.timeout=7
 ```
 
-The environment variable always starts with `CPPBOOT_`, so CppBoot never picks up unrelated variables such as `PATH`. An argument such as `--output=report.txt` is left for your application unless `output` is already a setting.
+The environment variable always starts with `CPPBOOT_`, so CppBoot never picks up unrelated variables such as `PATH`. An argument such as `--output=report.txt` is left for your application unless `output` is already a setting, so a command-line argument can only override a key outside `cppboot.` if that key is set in YAML or the defaults.
 
 ## Profiles
 
@@ -53,9 +53,15 @@ For the `prod` profile, CppBoot reads `cppboot-prod.yaml`. If that file doesn't 
 
 ## Environment variable names
 
-CppBoot first looks for an existing key that matches the variable. This is how names containing underscores work: if `cppboot.yaml` sets `cppboot.runtime.graceful_shutdown_timeout`, then `CPPBOOT_RUNTIME_GRACEFUL_SHUTDOWN_TIMEOUT` overrides it.
+A key's variable is its name in capitals, with dots and hyphens as underscores, and `CPPBOOT_` in front if it doesn't start with that already:
 
-If no key matches, each underscore becomes a dot, so `CPPBOOT_SERVER_PORT` sets `cppboot.server.port`. If a variable matches more than one key, the application exits with code 78.
+| Key | Variable |
+|---|---|
+| `cppboot.server.port` | `CPPBOOT_SERVER_PORT` |
+| `cppboot.server.max_connections` | `CPPBOOT_SERVER_MAX_CONNECTIONS` |
+| `myapp.timeout` | `CPPBOOT_MYAPP_TIMEOUT` |
+
+This works whether or not the key also appears in YAML. If a variable matches more than one key that's set, such as both `cppboot.a_b` and `cppboot.a.b`, the application exits with code 78.
 
 ## Read settings in code
 
@@ -86,6 +92,10 @@ if (!enabled) {
 | `cppboot.logging.file` | None | A log file to write in addition to the console |
 | `cppboot.profile` | None | The active profile |
 | `cppboot.runtime.shutdown_after_start` | `false` | Stop as soon as the application is running, for startup checks |
+| `cppboot.server.*` | | See the [web server guide](web.md#settings) |
+| `cppboot.database.*` | | See the [database guide](database.md#set-up-the-connection) |
+| `cppboot.security.jwt.*` | | See the [security guide](security.md#settings) |
+| `cppboot.actuator.metrics_token` | None | See the [health and metrics guide](actuator.md#who-can-see-metrics) |
 
 ## Sensitive values
 

@@ -65,7 +65,7 @@ Router& Router::add(Method method, std::string_view pattern, Handler handler) {
         }
     }
 
-    routes_.push_back(Route{method, std::move(segments), std::move(handler)});
+    routes_.push_back(Route{method, std::string{pattern}, std::move(segments), std::move(handler)});
     return *this;
 }
 
@@ -187,6 +187,7 @@ Response Router::run(std::size_t index, const Request& request, const Match& mat
 Response Router::handle(Request request) const {
     const Match match = findRoute(request);
     if (match.route != nullptr) {
+        request.route_ = match.route->pattern;
         for (std::size_t i = 0; i < match.route->segments.size(); ++i) {
             const Segment& segment = match.route->segments[i];
             if (segment.is_parameter) {

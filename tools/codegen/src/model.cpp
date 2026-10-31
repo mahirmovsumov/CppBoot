@@ -16,6 +16,10 @@ bool isFrameworkType(std::string_view type) {
     return std::find(kFrameworkTypes.begin(), kFrameworkTypes.end(), type) != kFrameworkTypes.end();
 }
 
+bool isGroupInterface(std::string_view type) {
+    return type == kModuleInterface || type == kHealthIndicatorInterface;
+}
+
 Result<void> addProvider(Providers& providers, const std::string& type, const Component& component) {
     const auto [entry, inserted] = providers.emplace(type, &component);
     if (!inserted) {
@@ -261,12 +265,41 @@ void renderMiddleware(std::vector<Middleware> middleware, std::string& text) {
     }
 }
 
-void renderRouter(const Declarations& declarations, bool uses_security, std::string& text) {
-    text += "    container.registerSingleton<cppboot::web::Router>([](cppboot::di::Resolver& resolver) {\n";
+void renderActuator(bool uses_database, bool uses_security, std::string& text) {
+    text += "        auto actuator = resolver.resolve<cppboot::actuator::Actuator>();\n";
+    if (uses_database) {
+        text += "        auto database = resolver.resolve<cppboot::data::Database>();\n";
+        text += "        actuator->addCheck(\"database\", [database] { "
+                "database->query(\"SELECT 1\"); });\n";
+        text += "        actuator->metrics().gaugeFunction(\"database_connections_open\", "
+                "\"Database connections open\", [database] { "
+                "return static_cast<double>(database->pool().openCount()); });\n";
+        text += "        actuator->metrics().gaugeFunction(\"database_connections_idle\", "
+                "\"Database connections not in use\", [database] { "
+                "return static_cast<double>(database->pool().idleCount()); });\n";
+    }
+    text += "        for (auto& indicator : container.resolveAll<"
+            "cppboot::actuator::HealthIndicator>()) {\n";
+    text += "            actuator->addIndicator(std::move(indicator));\n";
+    text += "        }\n";
+    // First, so that it measures the other middleware too.
+    text += "        cppboot::actuator::mount(*router, actuator, ";
+    text += uses_security ? "true" : "false";
+    text += ");\n";
+}
+
+void renderRouter(const Declarations& declarations, bool uses_database, bool uses_security,
+                  bool actuator, std::string& text) {
+    text += "    container.registerSingleton<cppboot::web::Router>([";
+    text += actuator ? "&container" : "";
+    text += "](cppboot::di::Resolver& resolver) {\n";
     text += "        auto router = std::make_shared<cppboot::web::Router>();\n";
     if (uses_security) {
         // Resolved here even if every route is public, so that a missing secret stops startup.
         text += "        auto tokens = resolver.resolve<cppboot::security::TokenService>();\n";
+    }
+    if (actuator) {
+        renderActuator(uses_database, uses_security, text);
     }
     renderMiddleware(declarations.middleware, text);
     for (const Controller& controller : declarations.controllers) {
@@ -298,8 +331,24 @@ void Declarations::append(Declarations other) {
                       std::make_move_iterator(other.middleware.end()));
 }
 
-Result<void> validateDeclarations(const Declarations& declarations) {
+Result<void> validateDeclarations(const Declarations& declarations, RenderOptions options) {
     const std::vector<Component>& components = declarations.components;
+
+    if (!options.actuator) {
+        for (const Component& component : components) {
+            const bool uses_actuator =
+                std::find(component.dependencies.begin(), component.dependencies.end(),
+                          kMetricsType) != component.dependencies.end() ||
+                std::find(component.interfaces.begin(), component.interfaces.end(),
+                          kHealthIndicatorInterface) != component.interfaces.end();
+            if (uses_actuator) {
+                return Error{ErrorCode::DependencyError,
+                             component.type + " (" + component.location +
+                                 ") uses the actuator, so pass ACTUATOR to "
+                                 "cppboot_generate_components"};
+            }
+        }
+    }
 
     Providers providers;
     for (const Component& component : components) {
@@ -307,7 +356,7 @@ Result<void> validateDeclarations(const Declarations& declarations) {
             return added;
         }
         for (const std::string& interface_type : component.interfaces) {
-            if (interface_type == kModuleInterface) {
+            if (isGroupInterface(interface_type)) {
                 continue;
             }
             if (auto added = addProvider(providers, interface_type, component); !added) {
@@ -334,7 +383,7 @@ Result<void> validateDeclarations(const Declarations& declarations) {
         }
     }
 
-    if (!declarations.middleware.empty() && declarations.controllers.empty()) {
+    if (!declarations.middleware.empty() && declarations.controllers.empty() && !options.actuator) {
         const Middleware& middleware = declarations.middleware.front();
         return Error{ErrorCode::DependencyError,
                      middleware.type + " (" + middleware.location +
@@ -357,8 +406,8 @@ Result<void> validateDeclarations(const Declarations& declarations) {
 }
 
 std::string renderRegistration(const Declarations& declarations,
-                               const std::vector<std::string>& headers) {
-    const bool has_controllers = !declarations.controllers.empty();
+                               const std::vector<std::string>& headers, RenderOptions options) {
+    const bool has_router = !declarations.controllers.empty() || options.actuator;
     const bool uses_database = usesDatabase(declarations);
     const bool uses_security = usesSecurity(declarations);
 
@@ -373,13 +422,16 @@ std::string renderRegistration(const Declarations& declarations,
     if (uses_security) {
         text += "#include <cppboot/security/guard.hpp>\n";
     }
-    if (has_controllers || !declarations.json_types.empty()) {
+    if (options.actuator) {
+        text += "#include <cppboot/actuator/actuator.hpp>\n";
+    }
+    if (has_router || !declarations.json_types.empty()) {
         text += "#include <cppboot/web/binding.hpp>\n";
     }
-    if (has_controllers) {
+    if (has_router) {
         text += "#include <cppboot/web/router.hpp>\n#include <cppboot/web/server_module.hpp>\n";
     }
-    text += "#include <memory>\n#include <type_traits>\n\n";
+    text += "#include <memory>\n#include <type_traits>\n#include <utility>\n\n";
 
     for (const std::string& header : headers) {
         text += "#include \"" + header + "\"\n";
@@ -406,6 +458,13 @@ std::string renderRegistration(const Declarations& declarations,
                 "*resolver.resolve<cppboot::config::Config>());\n    });\n";
     }
 
+    if (options.actuator) {
+        text += "    container.registerSingleton<cppboot::actuator::Metrics>();\n";
+        text += "    container.registerSingleton<cppboot::actuator::Actuator>("
+                "cppboot::di::Deps<cppboot::actuator::Metrics, cppboot::logging::Logger, "
+                "cppboot::config::Config>{});\n";
+    }
+
     for (const Component& component : declarations.components) {
         text += "    container.registerSingleton<" + component.type + ">(cppboot::di::Deps<";
         for (std::size_t i = 0; i < component.dependencies.size(); ++i) {
@@ -415,14 +474,14 @@ std::string renderRegistration(const Declarations& declarations,
         text += ">{});\n";
 
         for (const std::string& interface_type : component.interfaces) {
-            text += interface_type == kModuleInterface ? "    container.bindAll<"
-                                                       : "    container.bind<";
+            text += isGroupInterface(interface_type) ? "    container.bindAll<"
+                                                     : "    container.bind<";
             text += interface_type + ", " + component.type + ">();\n";
         }
     }
 
-    if (has_controllers) {
-        renderRouter(declarations, uses_security, text);
+    if (has_router) {
+        renderRouter(declarations, uses_database, uses_security, options.actuator, text);
     }
 
     text += "}\n\n}  // namespace cppboot::generated\n";

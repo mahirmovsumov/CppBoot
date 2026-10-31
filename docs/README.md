@@ -13,6 +13,7 @@ Start with the tutorial, then use the guides as a reference.
 - [Web server](guides/web.md): controllers, JSON, routes and middleware
 - [Database](guides/database.md): queries, row mapping, transactions and migrations
 - [Security](guides/security.md): protected routes, tokens, passwords and middleware
+- [Health and metrics](guides/actuator.md): health checks and Prometheus metrics
 - [Configuration](guides/configuration.md): settings, profiles and overrides
 - [Command-line tool](guides/cli.md): every `cppboot` command
 
@@ -25,7 +26,8 @@ Start with the tutorial, then use the guides as a reference.
 - [Phase 2 roadmap](roadmap/phase-2.md): the finished dependency injection
 - [Phase 3 roadmap](roadmap/phase-3.md): the finished web framework
 - [Phase 5 roadmap](roadmap/phase-5.md): the finished database support
-- [Phase 6 roadmap](roadmap/phase-6.md): security
+- [Phase 6 roadmap](roadmap/phase-6.md): the finished security support
+- [Phase 8 roadmap](roadmap/phase-8.md): observability
 
 ## Contributing to CppBoot
 
@@ -38,4 +40,5 @@ Start with the tutorial, then use the guides as a reference.
 - [Web server](architecture/010-web-server.md)
 - [Data access](architecture/011-data-access.md)
 - [Security](architecture/012-security.md)
+- [Observability](architecture/013-observability.md)
 - [C++20 coding standard](standards/cpp20-coding-standard.md)

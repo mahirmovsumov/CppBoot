@@ -116,22 +116,27 @@ void applyKnownArguments(const std::vector<std::string>& arguments, Config::Valu
     }
 }
 
-/// Maps each variable to a key that already exists, which keeps underscores in key names working:
-/// CPPBOOT_RUNTIME_GRACEFUL_SHUTDOWN_TIMEOUT sets cppboot.runtime.graceful_shutdown_timeout, and
-/// CPPBOOT_MYAPP_TIMEOUT sets myapp.timeout. A variable with no matching key has each underscore
-/// treated as a dot.
+/// Returns the variable that sets a key: cppboot.server.max_connections and myapp.timeout are set by
+/// CPPBOOT_SERVER_MAX_CONNECTIONS and CPPBOOT_MYAPP_TIMEOUT.
+std::string environmentVariableFor(std::string_view key) {
+    std::string variable{key};
+    std::transform(variable.begin(), variable.end(), variable.begin(), [](char c) {
+        return (c == '.' || c == '-') ? '_' : toUpper(c);
+    });
+    if (!variable.starts_with(kEnvironmentPrefix)) {
+        variable.insert(0, kEnvironmentPrefix);
+    }
+    return variable;
+}
+
+/// Applies each variable to the key it matches. A variable matching no key yet is also stored with
+/// each underscore as a dot, for code that lists settings, and Config::lookup() finds any other
+/// spelling when a key is read.
 Result<void> applyEnvironment(const std::map<std::string, std::string>& environment,
                               Config::Values& values) {
     std::map<std::string, std::vector<std::string>> known_keys;
     for (const auto& [key, value] : values) {
-        std::string variable = key;
-        std::transform(variable.begin(), variable.end(), variable.begin(), [](char c) {
-            return (c == '.' || c == '-') ? '_' : toUpper(c);
-        });
-        if (!variable.starts_with(kEnvironmentPrefix)) {
-            variable.insert(0, kEnvironmentPrefix);
-        }
-        known_keys[std::move(variable)].push_back(key);
+        known_keys[environmentVariableFor(key)].push_back(key);
     }
 
     Config::Values overrides;
@@ -167,8 +172,19 @@ bool isValidProfile(std::string_view profile) {
 
 }  // namespace
 
-Config::Config(Values values, std::string profile)
-    : values_(std::move(values)), profile_(std::move(profile)) {}
+Config::Config(Values values, Values environment, std::string profile)
+    : values_(std::move(values)),
+      environment_(std::move(environment)),
+      profile_(std::move(profile)) {}
+
+const std::string* Config::lookup(std::string_view key) const {
+    if (const auto entry = values_.find(key); entry != values_.end()) {
+        return &entry->second;
+    }
+
+    const auto variable = environment_.find(environmentVariableFor(key));
+    return variable == environment_.end() ? nullptr : &variable->second;
+}
 
 Result<Config> Config::load(const ConfigSources& sources) {
     Values values;
@@ -221,50 +237,57 @@ Result<Config> Config::load(const ConfigSources& sources) {
     }
     applyKnownArguments(sources.arguments, values);
 
-    return Config{std::move(values), std::move(profile)};
+    Values environment;
+    for (const auto& [variable, value] : sources.environment) {
+        if (variable.starts_with(kEnvironmentPrefix)) {
+            environment.insert_or_assign(variable, value);
+        }
+    }
+
+    return Config{std::move(values), std::move(environment), std::move(profile)};
 }
 
 bool Config::contains(std::string_view key) const {
-    return values_.find(key) != values_.end();
+    return lookup(key) != nullptr;
 }
 
 std::optional<std::string> Config::find(std::string_view key) const {
-    const auto entry = values_.find(key);
-    if (entry == values_.end()) {
+    const std::string* const value = lookup(key);
+    if (value == nullptr) {
         return std::nullopt;
     }
-    return entry->second;
+    return *value;
 }
 
 std::string Config::getString(std::string_view key, std::string_view fallback) const {
-    const auto entry = values_.find(key);
-    return entry == values_.end() ? std::string{fallback} : entry->second;
+    const std::string* const value = lookup(key);
+    return value == nullptr ? std::string{fallback} : *value;
 }
 
 Result<std::int64_t> Config::getInt(std::string_view key, std::int64_t fallback) const {
-    const auto entry = values_.find(key);
-    if (entry == values_.end()) {
+    const std::string* const found = lookup(key);
+    if (found == nullptr) {
         return fallback;
     }
 
-    const std::string& text = entry->second;
+    const std::string& text = *found;
     std::int64_t value = 0;
     const char* const end = text.data() + text.size();
     const auto [parsed_end, error] = std::from_chars(text.data(), end, value);
     if (error != std::errc{} || parsed_end != end) {
         return Error{ErrorCode::ParseError,
-                     "Setting " + entry->first + " is not an integer: " + text};
+                     "Setting " + std::string{key} + " is not an integer: " + text};
     }
     return value;
 }
 
 Result<bool> Config::getBool(std::string_view key, bool fallback) const {
-    const auto entry = values_.find(key);
-    if (entry == values_.end()) {
+    const std::string* const found = lookup(key);
+    if (found == nullptr) {
         return fallback;
     }
 
-    const std::string text = lowercase(entry->second);
+    const std::string text = lowercase(*found);
     if (text == "true" || text == "yes" || text == "on" || text == "1") {
         return true;
     }
@@ -272,7 +295,7 @@ Result<bool> Config::getBool(std::string_view key, bool fallback) const {
         return false;
     }
     return Error{ErrorCode::ParseError,
-                 "Setting " + entry->first + " is not a boolean: " + entry->second};
+                 "Setting " + std::string{key} + " is not a boolean: " + *found};
 }
 
 std::string Config::describe() const {

@@ -41,7 +41,7 @@ Sources from lowest to highest precedence:
 
 The profile comes from `--cppboot.profile`, then `CPPBOOT_PROFILE`, then the `cppboot.profile` setting.
 
-An environment variable first looks for an existing key that it matches, so `CPPBOOT_RUNTIME_GRACEFUL_SHUTDOWN_TIMEOUT` sets `cppboot.runtime.graceful_shutdown_timeout`, and `CPPBOOT_MYAPP_TIMEOUT` sets an existing `myapp.timeout`. If there's no match, each underscore becomes a dot. If it matches more than one key, startup fails.
+A variable's name can't show whether an underscore stands for a dot or an underscore in a key, so a key's variable is worked out from the key. At load, a variable overrides any matching key that's set, and startup fails if it matches more than one. When code reads a key that isn't set, `Config` also checks that key's variable. So `CPPBOOT_SERVER_MAX_CONNECTIONS` works whether or not `cppboot.server.max_connections` appears anywhere else.
 
 Setting `cppboot.runtime.shutdown_after_start` to `true` makes the application stop as soon as it's running, which is useful for startup checks in tests and CI.
 

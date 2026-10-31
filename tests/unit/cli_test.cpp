@@ -78,7 +78,7 @@ TEST_F(CliTest, PlainProjectHasNoWebParts) {
 }
 
 TEST_F(CliTest, SqliteProjectHasAMigrationAndSettings) {
-    ASSERT_TRUE(createProject("store", directory_, cppboot::cli::ProjectKind::WebSqlite));
+    ASSERT_TRUE(createProject("store", directory_, {.web = true, .database = cppboot::cli::ProjectDatabase::Sqlite}));
 
     const auto root = directory_ / "store";
     EXPECT_NE(readFile(root / "cppboot.yaml").find("url: sqlite:store.db"), std::string::npos);
@@ -90,7 +90,7 @@ TEST_F(CliTest, SqliteProjectHasAMigrationAndSettings) {
 }
 
 TEST_F(CliTest, PostgresqlProjectUsesItsOwnSettingsAndColumnType) {
-    ASSERT_TRUE(createProject("store", directory_, cppboot::cli::ProjectKind::WebPostgresql));
+    ASSERT_TRUE(createProject("store", directory_, {.web = true, .database = cppboot::cli::ProjectDatabase::Postgresql}));
 
     const auto root = directory_ / "store";
     EXPECT_NE(readFile(root / "cppboot.yaml").find("localhost:5432/store"), std::string::npos);
@@ -99,7 +99,7 @@ TEST_F(CliTest, PostgresqlProjectUsesItsOwnSettingsAndColumnType) {
 }
 
 TEST_F(CliTest, SecuredProjectHasSignInAndNoSecret) {
-    ASSERT_TRUE(createProject("safe", directory_, cppboot::cli::ProjectKind::WebSecured));
+    ASSERT_TRUE(createProject("safe", directory_, {.web = true, .security = true}));
 
     const auto root = directory_ / "safe";
     EXPECT_NE(readFile(root / "src" / "auth.hpp").find("CPPBOOT_PUBLIC"), std::string::npos);
@@ -109,12 +109,55 @@ TEST_F(CliTest, SecuredProjectHasSignInAndNoSecret) {
     EXPECT_EQ(readFile(root / "cppboot.yaml").find("secret"), std::string::npos);
 }
 
-TEST_F(CliTest, SecurityOptionNeedsWebAndNoDatabase) {
+TEST_F(CliTest, SecurityOptionNeedsWeb) {
     std::ostringstream out;
     std::ostringstream err;
     EXPECT_EQ(cppboot::cli::run({"create", "a", "--security"}, out, err), cppboot::cli::kExitUsage);
-    EXPECT_EQ(cppboot::cli::run({"create", "a", "--web", "--security", "--sqlite"}, out, err),
-              cppboot::cli::kExitUsage);
+}
+
+TEST_F(CliTest, ActuatorProjectAsksForItAndHasServerSettings) {
+    ASSERT_TRUE(createProject("watched", directory_, {.web = true, .actuator = true}));
+
+    const auto root = directory_ / "watched";
+    EXPECT_NE(readFile(root / "CMakeLists.txt").find("cppboot_generate_components(watched ACTUATOR "),
+              std::string::npos);
+}
+
+TEST_F(CliTest, ActuatorAloneKeepsThePlainSampleWithAServer) {
+    ASSERT_TRUE(createProject("watched", directory_, {.actuator = true}));
+
+    const auto root = directory_ / "watched";
+    EXPECT_TRUE(std::filesystem::exists(root / "src" / "greeting.hpp"));
+    EXPECT_NE(readFile(root / "cppboot.yaml").find("port: 8080"), std::string::npos);
+    EXPECT_NE(readFile(root / "CMakeLists.txt").find("ACTUATOR"), std::string::npos);
+}
+
+TEST_F(CliTest, EveryOptionCanBeCombined) {
+    ASSERT_TRUE(createProject("banking-api", directory_,
+                              {.web = true,
+                               .database = cppboot::cli::ProjectDatabase::Postgresql,
+                               .security = true,
+                               .actuator = true}));
+
+    const auto root = directory_ / "banking-api";
+    EXPECT_TRUE(std::filesystem::exists(root / "src" / "auth.hpp"));
+    EXPECT_TRUE(std::filesystem::exists(root / "src" / "users.hpp"));
+    EXPECT_TRUE(std::filesystem::exists(root / "db" / "migrations" / "001_create_users.sql"));
+
+    const std::string cmake = readFile(root / "CMakeLists.txt");
+    EXPECT_NE(cmake.find("cppboot::data"), std::string::npos);
+    EXPECT_NE(cmake.find("cppboot::security"), std::string::npos);
+    EXPECT_NE(cmake.find("ACTUATOR"), std::string::npos);
+
+    const std::string settings = readFile(root / "cppboot.yaml");
+    EXPECT_NE(settings.find("server:"), std::string::npos);
+    EXPECT_NE(settings.find("database:"), std::string::npos);
+    EXPECT_NE(settings.find("security:"), std::string::npos);
+    // A PostgreSQL URL contains @ before its host, so this looks for whole placeholders.
+    for (const char* placeholder : {"@NAME@", "@SETTINGS@", "@LIBRARIES@", "@GENERATE_OPTIONS@"}) {
+        EXPECT_EQ(settings.find(placeholder), std::string::npos) << placeholder;
+        EXPECT_EQ(cmake.find(placeholder), std::string::npos) << placeholder;
+    }
 }
 
 TEST_F(CliTest, DatabaseOptionsNeedWebAndCannotBeCombined) {
@@ -126,7 +169,7 @@ TEST_F(CliTest, DatabaseOptionsNeedWebAndCannotBeCombined) {
 }
 
 TEST_F(CliTest, WebProjectHasAControllerAndServerSettings) {
-    ASSERT_TRUE(createProject("web-app", directory_, cppboot::cli::ProjectKind::Web));
+    ASSERT_TRUE(createProject("web-app", directory_, {.web = true}));
 
     const auto root = directory_ / "web-app";
     EXPECT_TRUE(std::filesystem::exists(root / "src" / "users.hpp"));

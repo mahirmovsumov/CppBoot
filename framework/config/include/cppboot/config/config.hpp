@@ -46,9 +46,14 @@ public:
     std::string describe() const;
 
 private:
-    Config(Values values, std::string profile);
+    Config(Values values, Values environment, std::string profile);
+
+    /// Returns a setting's value, or nothing. A key that wasn't otherwise set can still come from
+    /// its environment variable, which has no way to spell the difference between . and _ in a key.
+    const std::string* lookup(std::string_view key) const;
 
     Values values_;
+    Values environment_;
     std::string profile_;
 };
 

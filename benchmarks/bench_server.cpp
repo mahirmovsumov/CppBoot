@@ -1,7 +1,9 @@
 // A server for measuring the framework's own cost, with routes that do very little.
+#include <cppboot/actuator/actuator.hpp>
 #include <cppboot/cppboot.hpp>
 #include <cppboot/data/database.hpp>
 #include <cppboot/web/server_module.hpp>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -41,6 +43,22 @@ std::shared_ptr<cppboot::data::Database> makeDatabase() {
 int main(int argc, char* argv[]) {
     auto router = std::make_shared<Router>();
     const auto database = makeDatabase();
+
+    // Setting this measures the cost of recording metrics on every request.
+    std::shared_ptr<cppboot::actuator::Actuator> actuator;
+    std::shared_ptr<const cppboot::logging::Logger> actuator_logger;
+    std::shared_ptr<const cppboot::config::Config> actuator_config;
+    if (std::getenv("CPPBOOT_BENCH_ACTUATOR") != nullptr) {
+        cppboot::config::ConfigSources sources;
+        sources.directory = std::filesystem::temp_directory_path() / "cppboot-absent-directory";
+        actuator_config = std::make_shared<const cppboot::config::Config>(
+            cppboot::config::Config::load(sources).value());
+        actuator_logger = std::make_shared<const cppboot::logging::Logger>(
+            cppboot::logging::Logger::create({}).value());
+        actuator = std::make_shared<cppboot::actuator::Actuator>(
+            std::make_shared<cppboot::actuator::Metrics>(), actuator_logger, actuator_config);
+        cppboot::actuator::mount(*router, actuator);
+    }
 
     router->get("/plaintext", [](const Request&) { return Response::text("Hello, World!"); });
 

@@ -244,6 +244,22 @@ TEST(RouterTest, MiddlewareSeesParametersNotFoundAndFailures) {
     EXPECT_EQ(seen, (std::vector<std::string>{"409:7", "404:-"}));
 }
 
+TEST(RouterTest, RequestKnowsItsRoutePattern) {
+    std::string seen;
+    Router router;
+    router.use([&](const Request& request, const Next& next) {
+        seen = request.route();
+        return next(request);
+    });
+    router.get("/users/{id}", replyWith("ok"));
+
+    static_cast<void>(router.handle(makeRequest(Method::Get, "/users/7")));
+    EXPECT_EQ(seen, "/users/{id}");
+
+    static_cast<void>(router.handle(makeRequest(Method::Get, "/absent")));
+    EXPECT_EQ(seen, "");
+}
+
 TEST(RouterTest, ExceptionInMiddlewareIsContained) {
     Router router;
     router.use([](const Request&, const Next&) -> Response { throw std::runtime_error("boom"); });

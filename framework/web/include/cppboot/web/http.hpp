@@ -42,6 +42,10 @@ public:
 
     const std::vector<std::string>& pathSegments() const noexcept { return segments_; }
 
+    /// The pattern of the matched route, such as "/users/{id}", or empty if no route matched. Use
+    /// this rather than the path in logs and metrics, because clients choose the paths they send.
+    const std::string& route() const noexcept { return route_; }
+
 private:
     friend class Router;
 
@@ -52,6 +56,7 @@ private:
     std::vector<std::string> segments_;
     std::map<std::string, std::string, std::less<>> query_;
     std::map<std::string, std::string, std::less<>> params_;
+    std::string route_;
     Headers headers_;
     std::string body_;
 };

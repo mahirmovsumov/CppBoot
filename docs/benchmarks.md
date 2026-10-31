@@ -69,6 +69,16 @@ A real 2 GB server also needs memory for its operating system and your applicati
 - **PostgreSQL:** the database test uses SQLite on the same machine. A networked database is much slower, and usually becomes the limit before the framework does.
 - **Your CPU:** results changed by up to 4 times between the machines tested. Measure on your own hardware.
 
+## The cost of metrics
+
+Recording [metrics](guides/actuator.md) on every request took about 4% of throughput, measured on the Windows laptop with a route that does almost nothing, over 3 rounds:
+
+| Round | Without metrics | With metrics |
+|---|---|---|
+| 1 | 12,945 requests/second | 12,337 requests/second |
+| 2 | 12,992 requests/second | 12,595 requests/second |
+| 3 | 13,292 requests/second | 12,627 requests/second |
+
 ## Before running in production
 
 - **`cppboot.server.max_connections`:** the default is 1,024, and connections beyond it are closed. Raise it if you need more.

@@ -167,6 +167,75 @@ TEST(ValidateDeclarationsTest, RejectsMiddlewareWithNoControllers) {
     EXPECT_NE(result.error().message().find("no controllers"), std::string::npos);
 }
 
+TEST(ValidateDeclarationsTest, UsingTheActuatorNeedsTheOption) {
+    Declarations metrics_user;
+    metrics_user.components = {{"Orders", "a.hpp:1", {}, {"cppboot::actuator::Metrics"}}};
+    const auto result = validateDeclarations(metrics_user);
+    ASSERT_FALSE(result);
+    EXPECT_NE(result.error().message().find("ACTUATOR"), std::string::npos);
+    EXPECT_TRUE(validateDeclarations(metrics_user, RenderOptions{true}));
+
+    Declarations indicator;
+    indicator.components = {{"Disk", "a.hpp:1", {"cppboot::actuator::HealthIndicator"}, {}}};
+    EXPECT_FALSE(validateDeclarations(indicator));
+    EXPECT_TRUE(validateDeclarations(indicator, RenderOptions{true}));
+}
+
+TEST(ValidateDeclarationsTest, AllowsManyHealthIndicators) {
+    Declarations declarations;
+    declarations.components = {
+        {"Disk", "a.hpp:1", {"cppboot::actuator::HealthIndicator"}, {}},
+        {"Queue", "a.hpp:2", {"cppboot::actuator::HealthIndicator"}, {}},
+    };
+    EXPECT_TRUE(validateDeclarations(declarations, RenderOptions{true}));
+}
+
+TEST(RenderRegistrationTest, LeavesOutTheActuatorUnlessAskedFor) {
+    Declarations declarations;
+    declarations.components = {{"C", "a.hpp:1", {}, {}}};
+    declarations.controllers = {{"C", {makeRoute("Get", "/")}}};
+    EXPECT_EQ(renderRegistration(declarations, {}).find("actuator"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, ActuatorStartsAServerEvenWithNoControllers) {
+    const std::string text = renderRegistration(Declarations{}, {}, RenderOptions{true});
+
+    EXPECT_NE(text.find("cppboot/actuator/actuator.hpp"), std::string::npos);
+    EXPECT_NE(text.find("cppboot::actuator::mount(*router, actuator, false)"), std::string::npos);
+    EXPECT_NE(text.find("cppboot::web::ServerModule"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, ActuatorLocksMetricsInASecuredProject) {
+    Route route = makeRoute("Get", "/");
+    route.is_public = true;
+
+    Declarations declarations;
+    declarations.components = {{"C", "a.hpp:1", {}, {}}};
+    declarations.controllers = {{"C", {route}}};
+
+    EXPECT_NE(renderRegistration(declarations, {}, RenderOptions{true})
+                  .find("cppboot::actuator::mount(*router, actuator, true)"),
+              std::string::npos);
+}
+
+TEST(RenderRegistrationTest, ActuatorChecksTheDatabaseWhenThereIsOne) {
+    Declarations declarations;
+    declarations.row_types = {{"User", "a.hpp:1", {{"id", false}}}};
+    const std::string text = renderRegistration(declarations, {}, RenderOptions{true});
+
+    EXPECT_NE(text.find("actuator->addCheck(\"database\""), std::string::npos);
+    EXPECT_NE(text.find("database_connections_open"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, HealthIndicatorsJoinTheirGroup) {
+    Declarations declarations;
+    declarations.components = {{"Disk", "a.hpp:1", {"cppboot::actuator::HealthIndicator"}, {}}};
+    const std::string text = renderRegistration(declarations, {}, RenderOptions{true});
+
+    EXPECT_NE(text.find("bindAll<cppboot::actuator::HealthIndicator, Disk>"), std::string::npos);
+    EXPECT_NE(text.find("resolveAll<cppboot::actuator::HealthIndicator>"), std::string::npos);
+}
+
 TEST(RenderRegistrationTest, LeavesOutSecurityWhenNotUsed) {
     Declarations declarations;
     declarations.components = {{"C", "a.hpp:1", {}, {}}};

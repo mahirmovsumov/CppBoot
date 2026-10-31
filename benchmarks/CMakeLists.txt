@@ -1,5 +1,5 @@
 add_executable(cppboot-bench-server bench_server.cpp)
-target_link_libraries(cppboot-bench-server PRIVATE cppboot::web cppboot::data)
+target_link_libraries(cppboot-bench-server PRIVATE cppboot::web cppboot::data cppboot::actuator)
 cppboot_apply_compiler_options(cppboot-bench-server)
 
 add_executable(cppboot-load http_load.cpp)

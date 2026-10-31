@@ -36,6 +36,7 @@ add_subdirectory(framework/boot)
 add_subdirectory(framework/web)
 add_subdirectory(framework/data)
 add_subdirectory(framework/security)
+add_subdirectory(framework/actuator)
 add_subdirectory(tools/cli)
 
 if(CPPBOOT_BUILD_CODEGEN)
