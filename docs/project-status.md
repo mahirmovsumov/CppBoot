@@ -21,19 +21,18 @@ To add functionality, you add a class to `src` and mark it. CppBoot creates it a
 ```cpp
 class CPPBOOT_SERVICE UserService {
 public:
-    UserService(std::shared_ptr<UserRepository> repository,
-                std::shared_ptr<const cppboot::logging::Logger> logger);
+    UserService(UserRepository& repository, const cppboot::logging::Logger& logger);
 };
 ```
 
-A mistake such as a missing dependency fails the build, so it can't reach a running application.
+There's no ownership to manage, because CppBoot keeps each dependency alive for as long as the class using it exists. A mistake such as a missing dependency fails the build, so it can't reach a running application. The build also warns about risky patterns, and new projects have [tools for finding memory bugs](guides/memory-safety.md). C++ can't guarantee memory safety as Rust does, so code that compiles can still have these bugs.
 
 A web API works the same way, with `cppboot create my-api --web`. Marked functions become routes, and values convert to and from JSON automatically:
 
 ```cpp
 class CPPBOOT_CONTROLLER("/api/users") UserController {
 public:
-    explicit UserController(std::shared_ptr<UserService> users);
+    explicit UserController(UserService& users);
 
     CPPBOOT_GET("/{id}") User get(int id) const;
 };
@@ -89,7 +88,7 @@ To serve HTTPS, give the server a certificate and a key in its settings, or put 
 | Modules and workers | Split an application into parts, and run background threads safely | [Modules](guides/modules.md) |
 | Configuration | Reads YAML, profiles, environment variables and command-line arguments | [Configuration](guides/configuration.md) |
 | Logging | Writes to the console and to a file from any thread | [Configuration](guides/configuration.md) |
-| Dependency injection | Creates components and manages their lifetimes | [Dependency injection](guides/dependency-injection.md) |
+| Dependency injection | Creates components and manages their lifetimes | [Dependency injection](guides/dependency-injection.md), [Ownership and memory safety](guides/memory-safety.md) |
 | Code generator | Reads marked classes and generates their registration | [Code generation](architecture/009-code-generation.md) |
 | `cppboot` CLI | Creates, builds and runs projects | [CLI](guides/cli.md) |
 | Web framework | Serves HTTP and HTTPS with controllers, JSON, routes, middleware and error handling | [Web server](guides/web.md) |

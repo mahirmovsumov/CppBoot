@@ -363,6 +363,8 @@ void Declarations::append(Declarations other) {
                        std::make_move_iterator(other.controllers.end()));
     middleware.insert(middleware.end(), std::make_move_iterator(other.middleware.begin()),
                       std::make_move_iterator(other.middleware.end()));
+    warnings.insert(warnings.end(), std::make_move_iterator(other.warnings.begin()),
+                    std::make_move_iterator(other.warnings.end()));
 }
 
 Result<void> validateDeclarations(const Declarations& declarations, RenderOptions options) {

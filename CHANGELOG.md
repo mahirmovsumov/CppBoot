@@ -114,6 +114,18 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - Connections now set `TCP_NODELAY`.
 - The load generator can test HTTPS and new connections, and reports the first error it sees.
 
+### Ownership and memory safety
+
+- Components can take their dependencies as plain references: `OrderService(InventoryService& inventory)`. `std::shared_ptr` still works, and both can be mixed.
+- An instance now keeps its dependencies alive until it's destroyed, so a reference is safe for any lifetime.
+- Dependencies are now always created from left to right, on every compiler.
+- A component with a field pointing at a `Request`, `Response` or `Principal` fails the build.
+- New warnings from the generator: state that threads can change with no lock, views stored in a component, copies of a dependency, and routes that return a view.
+- `CPPBOOT_UNCHECKED("reason")`, which accepts a risky field.
+- `cppboot build --sanitize=address` and `--sanitize=thread`, and the same for `run`, on Linux.
+- New projects turn on `_GLIBCXX_ASSERTIONS`, `-Wall` and `-Wextra`, and take plain references in their samples.
+- `CPPBOOT_LIFETIMEBOUND`, on request accessors and `Result::value()`, which lets Clang warn about dangling references.
+
 ### Fixes
 
 - Settings with underscores in their names can now be set from the environment, even when they aren't in YAML. For example, `CPPBOOT_SERVER_MAX_CONNECTIONS` had no effect before, unless the key was also in `cppboot.yaml`.

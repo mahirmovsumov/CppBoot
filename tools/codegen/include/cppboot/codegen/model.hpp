@@ -111,6 +111,8 @@ struct Declarations {
     std::vector<MappedStruct> row_types;
     std::vector<Controller> controllers;
     std::vector<Middleware> middleware;
+    /// Risky patterns that don't stop the build, as "file:line: warning: message".
+    std::vector<std::string> warnings;
 
     void append(Declarations other);
 };

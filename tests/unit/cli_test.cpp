@@ -223,6 +223,21 @@ TEST_F(CliTest, UnknownCommandFails) {
     EXPECT_EQ(cppboot::cli::run({"launch"}, out, err), cppboot::cli::kExitUsage);
 }
 
+TEST_F(CliTest, UnknownSanitizerFails) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cppboot::cli::run({"build", "--sanitize=memory"}, out, err), cppboot::cli::kExitUsage);
+    EXPECT_EQ(cppboot::cli::run({"run", "--sanitize="}, out, err), cppboot::cli::kExitUsage);
+}
+
+TEST_F(CliTest, BuildTakesNoOtherArguments) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cppboot::cli::run({"build", "extra"}, out, err), cppboot::cli::kExitUsage);
+    EXPECT_EQ(cppboot::cli::run({"build", "--sanitize=address", "extra"}, out, err),
+              cppboot::cli::kExitUsage);
+}
+
 TEST_F(CliTest, InfoPrintsTheVersion) {
     std::ostringstream out;
     std::ostringstream err;

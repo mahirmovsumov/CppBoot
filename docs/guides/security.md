@@ -90,17 +90,16 @@ Inject `TokenService`, check the user's password, and issue a token:
 ```cpp
 class CPPBOOT_CONTROLLER("/auth") AuthController {
 public:
-    AuthController(std::shared_ptr<UserRepository> users,
-                   std::shared_ptr<cppboot::security::TokenService> tokens);
+    AuthController(UserRepository& users, cppboot::security::TokenService& tokens);
 
     CPPBOOT_PUBLIC CPPBOOT_POST("/login") TokenReply login(const Credentials& credentials) const {
-        auto user = users_->findByName(credentials.name);
+        auto user = users_.findByName(credentials.name);
         // Check a hash even for an unknown name, so that timing doesn't reveal which names exist.
         const std::string& hash = user ? user->password_hash : dummy_hash_;
         if (!cppboot::security::verifyPassword(credentials.password, hash) || !user) {
             throw cppboot::web::HttpError(401, "Wrong name or password");
         }
-        return {tokens_->issue(user->name, user->roles)};
+        return {tokens_.issue(user->name, user->roles)};
     }
 };
 ```
@@ -168,11 +167,10 @@ A limit in middleware covers every request, and is shared across routes:
 ```cpp
 class CPPBOOT_MIDDLEWARE(5) ApiLimit {
 public:
-    ApiLimit(std::shared_ptr<const cppboot::config::Config> config,
-             std::shared_ptr<const cppboot::logging::Logger> logger)
+    ApiLimit(const cppboot::config::Config& config, const cppboot::logging::Logger& logger)
         : limit_(cppboot::web::rateLimit(
               {100, std::chrono::seconds{1}},
-              cppboot::web::RateLimiterOptions::fromSettings(*config, *logger))) {}
+              cppboot::web::RateLimiterOptions::fromSettings(config, logger))) {}
 
     cppboot::web::Response handle(const cppboot::web::Request& request,
                                   const cppboot::web::Next& next) {
@@ -201,12 +199,12 @@ Middleware runs around every request, and is how you add things like request log
 ```cpp
 class CPPBOOT_MIDDLEWARE(10) RequestLog {
 public:
-    explicit RequestLog(std::shared_ptr<const cppboot::logging::Logger> logger);
+    explicit RequestLog(const cppboot::logging::Logger& logger);
 
     cppboot::web::Response handle(const cppboot::web::Request& request,
                                   const cppboot::web::Next& next) {
         cppboot::web::Response response = next(request);
-        logger_->info("{} {}", request.path(), response.status());
+        logger_.info("{} {}", request.path(), response.status());
         return response;
     }
 };

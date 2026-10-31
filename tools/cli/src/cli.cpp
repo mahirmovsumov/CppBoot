@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstddef>
 #include <fstream>
+#include <optional>
 #include <ostream>
 #include <system_error>
 #include <utility>
@@ -30,6 +31,8 @@ Commands:
                     Add --actuator for health and metrics routes
   build             Build the project in the current folder
   run [arguments]   Build and run the project, passing arguments to the application
+                    Put --sanitize=address or --sanitize=thread first on build or run to find
+                    memory errors or data races, on Linux
   info              Show version and installation details
   help              Show this message
 )";
@@ -100,6 +103,11 @@ file(GLOB_RECURSE headers CONFIGURE_DEPENDS src/*.hpp)
 add_executable(@NAME@ ${sources})
 target_link_libraries(@NAME@ PRIVATE @LIBRARIES@)
 cppboot_generate_components(@NAME@ @GENERATE_OPTIONS@HEADERS ${headers})
+
+# _GLIBCXX_ASSERTIONS stops the program on mistakes such as an index past the end of a vector, rather
+# than letting it read or write memory it shouldn't. It costs very little, so it's on in every build.
+target_compile_definitions(@NAME@ PRIVATE _GLIBCXX_ASSERTIONS)
+target_compile_options(@NAME@ PRIVATE -Wall -Wextra)
 )"},
     {"cppboot.yaml", R"(cppboot:
   application:
@@ -119,9 +127,7 @@ int main(int argc, char* argv[]) {
     {"src/greeting.hpp", R"(#pragma once
 
 #include <cppboot/cppboot.hpp>
-#include <memory>
 #include <string>
-#include <utility>
 
 // CPPBOOT_SERVICE makes a class a component. CppBoot reads its constructor, creates it and passes
 // in the components it needs, so there's no registration code to write.
@@ -130,30 +136,28 @@ public:
     std::string greeting() const { return "Hello from CppBoot!"; }
 };
 
-// A component that derives from cppboot::Module also starts and stops with the application.
+// A component that derives from cppboot::Module also starts and stops with the application. CppBoot
+// keeps what it passes by reference alive for as long as this class exists.
 class CPPBOOT_SERVICE GreetingModule : public cppboot::Module {
 public:
-    explicit GreetingModule(std::shared_ptr<GreetingService> greetings)
-        : greetings_(std::move(greetings)) {}
+    explicit GreetingModule(GreetingService& greetings) : greetings_(greetings) {}
 
     std::string_view name() const noexcept override { return "greeting"; }
 
     cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
-        context.logger().info("{}", greetings_->greeting());
+        context.logger().info("{}", greetings_.greeting());
         return {};
     }
 
 private:
-    std::shared_ptr<GreetingService> greetings_;
+    GreetingService& greetings_;
 };
 )",
      ProjectFiles::PlainOnly},
     {"src/users.hpp", R"(#pragma once
 
 #include <cppboot/cppboot.hpp>
-#include <memory>
 #include <string>
-#include <utility>
 
 // CPPBOOT_JSON generates the conversion to and from JSON.
 struct CPPBOOT_JSON User {
@@ -170,13 +174,13 @@ public:
 // CPPBOOT_CONTROLLER turns the marked functions below into routes under this path.
 class CPPBOOT_CONTROLLER("/api/users") UserController {
 public:
-    explicit UserController(std::shared_ptr<UserService> users) : users_(std::move(users)) {}
+    explicit UserController(UserService& users) : users_(users) {}
 
     // Handles GET /api/users/7. The id comes from the path, and the result is sent as JSON.
-    CPPBOOT_GET("/{id}") User get(int id) const { return users_->find(id); }
+    CPPBOOT_GET("/{id}") User get(int id) const { return users_.find(id); }
 
 private:
-    std::shared_ptr<UserService> users_;
+    UserService& users_;
 };
 )",
      ProjectFiles::WebWithoutDatabase},
@@ -187,10 +191,8 @@ private:
 #include <cppboot/web/binding.hpp>
 #include <cppboot/web/http.hpp>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 // CPPBOOT_JSON generates the conversion to and from JSON, and CPPBOOT_ROW generates reading it from
@@ -207,34 +209,33 @@ struct CPPBOOT_JSON NewUser {
 // Values go in as $1, $2 and so on, never as part of the SQL text, which prevents SQL injection.
 class CPPBOOT_SERVICE UserRepository {
 public:
-    explicit UserRepository(std::shared_ptr<cppboot::data::Database> database)
-        : database_(std::move(database)) {}
+    explicit UserRepository(cppboot::data::Database& database) : database_(database) {}
 
     User add(const NewUser& details) {
-        return *database_->queryOne<User>("INSERT INTO users (name) VALUES ($1) RETURNING id, name",
-                                          details.name);
+        return *database_.queryOne<User>("INSERT INTO users (name) VALUES ($1) RETURNING id, name",
+                                         details.name);
     }
 
     std::optional<User> find(std::int64_t id) {
-        return database_->queryOne<User>("SELECT id, name FROM users WHERE id = $1", id);
+        return database_.queryOne<User>("SELECT id, name FROM users WHERE id = $1", id);
     }
 
     std::vector<User> all() {
-        return database_->queryAs<User>("SELECT id, name FROM users ORDER BY id");
+        return database_.queryAs<User>("SELECT id, name FROM users ORDER BY id");
     }
 
 private:
-    std::shared_ptr<cppboot::data::Database> database_;
+    cppboot::data::Database& database_;
 };
 
 class CPPBOOT_CONTROLLER("/api/users") UserController {
 public:
-    explicit UserController(std::shared_ptr<UserRepository> users) : users_(std::move(users)) {}
+    explicit UserController(UserRepository& users) : users_(users) {}
 
-    CPPBOOT_GET("/") std::vector<User> list() { return users_->all(); }
+    CPPBOOT_GET("/") std::vector<User> list() { return users_.all(); }
 
     CPPBOOT_GET("/{id}") User get(std::int64_t id) {
-        auto user = users_->find(id);
+        auto user = users_.find(id);
         if (!user) {
             throw cppboot::web::HttpError(404, "No user has that ID");
         }
@@ -242,11 +243,11 @@ public:
     }
 
     CPPBOOT_POST("/") cppboot::web::WithStatus<User> create(const NewUser& details) {
-        return {201, users_->add(details)};
+        return {201, users_.add(details)};
     }
 
 private:
-    std::shared_ptr<UserRepository> users_;
+    UserRepository& users_;
 };
 )",
      ProjectFiles::WithDatabase},
@@ -256,9 +257,7 @@ private:
 #include <cppboot/security/password.hpp>
 #include <cppboot/security/token.hpp>
 #include <cppboot/web/http.hpp>
-#include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
 struct CPPBOOT_JSON Credentials {
@@ -279,8 +278,8 @@ struct CPPBOOT_JSON Profile {
 // variable. Store real accounts in a database, with hashes from hashPassword().
 class CPPBOOT_SERVICE Accounts {
 public:
-    explicit Accounts(std::shared_ptr<const cppboot::config::Config> config) {
-        const std::string password = config->getString("cppboot.myapp.password");
+    explicit Accounts(const cppboot::config::Config& config) {
+        const std::string password = config.getString("cppboot.myapp.password");
         if (password.empty()) {
             throw cppboot::Exception(cppboot::Error{
                 cppboot::ErrorCode::InvalidArgument,
@@ -302,18 +301,17 @@ private:
 
 class CPPBOOT_CONTROLLER("/api") ApiController {
 public:
-    ApiController(std::shared_ptr<Accounts> accounts,
-                  std::shared_ptr<cppboot::security::TokenService> tokens)
-        : accounts_(std::move(accounts)), tokens_(std::move(tokens)) {}
+    ApiController(Accounts& accounts, cppboot::security::TokenService& tokens)
+        : accounts_(accounts), tokens_(tokens) {}
 
     // Every route in a project with security needs a token, unless it's marked public.
     // Checking a password is slow on purpose, so this stops one client from using up the server.
     CPPBOOT_PUBLIC CPPBOOT_RATE_LIMIT("10/minute") CPPBOOT_POST("/login")
     TokenReply login(const Credentials& credentials) const {
-        if (!accounts_->check(credentials)) {
+        if (!accounts_.check(credentials)) {
             throw cppboot::web::HttpError(401, "Wrong name or password");
         }
-        return {tokens_->issue(credentials.name, {"admin"})};
+        return {tokens_.issue(credentials.name, {"admin"})};
     }
 
     // This has no mark, so it needs a token. A Principal parameter says who sent the request.
@@ -328,8 +326,8 @@ public:
     }
 
 private:
-    std::shared_ptr<Accounts> accounts_;
-    std::shared_ptr<cppboot::security::TokenService> tokens_;
+    Accounts& accounts_;
+    cppboot::security::TokenService& tokens_;
 };
 )",
      ProjectFiles::WithSecurity},
@@ -340,6 +338,7 @@ private:
 )",
      ProjectFiles::WithDatabase},
     {".gitignore", R"(build/
+build-*/
 *.db
 *.db-shm
 *.db-wal
@@ -456,32 +455,98 @@ Result<int> runTool(std::vector<std::string> command, const fs::path& directory)
     return exit_code;
 }
 
-Result<int> buildProject(const fs::path& directory) {
+enum class Sanitizer { None, Address, Thread };
+
+std::string_view buildFolder(Sanitizer sanitizer) {
+    switch (sanitizer) {
+        case Sanitizer::Address:
+            return "build-address";
+        case Sanitizer::Thread:
+            return "build-thread";
+        case Sanitizer::None:
+            break;
+    }
+    return "build";
+}
+
+std::string_view sanitizerFlags(Sanitizer sanitizer) {
+    switch (sanitizer) {
+        case Sanitizer::Address:
+            return "-fsanitize=address,undefined -fno-sanitize-recover=undefined "
+                   "-fno-omit-frame-pointer";
+        case Sanitizer::Thread:
+            return "-fsanitize=thread -fno-omit-frame-pointer";
+        case Sanitizer::None:
+            break;
+    }
+    return "";
+}
+
+/// Removes a leading --sanitize=... from the arguments. Returns nothing if its value is unknown.
+std::optional<Sanitizer> takeSanitizer(std::vector<std::string>& arguments) {
+    constexpr std::string_view kOption = "--sanitize=";
+    if (arguments.empty() || !arguments.front().starts_with(kOption)) {
+        return Sanitizer::None;
+    }
+
+    const std::string_view value = std::string_view{arguments.front()}.substr(kOption.size());
+    std::optional<Sanitizer> sanitizer;
+    if (value == "address") {
+        sanitizer = Sanitizer::Address;
+    } else if (value == "thread") {
+        sanitizer = Sanitizer::Thread;
+    }
+    arguments.erase(arguments.begin());
+    return sanitizer;
+}
+
+Result<void> checkSanitizerAvailable(Sanitizer sanitizer) {
+#if defined(_WIN32)
+    if (sanitizer != Sanitizer::None) {
+        return Error{ErrorCode::InvalidArgument,
+                     "--sanitize needs Linux, because GCC on Windows doesn't include these checkers"};
+    }
+#else
+    static_cast<void>(sanitizer);
+#endif
+    return {};
+}
+
+Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer = Sanitizer::None) {
+    if (auto available = checkSanitizerAvailable(sanitizer); !available) {
+        return available.error();
+    }
     if (auto name = readProjectName(directory); !name) {
         return name.error();
     }
 
+    const std::string folder{buildFolder(sanitizer)};
     std::error_code ignored;
-    if (!fs::exists(directory / "build" / "CMakeCache.txt", ignored)) {
+    if (!fs::exists(directory / folder / "CMakeCache.txt", ignored)) {
         auto prefix = findInstallation();
         if (!prefix) {
             return prefix.error();
         }
 
-        auto configured = runTool({"cmake", "-S", ".", "-B", "build", "-G", "Ninja",
-                                   "-DCMAKE_BUILD_TYPE=Debug",
-                                   "-DCMAKE_PREFIX_PATH=" + prefix.value().generic_string()},
-                                  directory);
+        std::vector<std::string> command{"cmake", "-S", ".", "-B", folder, "-G", "Ninja",
+                                         "-DCMAKE_BUILD_TYPE=Debug",
+                                         "-DCMAKE_PREFIX_PATH=" + prefix.value().generic_string()};
+        if (sanitizer != Sanitizer::None) {
+            command.push_back("-DCMAKE_CXX_FLAGS=" + std::string{sanitizerFlags(sanitizer)});
+        }
+
+        auto configured = runTool(std::move(command), directory);
         if (!configured || configured.value() != 0) {
             return configured;
         }
     }
 
-    return runTool({"cmake", "--build", "build"}, directory);
+    return runTool({"cmake", "--build", folder}, directory);
 }
 
-Result<int> runProject(const fs::path& directory, std::vector<std::string> arguments) {
-    auto built = buildProject(directory);
+Result<int> runProject(const fs::path& directory, std::vector<std::string> arguments,
+                       Sanitizer sanitizer) {
+    auto built = buildProject(directory, sanitizer);
     if (!built || built.value() != 0) {
         return built;
     }
@@ -492,8 +557,9 @@ Result<int> runProject(const fs::path& directory, std::vector<std::string> argum
     }
 
     std::vector<std::string> command;
-    command.push_back(
-        (directory / "build" / platform::executableFileName(name.value())).string());
+    command.push_back((directory / buildFolder(sanitizer) /
+                       platform::executableFileName(name.value()))
+                          .string());
     const auto first = !arguments.empty() && arguments.front() == "--" ? 1 : 0;
     command.insert(command.end(), arguments.begin() + first, arguments.end());
 
@@ -662,12 +728,17 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
             out << "Created " << names.front() << ". Next:\n  cd " << names.front()
                 << "\n  cppboot run\n";
         }
-    } else if (command == "build" && rest.empty()) {
+    } else if (command == "build" || command == "run") {
+        std::vector<std::string> remaining = rest;
+        const auto sanitizer = takeSanitizer(remaining);
+        if (!sanitizer || (command == "build" && !remaining.empty())) {
+            err << kUsage;
+            return kExitUsage;
+        }
+
         out.flush();
-        result = buildProject(fs::current_path());
-    } else if (command == "run") {
-        out.flush();
-        result = runProject(fs::current_path(), rest);
+        result = command == "build" ? buildProject(fs::current_path(), *sanitizer)
+                                    : runProject(fs::current_path(), std::move(remaining), *sanitizer);
     } else {
         err << kUsage;
         return kExitUsage;

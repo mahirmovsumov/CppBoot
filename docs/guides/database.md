@@ -54,15 +54,14 @@ struct CPPBOOT_ROW User {
 
 class CPPBOOT_SERVICE UserRepository {
 public:
-    explicit UserRepository(std::shared_ptr<cppboot::data::Database> database)
-        : database_(std::move(database)) {}
+    explicit UserRepository(cppboot::data::Database& database) : database_(database) {}
 
     std::optional<User> find(std::int64_t id) {
-        return database_->queryOne<User>("SELECT * FROM users WHERE id = $1", id);
+        return database_.queryOne<User>("SELECT * FROM users WHERE id = $1", id);
     }
 
 private:
-    std::shared_ptr<cppboot::data::Database> database_;
+    cppboot::data::Database& database_;
 };
 ```
 

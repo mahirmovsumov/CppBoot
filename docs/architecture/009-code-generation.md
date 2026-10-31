@@ -26,7 +26,8 @@ A marked class must meet all of these rules, and the generator reports an error 
 - It isn't abstract and isn't a template.
 - It isn't in an anonymous namespace, because generated code couldn't name it.
 - It has one public constructor, not counting copy and move constructors, or no declared constructor at all.
-- Every constructor parameter is a `std::shared_ptr` to a component, by value or by reference.
+- Every constructor parameter is a reference to a component, or a `std::shared_ptr` to one.
+- No field points at a request, a response or a `Principal`, unless it's marked `CPPBOOT_UNCHECKED`. [016](016-ownership.md) covers this and the generator's warnings.
 
 A component can be requested by its own type or by any abstract base class it publicly inherits from directly. The exception is `cppboot::Module`. An application has many modules, so they join a group that `runApplication` reads with `resolveAll`, and can't be injected through that interface.
 

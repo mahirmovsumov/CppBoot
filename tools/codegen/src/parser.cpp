@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -27,6 +28,7 @@ constexpr std::string_view kMiddlewarePrefix = "cppboot:middleware:";
 constexpr std::string_view kPublicAnnotation = "cppboot:public";
 constexpr std::string_view kRolePrefix = "cppboot:role:";
 constexpr std::string_view kRateLimitPrefix = "cppboot:rate_limit:";
+constexpr std::string_view kUncheckedPrefix = "cppboot:unchecked:";
 constexpr std::string_view kAnyPrefix = "cppboot:";
 
 std::string toString(CXString text) {
@@ -151,8 +153,172 @@ std::optional<std::string> sharedPointerTarget(CXType parameter_type) {
     return withoutConst(qualifiedName(clang_Type_getTemplateArgumentAsType(type, 0)));
 }
 
+/// Returns T if the type is T& or const T&, for a class. Copies and raw pointers are left out: a copy
+/// wouldn't be the shared component, and a pointer suggests that it might be missing.
+std::optional<std::string> referenceTarget(CXType parameter_type) {
+    const CXType type = clang_getCanonicalType(parameter_type);
+    if (type.kind != CXType_LValueReference) {
+        return std::nullopt;
+    }
+    const CXType target = clang_getCanonicalType(clang_getPointeeType(type));
+    if (target.kind != CXType_Record) {
+        return std::nullopt;
+    }
+    return withoutConst(qualifiedName(target));
+}
+
 bool isOptionalType(CXType type) {
     return isStandardType(type, "optional");
+}
+
+bool isAnyStandardType(CXType type, std::initializer_list<std::string_view> names) {
+    return std::any_of(names.begin(), names.end(),
+                       [&](std::string_view name) { return isStandardType(type, name); });
+}
+
+bool isView(CXType type) {
+    return isAnyStandardType(type, {"basic_string_view", "span"});
+}
+
+bool isLock(CXType type) {
+    return isAnyStandardType(type, {"mutex", "recursive_mutex", "timed_mutex",
+                                    "recursive_timed_mutex", "shared_mutex", "shared_timed_mutex"});
+}
+
+/// Returns true for a value that a thread can't safely change while another uses it. Atomics aren't
+/// here on purpose, and neither are other classes, which may protect themselves.
+bool isUnprotectedValue(CXType type) {
+    switch (type.kind) {
+        case CXType_Bool:
+        case CXType_Char_S:
+        case CXType_Char_U:
+        case CXType_SChar:
+        case CXType_UChar:
+        case CXType_Short:
+        case CXType_UShort:
+        case CXType_Int:
+        case CXType_UInt:
+        case CXType_Long:
+        case CXType_ULong:
+        case CXType_LongLong:
+        case CXType_ULongLong:
+        case CXType_Float:
+        case CXType_Double:
+            return true;
+        default:
+            break;
+    }
+    return isAnyStandardType(type, {"basic_string", "vector", "map", "unordered_map", "multimap",
+                                    "unordered_multimap", "set", "unordered_set", "multiset",
+                                    "unordered_multiset", "list", "deque", "array", "optional"});
+}
+
+/// Returns true for a request or something taken from one, which ends with its request.
+bool isRequestData(const std::string& type_name) {
+    return type_name == "cppboot::web::Request" || type_name == "cppboot::web::Response" ||
+           type_name == "cppboot::security::Principal";
+}
+
+std::string warningAt(CXCursor cursor, const std::string& message) {
+    return locationOf(cursor) + ": warning: " + message;
+}
+
+/// A component lives as long as the application, and every thread shares it. This finds fields that
+/// can't be safe with that, as far as it can see from declarations. It doesn't read function bodies,
+/// so finding nothing doesn't prove that a component is safe.
+std::optional<Error> checkComponentFields(CXCursor cursor, const Component& component,
+                                          std::vector<std::string>& warnings) {
+    const bool is_module =
+        std::find(component.interfaces.begin(), component.interfaces.end(), kModuleInterface) !=
+        component.interfaces.end();
+
+    bool has_lock = false;
+    bool can_change = false;
+    std::vector<CXCursor> unprotected;
+    std::optional<Error> error;
+
+    visitChildren(cursor, [&](CXCursor child) {
+        const CXCursorKind kind = clang_getCursorKind(child);
+        if (kind == CXCursor_CXXMethod) {
+            const std::string method = spelling(child);
+            const bool is_lifecycle = is_module && (method == "start" || method == "stop");
+            if (clang_getCXXAccessSpecifier(child) == CX_CXXPublic &&
+                clang_CXXMethod_isConst(child) == 0 && clang_CXXMethod_isStatic(child) == 0 &&
+                clang_CXXMethod_isDeleted(child) == 0 && !method.starts_with("operator") &&
+                !is_lifecycle) {
+                can_change = true;
+            }
+            return CXChildVisit_Continue;
+        }
+        if (kind != CXCursor_FieldDecl) {
+            return CXChildVisit_Continue;
+        }
+
+        const CXType field_type = clang_getCanonicalType(clang_getCursorType(child));
+        const std::string field = spelling(child);
+        const auto reason = findWithPrefix(annotationsOf(child), kUncheckedPrefix);
+        if (reason && reason->empty()) {
+            error = errorAt(child, "CPPBOOT_UNCHECKED on field '" + field + "' needs a reason");
+            return CXChildVisit_Break;
+        }
+
+        if (isLock(field_type)) {
+            has_lock = true;
+        }
+        if (clang_CXXField_isMutable(child) != 0) {
+            can_change = true;
+        }
+        if (reason) {
+            return CXChildVisit_Continue;
+        }
+
+        const bool is_borrowed = field_type.kind == CXType_LValueReference ||
+                                 field_type.kind == CXType_RValueReference ||
+                                 field_type.kind == CXType_Pointer;
+        const CXType target =
+            is_borrowed ? clang_getCanonicalType(clang_getPointeeType(field_type)) : field_type;
+
+        if (is_borrowed && isRequestData(withoutConst(qualifiedName(target)))) {
+            error = errorAt(child, "Field '" + field + "' of " + component.type + " points at " +
+                                       withoutConst(qualifiedName(target)) +
+                                       ", which ends with its request, while " + component.type +
+                                       " lives as long as the application. Copy what you need "
+                                       "instead, or explain why it's safe with CPPBOOT_UNCHECKED");
+            return CXChildVisit_Break;
+        }
+        if (isView(field_type)) {
+            warnings.push_back(warningAt(
+                child, "Field '" + field + "' of " + component.type +
+                           " doesn't own its data, and may outlive it. Store a copy, or explain "
+                           "why it's safe with CPPBOOT_UNCHECKED"));
+        }
+        if (!is_borrowed && field_type.kind == CXType_Record &&
+            std::find(component.dependencies.begin(), component.dependencies.end(),
+                      withoutConst(qualifiedName(field_type))) != component.dependencies.end()) {
+            warnings.push_back(warningAt(
+                child, "Field '" + field + "' of " + component.type + " is a copy of " +
+                           withoutConst(qualifiedName(field_type)) +
+                           ", not the shared component. Make it a reference"));
+        }
+        if (clang_isConstQualifiedType(field_type) == 0 && isUnprotectedValue(field_type)) {
+            unprotected.push_back(child);
+        }
+        return CXChildVisit_Continue;
+    });
+
+    if (error) {
+        return error;
+    }
+    if (can_change && !has_lock) {
+        for (const CXCursor field : unprotected) {
+            warnings.push_back(warningAt(
+                field, "Field '" + spelling(field) + "' of " + component.type +
+                           " can change, with no lock in the class, but every thread shares a "
+                           "component. Protect it with a std::mutex, or explain why it's safe "
+                           "with CPPBOOT_UNCHECKED"));
+        }
+    }
+    return std::nullopt;
 }
 
 /// Returns true for types that can be read from text in a URL.
@@ -263,9 +429,12 @@ Result<Component> readComponent(CXCursor cursor) {
         const CXCursor parameter = clang_Cursor_getArgument(constructor, static_cast<unsigned>(i));
         auto target = sharedPointerTarget(clang_getCursorType(parameter));
         if (!target) {
+            target = referenceTarget(clang_getCursorType(parameter));
+        }
+        if (!target) {
             return errorAt(parameter, "Constructor parameter '" + spelling(parameter) + "' of " +
                                           component.type +
-                                          " must be a std::shared_ptr to a component");
+                                          " must be a reference or a std::shared_ptr to a component");
         }
         component.dependencies.push_back(*std::move(target));
     }
@@ -496,7 +665,8 @@ std::optional<Error> applyRateLimitMark(CXCursor method, const std::vector<std::
 }
 
 Result<Controller> readController(CXCursor cursor, std::string_view base_path,
-                                  const std::vector<std::string>& class_marks) {
+                                  const std::vector<std::string>& class_marks,
+                                  std::vector<std::string>& warnings) {
     Controller controller;
     controller.type = qualifiedName(clang_getCursorType(cursor));
 
@@ -545,6 +715,12 @@ Result<Controller> readController(CXCursor cursor, std::string_view base_path,
                         applyRateLimitMark(child, marks, class_marks, route.value())) {
                     error = std::move(mark_error);
                     return CXChildVisit_Break;
+                }
+                if (isView(clang_getCanonicalType(clang_getCursorResultType(child)))) {
+                    warnings.push_back(warningAt(
+                        child, "Route function " + route.value().function +
+                                   " returns a view, which dangles if it points at a local "
+                                   "variable. Return a std::string or a std::vector"));
                 }
                 controller.routes.push_back(std::move(route).value());
             }
@@ -630,6 +806,10 @@ void readClass(CXCursor cursor, Walk& walk) {
             walk.error = component.error();
             return;
         }
+        if (auto unsafe = checkComponentFields(cursor, component.value(), walk.declarations.warnings)) {
+            walk.error = std::move(unsafe);
+            return;
+        }
         walk.declarations.components.push_back(std::move(component).value());
     }
 
@@ -643,7 +823,8 @@ void readClass(CXCursor cursor, Walk& walk) {
     }
 
     if (controller_path) {
-        auto controller = readController(cursor, *controller_path, annotations);
+        auto controller =
+            readController(cursor, *controller_path, annotations, walk.declarations.warnings);
         if (!controller) {
             walk.error = controller.error();
             return;

@@ -6,7 +6,7 @@ There are two ways to register components. Most applications should mark their c
 
 ## Automatic registration
 
-Mark a class with `CPPBOOT_SERVICE`, and take the components it needs as `std::shared_ptr` constructor parameters:
+Mark a class with `CPPBOOT_SERVICE`, and take the components it needs as references in its constructor. The container keeps them alive for as long as your class exists, so there's no ownership to manage:
 
 ```cpp
 class CPPBOOT_SERVICE MemoryUserRepository : public UserRepository {
@@ -16,7 +16,7 @@ public:
 
 class CPPBOOT_SERVICE UserService {
 public:
-    explicit UserService(std::shared_ptr<UserRepository> repository);
+    explicit UserService(UserRepository& repository);
 };
 ```
 
@@ -45,9 +45,9 @@ The build fails with the file and line if a marked class breaks one of these rul
 
 - It can't be abstract or a template, or be in an anonymous namespace.
 - It needs one public constructor, not counting copy and move constructors, or none at all.
-- Every constructor parameter must be a `std::shared_ptr` to a component, by value or by reference.
+- Every constructor parameter must be a reference to a component, or a `std::shared_ptr` to one. Take a `std::shared_ptr` if your class gives someone else shared ownership, such as a background task.
 
-The build also fails on a missing dependency, a dependency cycle, or two components that provide the same type.
+The build also fails on a missing dependency, a dependency cycle, or two components that provide the same type. [Ownership and memory safety](memory-safety.md) covers the other checks the build makes.
 
 ### What marked classes get
 
@@ -62,9 +62,8 @@ A marked class can also take the application's settings and logger in its constr
 ```cpp
 class CPPBOOT_SERVICE UserService {
 public:
-    UserService(std::shared_ptr<UserRepository> repository,
-                std::shared_ptr<const cppboot::config::Config> config,
-                std::shared_ptr<const cppboot::logging::Logger> logger);
+    UserService(UserRepository& repository, const cppboot::config::Config& config,
+                const cppboot::logging::Logger& logger);
 };
 ```
 
@@ -140,7 +139,9 @@ Declare the container before the application, so that it's destroyed after the m
 
 ## Register components
 
-`Deps<...>` lists the types a constructor takes. Each constructor parameter must accept a `std::shared_ptr` to that type, and a mismatch is a compile error.
+`Deps<...>` lists the types a constructor takes. Each constructor parameter can be a reference or a `std::shared_ptr` to that type, and a mismatch is a compile error. Don't take one by value when registering by hand, because that compiles and makes a copy. Marked classes get a build error for this.
+
+An instance keeps its dependencies alive until it's destroyed, so a reference is safe for any lifetime, even a transient. A factory creates its own object, so it has to keep alive whatever that object refers to.
 
 ```cpp
 // Register a class as itself.

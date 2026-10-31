@@ -26,9 +26,18 @@ constexpr const char* kPreamble = R"(
 #define ROLE(role) [[clang::annotate("cppboot:role:" role)]]
 #define MIDDLEWARE(order) [[clang::annotate("cppboot:middleware:" #order)]]
 #define RATE_LIMIT(limit) [[clang::annotate("cppboot:rate_limit:" limit)]]
+#define UNCHECKED(reason) [[clang::annotate("cppboot:unchecked:" reason)]]
+#include <atomic>
+#include <map>
+#include <mutex>
+#include <shared_mutex>
+#include <string_view>
 namespace cppboot::web {
 class Request {};
 class Response {};
+}
+namespace cppboot {
+class Module { public: virtual ~Module() = default; virtual void start() = 0; };
 }
 namespace cppboot::security {
 struct Principal {};
@@ -53,6 +62,19 @@ protected:
         const auto path = directory_ / name;
         std::ofstream{path, std::ios::binary} << kPreamble << source;
         return parseDeclarations(path, {"-I" + directory_.string()});
+    }
+
+    /// Returns the warnings for this source, which must parse.
+    std::string warnings(const std::string& source) const {
+        const auto result = parse(source);
+        EXPECT_TRUE(result) << (result ? "" : result.error().message());
+        std::string text;
+        if (result) {
+            for (const std::string& warning : result.value().warnings) {
+                text += warning + "\n";
+            }
+        }
+        return text;
     }
 
     void expectError(const std::string& source, const std::string& expected) const {
@@ -337,6 +359,127 @@ TEST_F(ParserTest, RejectsAControllerWithNoRoutes) {
 TEST_F(ParserTest, RejectsARouteOutsideAController) {
     expectError(R"(class SERVICE C { public: GET("/") int f(); };)",
                 "must be in a class marked with CPPBOOT_CONTROLLER");
+}
+
+TEST_F(ParserTest, ReadsDependenciesTakenByReference) {
+    const auto result = parse(R"(
+        struct Inventory {};
+        struct Payment {};
+        class SERVICE Orders {
+        public:
+            Orders(Inventory& inventory, const Payment& payment) : i_(inventory), p_(payment) {}
+        private:
+            Inventory& i_;
+            const Payment& p_;
+        };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    EXPECT_EQ(result.value().components[0].dependencies,
+              (std::vector<std::string>{"Inventory", "Payment"}));
+}
+
+TEST_F(ParserTest, RejectsDependenciesTakenAnyOtherWay) {
+    const std::string message = "must be a reference or a std::shared_ptr";
+    expectError("struct D {}; class SERVICE S { public: explicit S(D d); };", message);
+    expectError("struct D {}; class SERVICE S { public: explicit S(D* d); };", message);
+    expectError("struct D {}; class SERVICE S { public: explicit S(D&& d); };", message);
+    expectError("class SERVICE S { public: explicit S(int& value); };", message);
+    expectError("class SERVICE S { public: explicit S(int value); };", message);
+}
+
+TEST_F(ParserTest, RejectsAComponentThatPointsAtARequest) {
+    const std::string message = "ends with its request";
+    expectError(R"(class SERVICE S { const cppboot::web::Request* last_{nullptr}; };)", message);
+    expectError(R"(class SERVICE S {
+        public: explicit S(cppboot::web::Response& r) : r_(r) {}
+        cppboot::web::Response& r_; };)", "ends with its request");
+    expectError(R"(class CONTROLLER("/a") C {
+        public: GET("/") int f();
+        cppboot::security::Principal* who_{nullptr}; };)", message);
+}
+
+TEST_F(ParserTest, UncheckedAllowsARiskyFieldButNeedsAReason) {
+    EXPECT_TRUE(parse(R"(class SERVICE S {
+        UNCHECKED("Cleared before the request ends") const cppboot::web::Request* last_{nullptr};
+    };)"));
+    expectError(R"(class SERVICE S { UNCHECKED("") const cppboot::web::Request* last_{nullptr}; };)",
+                "needs a reason");
+}
+
+TEST_F(ParserTest, OutsideAComponentARequestPointerIsFine) {
+    EXPECT_TRUE(parse("struct Helper { const cppboot::web::Request* request; };"));
+}
+
+TEST_F(ParserTest, WarnsAboutViewsStoredInAComponent) {
+    EXPECT_NE(warnings("class SERVICE S { std::string_view name_; };").find("name_"),
+              std::string::npos);
+    EXPECT_EQ(warnings(R"(class SERVICE S { UNCHECKED("A literal") std::string_view name_; };)"), "");
+    EXPECT_EQ(warnings("class SERVICE S { std::string name_; };"), "");
+}
+
+TEST_F(ParserTest, WarnsAboutRoutesThatReturnAView) {
+    EXPECT_NE(warnings(R"(class CONTROLLER("/a") C { public: GET("/") std::string_view f(); };)")
+                  .find("returns a view"),
+              std::string::npos);
+    EXPECT_EQ(warnings(R"(class CONTROLLER("/a") C { public: GET("/") std::string f(); };)"), "");
+}
+
+TEST_F(ParserTest, WarnsAboutACopyOfADependency) {
+    EXPECT_NE(warnings(R"(struct D {};
+        class SERVICE S { public: explicit S(D& d) : copy_(d) {} private: D copy_; };)")
+                  .find("is a copy of D"),
+              std::string::npos);
+    EXPECT_EQ(warnings(R"(struct D {};
+        class SERVICE S { public: explicit S(D& d) : d_(d) {} private: D& d_; };)"), "");
+}
+
+TEST_F(ParserTest, WarnsAboutStateThatThreadsCanChangeWithNoLock) {
+    const std::string message = "can change, with no lock";
+    EXPECT_NE(warnings(R"(class SERVICE S {
+        public: void add(int v) { v_.push_back(v); }
+        private: std::vector<int> v_; };)").find(message), std::string::npos);
+    EXPECT_NE(warnings(R"(class SERVICE S {
+        public: void hit() { ++count_; }
+        private: int count_{0}; };)").find(message), std::string::npos);
+    EXPECT_NE(warnings(R"(class SERVICE S {
+        public: int get() const { return ++count_; }
+        private: mutable int count_{0}; };)").find(message), std::string::npos);
+    EXPECT_NE(warnings(R"(class CONTROLLER("/a") C {
+        public: GET("/") int f() { return ++n_; }
+        private: int n_{0}; };)").find(message), std::string::npos);
+}
+
+TEST_F(ParserTest, DoesNotWarnAboutStateThatLooksSafe) {
+    // A lock in the class.
+    EXPECT_EQ(warnings(R"(class SERVICE S {
+        public: void add(int v);
+        private: std::mutex mutex_; std::vector<int> v_; };)"), "");
+    EXPECT_EQ(warnings(R"(class SERVICE S {
+        public: void add(int v);
+        private: mutable std::shared_mutex mutex_; std::map<int, int> v_; };)"), "");
+    // Atomics protect themselves.
+    EXPECT_EQ(warnings(R"(class SERVICE S {
+        public: void hit();
+        private: std::atomic<int> count_{0}; };)"), "");
+    // Const functions can't change it, and neither can anything else.
+    EXPECT_EQ(warnings(R"(class SERVICE S {
+        public: int get() const { return value_; }
+        private: int value_{0}; };)"), "");
+    EXPECT_EQ(warnings(R"(class SERVICE S {
+        public: void hit();
+        private: const int limit_{0}; };)"), "");
+    // A module's start and stop run before and after requests.
+    EXPECT_EQ(warnings(R"(class SERVICE S : public cppboot::Module {
+        public: void start() override { port_ = 1; }
+        private: int port_{0}; };)"), "");
+    // An explanation.
+    EXPECT_EQ(warnings(R"(class SERVICE S {
+        public: void add(int v);
+        private: UNCHECKED("Only called during startup") std::vector<int> v_; };)"), "");
+    // A class that isn't a component isn't shared.
+    EXPECT_EQ(warnings(R"(class Plain {
+        public: void add(int v);
+        private: std::vector<int> v_; };)"), "");
 }
 
 TEST_F(ParserTest, ReadsRateLimits) {

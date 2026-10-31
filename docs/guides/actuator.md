@@ -83,8 +83,8 @@ Take `Metrics` in a constructor, and hold on to the metrics you create:
 ```cpp
 class CPPBOOT_CONTROLLER("/orders") OrderController {
 public:
-    explicit OrderController(std::shared_ptr<cppboot::actuator::Metrics> metrics)
-        : created_(metrics->counter("orders_created_total", "Orders created")) {}
+    explicit OrderController(cppboot::actuator::Metrics& metrics)
+        : created_(metrics.counter("orders_created_total", "Orders created")) {}
 
     CPPBOOT_POST("/") void create() { created_.increment(); }
 
@@ -95,10 +95,10 @@ private:
 
 | Kind | Function | Use it for |
 |---|---|---|
-| Counter | `metrics->counter(name, help, labels)` | Values that only go up, such as orders created |
-| Gauge | `metrics->gauge(name, help, labels)` | Values that go up and down, such as queue size |
-| Gauge from a function | `metrics->gaugeFunction(name, help, function)` | A value to read when metrics are collected |
-| Histogram | `metrics->histogram(name, help, labels, bounds)` | The spread of values, such as durations |
+| Counter | `metrics.counter(name, help, labels)` | Values that only go up, such as orders created |
+| Gauge | `metrics.gauge(name, help, labels)` | Values that go up and down, such as queue size |
+| Gauge from a function | `metrics.gaugeFunction(name, help, function)` | A value to read when metrics are collected |
+| Histogram | `metrics.histogram(name, help, labels, bounds)` | The spread of values, such as durations |
 
 Metrics are safe to use from any thread. A reference stays valid for as long as the application runs.
 

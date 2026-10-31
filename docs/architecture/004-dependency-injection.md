@@ -22,9 +22,9 @@ This keeps it usable without the application runtime, and it keeps the core free
 
 The container is declared after the application, so that singletons are destroyed while the logger and configuration still exist. Modules hold their own references to the components they use.
 
-### `shared_ptr` for all components
+### `shared_ptr` inside, references outside
 
-Components have shared ownership because a singleton can be used by many others. The cost is an atomic reference count when a pointer is copied, which is small next to the work components do. Hot paths should hold a pointer rather than resolve repeatedly.
+The container holds components with shared ownership, because a singleton can be used by many others. Components can take a plain reference or a `std::shared_ptr`, and [016](016-ownership.md) explains how a reference stays safe. Copying a pointer costs an atomic reference count, which is small next to the work components do. Hot paths should keep a reference rather than resolve repeatedly.
 
 ### Resolution state lives in a `Resolver`
 

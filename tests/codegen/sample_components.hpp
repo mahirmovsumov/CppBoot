@@ -48,6 +48,34 @@ private:
 
 }  // namespace web
 
+// Takes its dependencies as plain references, one to an interface and one const.
+class CPPBOOT_SERVICE ReportService {
+public:
+    ReportService(UserRepository& repository, const UserService& users)
+        : repository_(repository), users_(users) {}
+
+    std::string report(int id) const { return repository_.findName(id) + "/" + users_.greeting(id); }
+
+    const UserService* users() const { return &users_; }
+
+private:
+    UserRepository& repository_;
+    const UserService& users_;
+};
+
+// Mixes both forms.
+class CPPBOOT_SERVICE MixedService {
+public:
+    MixedService(ReportService& reports, std::shared_ptr<UserService> users)
+        : reports_(reports), users_(std::move(users)) {}
+
+    std::string mixed(int id) const { return reports_.report(id) + "/" + users_->greeting(id); }
+
+private:
+    ReportService& reports_;
+    std::shared_ptr<UserService> users_;
+};
+
 // Not marked, so the generator must leave it out.
 class HelperWithoutAnnotation {
 public:

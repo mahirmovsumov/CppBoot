@@ -93,7 +93,7 @@ public:
     void add(const std::string& name) { order_ += name; }
 
 private:
-    std::string order_;
+    CPPBOOT_UNCHECKED("These tests call it from one thread") std::string order_;
 };
 
 class CPPBOOT_MIDDLEWARE(20) InnerMiddleware {

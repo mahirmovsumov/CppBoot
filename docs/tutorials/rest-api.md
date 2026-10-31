@@ -94,14 +94,14 @@ private:
 
 class CPPBOOT_CONTROLLER("/api/users") UserController {
 public:
-    explicit UserController(std::shared_ptr<UserStore> store) : store_(std::move(store)) {}
+    explicit UserController(UserStore& store) : store_(store) {}
 
     CPPBOOT_GET("/") std::vector<User> list(std::optional<int> limit) const {
-        return store_->list(static_cast<std::size_t>(limit.value_or(100)));
+        return store_.list(static_cast<std::size_t>(limit.value_or(100)));
     }
 
     CPPBOOT_GET("/{id}") User get(int id) const {
-        auto user = store_->find(id);
+        auto user = store_.find(id);
         if (!user) {
             throw cppboot::web::HttpError(404, "No user has that ID");
         }
@@ -109,21 +109,21 @@ public:
     }
 
     CPPBOOT_POST("/") cppboot::web::WithStatus<User> create(const NewUser& details) {
-        return {201, store_->add(details)};
+        return {201, store_.add(details)};
     }
 
     CPPBOOT_DELETE("/{id}") void remove(int id) {
-        if (!store_->remove(id)) {
+        if (!store_.remove(id)) {
             throw cppboot::web::HttpError(404, "No user has that ID");
         }
     }
 
 private:
-    std::shared_ptr<UserStore> store_;
+    UserStore& store_;
 };
 ```
 
-The store needs a mutex because requests run on several threads at once, and they all share one `UserStore`.
+The store needs a mutex because requests run on several threads at once, and they all share one `UserStore`. Without one, the build warns you. The controller takes the store as a plain reference, and CppBoot keeps the store alive for as long as the controller exists.
 
 ## Try it
 

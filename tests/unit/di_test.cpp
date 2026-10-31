@@ -68,6 +68,70 @@ public:
     explicit HoldsScoped(std::shared_ptr<ScopedThing>) {}
 };
 
+// For the tests of dependencies taken by reference.
+class Counted {
+public:
+    Counted() { ++alive; }
+    Counted(const Counted&) = delete;
+    Counted& operator=(const Counted&) = delete;
+    ~Counted() { --alive; }
+    int value() const { return 42; }
+
+    static inline int alive = 0;
+};
+
+class Borrower {
+public:
+    explicit Borrower(Counted& counted) : counted_(counted) {}
+    ~Borrower() { value_at_destruction = counted_.value(); }
+    int value() const { return counted_.value(); }
+    const Counted* address() const { return &counted_; }
+
+    static inline int value_at_destruction = 0;
+
+private:
+    Counted& counted_;
+};
+
+class ConstBorrower {
+public:
+    explicit ConstBorrower(const Repository& repository) : repository_(repository) {}
+    std::string name() const { return repository_.name(); }
+
+private:
+    const Repository& repository_;
+};
+
+class MixedOwner {
+public:
+    MixedOwner(Counted& counted, std::shared_ptr<const Repository> repository)
+        : counted_(counted), repository_(std::move(repository)) {}
+    std::string describe() const {
+        return repository_->name() + std::to_string(counted_.value());
+    }
+
+private:
+    Counted& counted_;
+    std::shared_ptr<const Repository> repository_;
+};
+
+// Records its creation, to check the order dependencies are created in.
+template <int Id>
+class Ordered {
+public:
+    Ordered() { order().push_back(Id); }
+    static std::vector<int>& order() {
+        static std::vector<int> values;
+        return values;
+    }
+};
+using First = Ordered<1>;
+using Second = Ordered<2>;
+class TakesTwo {
+public:
+    TakesTwo(First&, Second&) {}
+};
+
 // Records its destruction, to check the order components are destroyed in.
 class Tracked {
 public:
@@ -88,6 +152,112 @@ TEST(ContainerTest, CreatesAComponentWithItsDependencies) {
     container.registerSingleton<Service>(Deps<Repository>{});
 
     EXPECT_EQ(container.resolve<Service>()->repository()->name(), "sql");
+}
+
+TEST(ContainerReferenceTest, PassesADependencyByReference) {
+    Container container;
+    container.registerSingleton<Counted>();
+    container.registerSingleton<Borrower>(Deps<Counted>{});
+
+    const auto borrower = container.resolve<Borrower>();
+    EXPECT_EQ(borrower->value(), 42);
+    EXPECT_EQ(borrower->address(), container.resolve<Counted>().get());
+}
+
+TEST(ContainerReferenceTest, PassesAnInterfaceByConstReference) {
+    Container container;
+    container.registerSingleton<Repository, SqlRepository>();
+    container.registerSingleton<ConstBorrower>(Deps<Repository>{});
+    EXPECT_EQ(container.resolve<ConstBorrower>()->name(), "sql");
+}
+
+TEST(ContainerReferenceTest, MixesReferencesAndSharedPointers) {
+    Container container;
+    container.registerSingleton<Counted>();
+    container.registerSingleton<Repository, SqlRepository>();
+    container.registerSingleton<MixedOwner>(Deps<Counted, Repository>{});
+    EXPECT_EQ(container.resolve<MixedOwner>()->describe(), "sql42");
+}
+
+TEST(ContainerReferenceTest, ATransientDependencyLivesAsLongAsWhatBorrowsIt) {
+    Counted::alive = 0;
+    Borrower::value_at_destruction = 0;
+    {
+        Container container;
+        container.registerTransient<Counted>();
+        container.registerSingleton<Borrower>(Deps<Counted>{});
+
+        const auto borrower = container.resolve<Borrower>();
+
+        // Nothing else holds this transient, which would be gone by now without the container.
+        EXPECT_EQ(Counted::alive, 1);
+        EXPECT_EQ(borrower->value(), 42);
+    }
+    EXPECT_EQ(Counted::alive, 0);
+    EXPECT_EQ(Borrower::value_at_destruction, 42);
+}
+
+TEST(ContainerReferenceTest, ATransientBorrowerReleasesItsOwnDependency) {
+    Counted::alive = 0;
+    Container container;
+    container.registerTransient<Counted>();
+    container.registerTransient<Borrower>(Deps<Counted>{});
+
+    {
+        const auto borrower = container.resolve<Borrower>();
+        EXPECT_EQ(Counted::alive, 1);
+    }
+    EXPECT_EQ(Counted::alive, 0);
+}
+
+TEST(ContainerReferenceTest, ABorrowerHeldAfterItsContainerIsGoneStaysSafe) {
+    Counted::alive = 0;
+    std::shared_ptr<Borrower> kept;
+    {
+        Container container;
+        container.registerSingleton<Counted>();
+        container.registerSingleton<Borrower>(Deps<Counted>{});
+        kept = container.resolve<Borrower>();
+    }
+    EXPECT_EQ(Counted::alive, 1);
+    EXPECT_EQ(kept->value(), 42);
+
+    kept.reset();
+    EXPECT_EQ(Counted::alive, 0);
+}
+
+TEST(ContainerReferenceTest, ABorrowerInAScopeUsesItsScopedDependencySafely) {
+    Counted::alive = 0;
+    Container container;
+    container.registerScoped<Counted>();
+    container.registerScoped<Borrower>(Deps<Counted>{});
+    {
+        Scope scope{container};
+        EXPECT_EQ(scope.resolve<Borrower>()->value(), 42);
+        EXPECT_EQ(Counted::alive, 1);
+    }
+    EXPECT_EQ(Counted::alive, 0);
+}
+
+TEST(ContainerReferenceTest, ValidateStillRejectsASingletonBorrowingAScopedComponent) {
+    Container container;
+    container.registerScoped<Counted>();
+    container.registerSingleton<Borrower>(Deps<Counted>{});
+    const auto valid = container.validate();
+    ASSERT_FALSE(valid);
+    EXPECT_NE(valid.error().message().find("scoped"), std::string::npos);
+}
+
+TEST(ContainerReferenceTest, DependenciesAreCreatedFromLeftToRight) {
+    First::order().clear();
+    Container container;
+    container.registerSingleton<First>();
+    container.registerSingleton<Second>();
+    container.registerSingleton<TakesTwo>(Deps<First, Second>{});
+
+    static_cast<void>(container.resolve<TakesTwo>());
+    EXPECT_EQ(First::order(), (std::vector<int>{1}));
+    EXPECT_EQ(Second::order(), (std::vector<int>{2}));
 }
 
 TEST(ContainerTest, SingletonIsCreatedOnce) {

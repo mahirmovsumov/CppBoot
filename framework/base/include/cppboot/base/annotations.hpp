@@ -47,3 +47,19 @@
 /// and hour. On a controller, it gives each of its routes that limit, and a mark on a function
 /// replaces it.
 #define CPPBOOT_RATE_LIMIT(limit) CPPBOOT_ANNOTATE("cppboot:rate_limit:" limit)
+
+/// Tells the generator that a risky field of a component is safe, and why. Its reason is required,
+/// so that whoever reads the code later can check it:
+///   CPPBOOT_UNCHECKED("Only ever points at string literals") std::string_view label_;
+#define CPPBOOT_UNCHECKED(reason) CPPBOOT_ANNOTATE("cppboot:unchecked:" reason)
+
+// Lets Clang warn about a reference that outlives the object it came from. Other compilers ignore
+// it, so it finds some dangling references on some builds, and proves nothing.
+#if defined(__has_cpp_attribute)
+#if __has_cpp_attribute(clang::lifetimebound)
+#define CPPBOOT_LIFETIMEBOUND [[clang::lifetimebound]]
+#endif
+#endif
+#if !defined(CPPBOOT_LIFETIMEBOUND)
+#define CPPBOOT_LIFETIMEBOUND
+#endif

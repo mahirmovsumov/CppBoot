@@ -5,6 +5,7 @@
 #include <utility>
 #include <variant>
 
+#include "cppboot/base/annotations.hpp"
 #include "cppboot/base/error.hpp"
 #include "cppboot/base/exceptions.hpp"
 
@@ -25,17 +26,17 @@ public:
     bool hasValue() const noexcept { return state_.index() == 0; }
     explicit operator bool() const noexcept { return hasValue(); }
 
-    T& value() & {
+    T& value() & CPPBOOT_LIFETIMEBOUND {
         requireValue();
         return std::get<0>(state_);
     }
 
-    const T& value() const& {
+    const T& value() const& CPPBOOT_LIFETIMEBOUND {
         requireValue();
         return std::get<0>(state_);
     }
 
-    T&& value() && {
+    T&& value() && CPPBOOT_LIFETIMEBOUND {
         requireValue();
         return std::get<0>(std::move(state_));
     }

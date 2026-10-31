@@ -52,6 +52,8 @@ In a project with both `--security` and a database, the sample routes in `src/us
 
 Builds the project in the current folder into `build/`. The first build configures the project as a debug build.
 
+Add `--sanitize=address` or `--sanitize=thread` to [find memory errors or data races](memory-safety.md#find-bugs-while-running), on Linux. This builds into `build-address/` or `build-thread/`.
+
 ### `cppboot run [arguments]`
 
 Builds the project, then runs it from the project folder so that it finds `cppboot.yaml`. Everything after `run` goes to the application, and you can put `--` first if you prefer:
@@ -60,6 +62,8 @@ Builds the project, then runs it from the project folder so that it finds `cppbo
 cppboot run --cppboot.logging.level=debug
 cppboot run -- --cppboot.logging.level=debug
 ```
+
+`--sanitize` can come first, and doesn't go to the application: `cppboot run --sanitize=address --cppboot.logging.level=debug`.
 
 Press Ctrl+C to stop the application.
 

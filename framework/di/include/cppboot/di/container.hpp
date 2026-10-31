@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <typeindex>
 #include <unordered_map>
@@ -26,9 +27,33 @@ enum class Lifetime {
     External,
 };
 
-/// Lists the types a component's constructor takes, each passed as a std::shared_ptr.
+/// Lists the types a component's constructor takes, each as a reference or a std::shared_ptr.
 template <typename... Dependencies>
 struct Deps {};
+
+namespace detail {
+
+/// Passed to a component's constructor for one dependency, and becomes whichever form the
+/// constructor takes. It only lasts during the constructor call.
+template <typename T>
+class Injected {
+public:
+    explicit Injected(const std::shared_ptr<T>& dependency) noexcept : dependency_(dependency) {}
+
+    /// Resolving never returns an empty pointer, because the container rejects those.
+    operator T&() const noexcept { return *dependency_; }
+
+    template <typename U>
+        requires std::convertible_to<std::shared_ptr<T>, std::shared_ptr<U>>
+    operator std::shared_ptr<U>() const {
+        return dependency_;
+    }
+
+private:
+    const std::shared_ptr<T>& dependency_;
+};
+
+}  // namespace detail
 
 class Container;
 class Scope;
@@ -179,13 +204,27 @@ private:
     template <typename T, typename Impl, typename... Dependencies>
     Container& addComponent(Lifetime lifetime) {
         static_assert(std::convertible_to<Impl*, T*>, "Impl must publicly derive from T");
-        static_assert(std::constructible_from<Impl, std::shared_ptr<Dependencies>...>,
-                      "Impl must be constructible from a std::shared_ptr to each dependency");
+        static_assert(std::constructible_from<Impl, detail::Injected<Dependencies>...>,
+                      "Impl must take a reference or a std::shared_ptr to each dependency");
         add(
             typeid(T), lifetime, {std::type_index{typeid(Dependencies)}...}, true,
             [](Resolver& resolver) -> std::shared_ptr<void> {
-                std::shared_ptr<T> instance =
-                    std::make_shared<Impl>(resolver.resolve<Dependencies>()...);
+                // Braces create these from left to right, whichever compiler is in use.
+                std::tuple<std::shared_ptr<Dependencies>...> dependencies{
+                    resolver.resolve<Dependencies>()...};
+                Impl* const created = std::apply(
+                    [](const auto&... dependency) {
+                        return new Impl(detail::Injected<Dependencies>{dependency}...);
+                    },
+                    dependencies);
+
+                // The instance keeps its dependencies until it has been destroyed, so a reference
+                // to one is safe for as long as the instance exists, whatever its lifetime.
+                std::shared_ptr<T> instance{created,
+                                            [dependencies = std::move(dependencies)](Impl* object) {
+                                                static_cast<void>(dependencies);
+                                                delete object;
+                                            }};
                 return instance;
             },
             {});

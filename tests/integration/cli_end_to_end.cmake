@@ -202,6 +202,130 @@ expect_contains("${output}" "Server listening on port" "run with the actuator")
 unset(ENV{CPPBOOT_SECURITY_JWT_SECRET})
 unset(ENV{CPPBOOT_MYAPP_PASSWORD})
 
+# New projects check bounds in standard containers. This index is inside the vector's capacity, so
+# without the check it would quietly read memory and carry on.
+run_cli(code output ${WORK_DIR} create demo-checks)
+expect_exit_code("${code}" 0 "create a project for checks" "${output}")
+set(CHECKS_DIR ${WORK_DIR}/demo-checks)
+file(WRITE ${CHECKS_DIR}/src/bug.hpp [=[
+#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <vector>
+
+class CPPBOOT_SERVICE Bug : public cppboot::Module {
+public:
+    std::string_view name() const noexcept override { return "bug"; }
+
+    cppboot::Result<void> start(cppboot::ApplicationContext&) override {
+        std::vector<int> values;
+        values.reserve(10);
+        return values[5] == 12345 ? cppboot::Result<void>{} : cppboot::Result<void>{};
+    }
+};
+]=])
+run_cli(code output ${CHECKS_DIR} run --cppboot.runtime.shutdown_after_start=true)
+if(code EQUAL 0)
+    message(FATAL_ERROR "run with an index past the end: expected the program to stop:\n${output}")
+endif()
+file(REMOVE ${CHECKS_DIR}/src/bug.hpp)
+
+# The generator warns about shared state with no lock, and still builds.
+file(WRITE ${CHECKS_DIR}/src/counter.hpp [=[
+#pragma once
+
+#include <cppboot/base/annotations.hpp>
+
+class CPPBOOT_SERVICE Counter {
+public:
+    void hit() { ++hits_; }
+
+private:
+    int hits_{0};
+};
+]=])
+run_cli(code output ${CHECKS_DIR} build)
+expect_exit_code("${code}" 0 "build with a warning" "${output}")
+expect_contains("${output}" "warning: Field 'hits_' of Counter can change" "build with a warning")
+file(REMOVE ${CHECKS_DIR}/src/counter.hpp)
+
+# A component that keeps a pointer to a request fails the build.
+file(WRITE ${CHECKS_DIR}/src/keeper.hpp [=[
+#pragma once
+
+#include <cppboot/base/annotations.hpp>
+#include <cppboot/web/http.hpp>
+
+class CPPBOOT_SERVICE Keeper {
+private:
+    const cppboot::web::Request* last_{nullptr};
+};
+]=])
+run_cli(code output ${CHECKS_DIR} build)
+if(code EQUAL 0)
+    message(FATAL_ERROR "build with a stored request: expected a failure:\n${output}")
+endif()
+expect_contains("${output}" "ends with its request" "build with a stored request")
+file(REMOVE ${CHECKS_DIR}/src/keeper.hpp)
+
+run_cli(code output ${CHECKS_DIR} build --sanitize=memory)
+expect_exit_code("${code}" 2 "build with an unknown checker" "${output}")
+
+if(WIN32)
+    run_cli(code output ${CHECKS_DIR} build --sanitize=address)
+    expect_exit_code("${code}" 1 "--sanitize on Windows" "${output}")
+    expect_contains("${output}" "needs Linux" "--sanitize on Windows")
+elseif(NOT "$ENV{CXXFLAGS}" MATCHES "fsanitize")
+    # Each checker has to find a real bug in a project, through the CLI.
+    file(WRITE ${CHECKS_DIR}/src/freed.hpp [=[
+#pragma once
+
+#include <cppboot/cppboot.hpp>
+
+class CPPBOOT_SERVICE Freed : public cppboot::Module {
+public:
+    std::string_view name() const noexcept override { return "freed"; }
+
+    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
+        int* volatile value = new int{1};
+        delete value;
+        context.logger().info("{}", *value);
+        return {};
+    }
+};
+]=])
+    run_cli(code output ${CHECKS_DIR} run --sanitize=address --cppboot.runtime.shutdown_after_start=true)
+    if(code EQUAL 0)
+        message(FATAL_ERROR "--sanitize=address: expected a failure:\n${output}")
+    endif()
+    expect_contains("${output}" "heap-use-after-free" "--sanitize=address")
+    file(REMOVE ${CHECKS_DIR}/src/freed.hpp)
+
+    file(WRITE ${CHECKS_DIR}/src/racy.hpp [=[
+#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <thread>
+
+class CPPBOOT_SERVICE Racy : public cppboot::Module {
+public:
+    std::string_view name() const noexcept override { return "racy"; }
+
+    cppboot::Result<void> start(cppboot::ApplicationContext&) override {
+        int shared = 0;
+        {
+            std::jthread first{[&shared] { for (int i = 0; i < 100000; ++i) { ++shared; } }};
+            std::jthread second{[&shared] { for (int i = 0; i < 100000; ++i) { ++shared; } }};
+        }
+        return {};
+    }
+};
+]=])
+    run_cli(code output ${CHECKS_DIR} run --sanitize=thread --cppboot.runtime.shutdown_after_start=true)
+    expect_contains("${output}" "data race" "--sanitize=thread")
+    file(REMOVE ${CHECKS_DIR}/src/racy.hpp)
+endif()
+
 run_cli(code output ${WORK_DIR} build)
 expect_exit_code("${code}" 1 "build outside a project" "${output}")
 expect_contains("${output}" "No CppBoot project here" "build outside a project")

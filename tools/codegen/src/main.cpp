@@ -38,6 +38,10 @@ Result<void> generate(const fs::path& output, const std::vector<fs::path>& heade
         return valid;
     }
 
+    for (const std::string& warning : declarations.warnings) {
+        std::cerr << warning << '\n';
+    }
+
     std::error_code ignored;
     if (output.has_parent_path()) {
         fs::create_directories(output.parent_path(), ignored);

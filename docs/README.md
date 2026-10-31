@@ -10,6 +10,7 @@ Start with the tutorial, then use the guides as a reference.
 - [Add sign-in and protected routes](tutorials/security.md): tokens, roles and passwords
 - [Modules and workers](guides/modules.md): add functionality and background work
 - [Dependency injection](guides/dependency-injection.md): components, lifetimes and scopes
+- [Ownership and memory safety](guides/memory-safety.md): plain references, build checks, and tools that find memory bugs
 - [Web server](guides/web.md): controllers, JSON, routes and middleware
 - [Database](guides/database.md): queries, row mapping, transactions and migrations
 - [Security](guides/security.md): protected routes, tokens, passwords and middleware
@@ -44,4 +45,5 @@ Start with the tutorial, then use the guides as a reference.
 - [Observability](architecture/013-observability.md)
 - [Rate limiting](architecture/014-rate-limiting.md)
 - [HTTPS](architecture/015-https.md)
+- [Ownership and lifetimes](architecture/016-ownership.md)
 - [C++20 coding standard](standards/cpp20-coding-standard.md)

@@ -76,9 +76,7 @@ Create `src/clock.hpp`:
 #pragma once
 
 #include <cppboot/cppboot.hpp>
-#include <memory>
 #include <string>
-#include <utility>
 
 #include "greeting.hpp"
 
@@ -89,19 +87,19 @@ public:
 
 class CPPBOOT_SERVICE MorningModule : public cppboot::Module {
 public:
-    MorningModule(std::shared_ptr<GreetingService> greetings, std::shared_ptr<TimeOfDay> time)
-        : greetings_(std::move(greetings)), time_(std::move(time)) {}
+    MorningModule(GreetingService& greetings, TimeOfDay& time)
+        : greetings_(greetings), time_(time) {}
 
     std::string_view name() const noexcept override { return "morning"; }
 
     cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
-        context.logger().info("{} Good {}.", greetings_->greeting(), time_->period());
+        context.logger().info("{} Good {}.", greetings_.greeting(), time_.period());
         return {};
     }
 
 private:
-    std::shared_ptr<GreetingService> greetings_;
-    std::shared_ptr<TimeOfDay> time_;
+    GreetingService& greetings_;
+    TimeOfDay& time_;
 };
 ```
 

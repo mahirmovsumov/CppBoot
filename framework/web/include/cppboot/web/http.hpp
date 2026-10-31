@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "cppboot/base/annotations.hpp"
 #include "cppboot/base/result.hpp"
 
 namespace cppboot::web {
@@ -27,9 +28,9 @@ public:
                                   std::string body = {});
 
     Method method() const noexcept { return method_; }
-    const std::string& path() const noexcept { return path_; }
-    const std::string& body() const noexcept { return body_; }
-    const Headers& headers() const noexcept { return headers_; }
+    const std::string& path() const noexcept CPPBOOT_LIFETIMEBOUND { return path_; }
+    const std::string& body() const noexcept CPPBOOT_LIFETIMEBOUND { return body_; }
+    const Headers& headers() const noexcept CPPBOOT_LIFETIMEBOUND { return headers_; }
 
     /// Returns a header by name, ignoring letter case.
     std::optional<std::string> header(std::string_view name) const;
@@ -40,15 +41,19 @@ public:
     /// Returns a decoded path parameter, such as "id" from /users/{id}.
     std::optional<std::string> param(std::string_view name) const;
 
-    const std::vector<std::string>& pathSegments() const noexcept { return segments_; }
+    const std::vector<std::string>& pathSegments() const noexcept CPPBOOT_LIFETIMEBOUND {
+        return segments_;
+    }
 
     /// The pattern of the matched route, such as "/users/{id}", or empty if no route matched. Use
     /// this rather than the path in logs and metrics, because clients choose the paths they send.
-    const std::string& route() const noexcept { return route_; }
+    const std::string& route() const noexcept CPPBOOT_LIFETIMEBOUND { return route_; }
 
     /// The address of the client, or empty if the request didn't come from a server. Behind a
     /// proxy, this needs cppboot.server.trusted_proxies, or it's the address of the proxy.
-    const std::string& clientAddress() const noexcept { return client_address_; }
+    const std::string& clientAddress() const noexcept CPPBOOT_LIFETIMEBOUND {
+        return client_address_;
+    }
     void setClientAddress(std::string address) { client_address_ = std::move(address); }
 
 private:
@@ -76,8 +81,8 @@ public:
     static Response json(std::string body, int status = 200);
 
     int status() const noexcept { return status_; }
-    const std::string& body() const noexcept { return body_; }
-    const Headers& headers() const noexcept { return headers_; }
+    const std::string& body() const noexcept CPPBOOT_LIFETIMEBOUND { return body_; }
+    const Headers& headers() const noexcept CPPBOOT_LIFETIMEBOUND { return headers_; }
 
     /// Sets a header, replacing any with the same name. Line breaks in a name or value would let
     /// one header forge others, so they throw cppboot::Exception.

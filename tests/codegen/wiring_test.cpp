@@ -38,6 +38,20 @@ TEST_F(GeneratedRegistrationTest, SharesOneInstanceOfEachComponent) {
     EXPECT_EQ(container_.resolve<demo::web::UserController>()->users(), service.get());
 }
 
+TEST_F(GeneratedRegistrationTest, WiresDependenciesTakenByReference) {
+    EXPECT_EQ(container_.resolve<demo::ReportService>()->report(7), "user-7/Hello, user-7");
+}
+
+TEST_F(GeneratedRegistrationTest, ReferencesAreToTheSharedInstance) {
+    const auto service = container_.resolve<demo::UserService>();
+    EXPECT_EQ(container_.resolve<demo::ReportService>()->users(), service.get());
+}
+
+TEST_F(GeneratedRegistrationTest, MixesReferencesAndSharedPointers) {
+    EXPECT_EQ(container_.resolve<demo::MixedService>()->mixed(1),
+              "user-1/Hello, user-1/Hello, user-1");
+}
+
 TEST_F(GeneratedRegistrationTest, LeavesOutClassesThatAreNotMarked) {
     EXPECT_THROW(static_cast<void>(container_.resolve<demo::HelperWithoutAnnotation>()), Exception);
 }

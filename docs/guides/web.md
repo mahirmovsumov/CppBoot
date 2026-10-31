@@ -11,7 +11,7 @@ Mark a class with `CPPBOOT_CONTROLLER` and a base path, and mark its functions w
 ```cpp
 class CPPBOOT_CONTROLLER("/api/users") UserController {
 public:
-    explicit UserController(std::shared_ptr<UserStore> store);
+    explicit UserController(UserStore& store);
 
     CPPBOOT_GET("/{id}") User get(int id) const;
     CPPBOOT_POST("/") cppboot::web::WithStatus<User> create(const NewUser& details);

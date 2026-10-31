@@ -7,6 +7,7 @@
 - Rate limits with `CPPBOOT_RATE_LIMIT`, and on the sign-in route of new `--security` projects
 - `Request::clientAddress()`, and `cppboot.server.trusted_proxies` for servers behind a proxy
 - HTTPS in the server, with settings under `cppboot.server.tls`
+- Components can take plain references, which the container keeps valid, with build checks and checkers for memory bugs
 
 ## Next, in order
 
