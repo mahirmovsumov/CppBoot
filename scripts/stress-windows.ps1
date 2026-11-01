@@ -8,7 +8,8 @@ param(
     [switch]$Tls,
     [int]$Scale = 1,
     [int]$SampleSeconds = 10,
-    [int]$Workers = 0
+    [int]$Workers = 0,
+    [int]$IoThreads = 0
 )
 
 $bin = (Resolve-Path "$Build\benchmarks").Path
@@ -18,6 +19,7 @@ New-Item -ItemType Directory -Force $work | Out-Null
 $serverArgs = @("--cppboot.logging.level=warn", "--cppboot.database.url=sqlite:$($work -replace '\\','/')/stress.db")
 $clientArgs = @('--seconds', "$Seconds", '--scale', "$Scale")
 if ($Workers -gt 0) { $serverArgs += "--cppboot.server.worker_threads=$Workers" }
+if ($IoThreads -gt 0) { $serverArgs += "--cppboot.server.io_threads=$IoThreads" }
 if ($Tls) {
     $env:MSYS2_ARG_CONV_EXCL = '*'
     & openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$work\key.pem" -out "$work\cert.pem" -days 2 -subj '/CN=localhost' 2>$null
