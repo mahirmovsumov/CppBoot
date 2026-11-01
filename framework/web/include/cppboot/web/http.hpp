@@ -1,8 +1,10 @@
 #pragma once
 
+#include <chrono>
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -56,6 +58,26 @@ public:
     }
     void setClientAddress(std::string address) { client_address_ = std::move(address); }
 
+    /// Returns true once a handler should give up: the server is shutting down and has run out of
+    /// patience, or the request's deadline has passed. A handler that loops or waits should check
+    /// this, because nothing can stop it from outside. The server doesn't stop a handler that
+    /// ignores this. It only stops caring about the result when its client's timeout ends.
+    bool shouldStop() const noexcept {
+        return stop_token_.stop_requested() || std::chrono::steady_clock::now() >= deadline_;
+    }
+
+    /// Requested when the server wants this handler to stop for shutdown. Use it to wake up from a
+    /// wait, such as with std::condition_variable_any. It doesn't cover the deadline.
+    const std::stop_token& stopToken() const noexcept CPPBOOT_LIFETIMEBOUND { return stop_token_; }
+
+    /// When this request should be finished by. See cppboot.server.handler_deadline_seconds.
+    std::chrono::steady_clock::time_point deadline() const noexcept { return deadline_; }
+
+    void setStopToken(std::stop_token token) noexcept { stop_token_ = std::move(token); }
+    void setDeadline(std::chrono::steady_clock::time_point deadline) noexcept {
+        deadline_ = deadline;
+    }
+
 private:
     friend class Router;
 
@@ -68,6 +90,8 @@ private:
     std::map<std::string, std::string, std::less<>> params_;
     std::string route_;
     std::string client_address_;
+    std::stop_token stop_token_;
+    std::chrono::steady_clock::time_point deadline_{std::chrono::steady_clock::time_point::max()};
     Headers headers_;
     std::string body_;
 };

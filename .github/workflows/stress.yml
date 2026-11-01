@@ -17,11 +17,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: release http, build_type: Release, flags: "", protocol: http, kind: plain, database: sqlite }
-          - { name: release https, build_type: Release, flags: "", protocol: https, kind: plain, database: sqlite }
-          - { name: release postgresql, build_type: Release, flags: "", protocol: http, kind: plain, database: postgresql }
-          - { name: asan https, build_type: Debug, flags: "-fsanitize=address,undefined -fno-omit-frame-pointer", protocol: https, kind: sanitized, database: sqlite }
-          - { name: tsan http, build_type: Debug, flags: "-fsanitize=thread -fno-omit-frame-pointer -DBOOST_ASIO_DISABLE_FENCED_BLOCK", protocol: http, kind: sanitized, database: sqlite }
+          - { name: release http, build_type: Release, flags: "", protocol: http, kind: plain, database: sqlite, io_threads: 1 }
+          - { name: release https, build_type: Release, flags: "", protocol: https, kind: plain, database: sqlite, io_threads: 2 }
+          - { name: release postgresql, build_type: Release, flags: "", protocol: http, kind: plain, database: postgresql, io_threads: 2 }
+          - { name: asan https, build_type: Debug, flags: "-fsanitize=address,undefined -fno-omit-frame-pointer", protocol: https, kind: sanitized, database: sqlite, io_threads: 4 }
+          - { name: tsan http, build_type: Debug, flags: "-fsanitize=thread -fno-omit-frame-pointer -DBOOST_ASIO_DISABLE_FENCED_BLOCK", protocol: http, kind: sanitized, database: sqlite, io_threads: 4 }
     name: ${{ matrix.name }}
     services:
       postgres:
@@ -55,6 +55,7 @@ jobs:
           PROTOCOL: ${{ matrix.protocol }}
           KIND: ${{ matrix.kind }}
           DATABASE: ${{ matrix.database }}
+          STRESS_IO_THREADS: ${{ matrix.io_threads }}
         run: |
           if [ "$DATABASE" = postgresql ]; then
             export STRESS_DATABASE_URL=postgresql://postgres:cppboot@localhost:5432/cppboot_stress

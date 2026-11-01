@@ -204,6 +204,8 @@ With controllers, use the `CPPBOOT_RATE_LIMIT` mark. The [security guide](securi
 | `cppboot.server.host` | `127.0.0.1` | The address to listen on. Use `0.0.0.0` to accept connections from other machines |
 | `cppboot.server.port` | `8080` | The port. `0` asks the operating system for a free one |
 | `cppboot.server.worker_threads` | `0` | Threads that run handlers. `0` uses one per processor core |
+| `cppboot.server.io_threads` | `0` | Threads that move bytes and do TLS work. `0` uses one for every two processor cores, with at least 1 and at most 4 |
+| `cppboot.server.handler_deadline_seconds` | `30` | How long a handler should take, from when its request arrived. See [Long-running handlers](#long-running-handlers) |
 | `cppboot.server.max_body_bytes` | `1048576` | Larger request bodies get a 413 response |
 | `cppboot.server.max_connections` | `1024` | Connections beyond this are closed at once |
 | `cppboot.server.request_timeout_seconds` | `30` | The longest a client can take to send a request or read a response |
@@ -273,7 +275,7 @@ Every connection costs more with HTTPS, so a server's limits are lower. The [ben
 - **New connections:** these cost the most, because of the handshake. Certificates using an elliptic curve (ECDSA) are faster than RSA, so prefer them.
 - **Reused connections:** these cost much less. Small responses lost about 20% of their throughput, so clients that keep connections open are much cheaper to serve.
 
-All encryption runs on the server's one network thread, so more cores don't make it faster yet. A flood of handshakes slows requests on open connections, and rate limits can't help, because they apply after the handshake.
+Encryption runs on the [network threads](#network-threads), so more cores help, up to the number of those threads. A flood of handshakes slows requests on open connections, less with more threads, and rate limits can't help, because they apply after the handshake. On one core, there's nothing to share it with.
 
 ### Built in, or a proxy?
 
@@ -287,7 +289,37 @@ A request that had to wait for a worker doesn't run if its client has gone by th
 
 When requests arrive faster than the workers can handle them, the server rejects those that have waited too long, with a 503 and a `Retry-After` header. It logs this, at most every 10 seconds. These rejections don't reach middleware, so they don't appear in [metrics](actuator.md). If you see them often, your handlers are too slow for your traffic, so raise `cppboot.server.worker_threads` or add capacity. Raising the timeout only makes clients wait longer.
 
-Shutdown stops accepting connections, closes idle ones and lets running requests finish. A handler can't be interrupted, so shutdown waits for it, however long it takes. Long-running handlers should have their own time limits.
+Shutdown stops accepting connections, closes idle ones and lets running requests finish.
+
+### Long-running handlers
+
+**C++ can't safely end a thread from outside, so nothing can stop a handler that doesn't cooperate.** A stuck handler keeps the server from finishing its shutdown, however long that takes. Under systemd, the [service](deployment.md#how-the-service-behaves) is killed after 45 seconds. So a handler that loops or waits should check whether it should give up:
+
+```cpp
+router->get("/report", [](const Request& request) {
+    Report report;
+    for (const Section& section : sections) {
+        if (request.shouldStop()) {
+            throw HttpError(503, "Stopped before the report was finished");
+        }
+        report.add(build(section));
+    }
+    return Response::json(report.toJson());
+});
+```
+
+`request.shouldStop()` becomes true in either of two cases:
+
+- **The deadline has passed,** which is `cppboot.server.handler_deadline_seconds` after the request arrived. Nothing enforces this, so it's up to the handler to check.
+- **The server is shutting down, and `cppboot.server.shutdown_timeout_seconds` has passed.** Handlers get that long to finish normally first.
+
+To wake up from a wait during shutdown, use `request.stopToken()` with a `std::condition_variable_any`, or anything else that takes a `std::stop_token`. It doesn't cover the deadline, so use `wait_until` with `request.deadline()` as well.
+
+A database query or another blocking call can't be interrupted this way. The check only happens between steps, so give those calls their own timeouts. If handlers are still running when the shutdown timeout passes, the server logs how many.
+
+### Network threads
+
+Handlers don't run on network threads. These read requests, write responses and do all TLS work. Each connection stays on one thread, and connections are shared out evenly. With more than one, a burst of slow TLS handshakes on one thread doesn't delay connections on the others. The [benchmarks](../benchmarks.md#network-threads) show the difference.
 
 ## Not supported yet
 

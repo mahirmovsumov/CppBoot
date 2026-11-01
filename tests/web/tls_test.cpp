@@ -12,6 +12,7 @@
 #include <boost/beast/ssl.hpp>
 #include <chrono>
 #include <cppboot/web/server_module.hpp>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -230,6 +231,9 @@ protected:
         ServerOptions options;
         options.port = 0;
         options.worker_threads = 2;
+        if (const char* const threads = std::getenv("CPPBOOT_TEST_IO_THREADS")) {
+            options.io_threads = static_cast<std::size_t>(std::stoul(threads));
+        }
         options.tls = TlsOptions{certificate_.string(), private_key_.string()};
         return options;
     }
@@ -468,6 +472,41 @@ TEST_F(TlsTest, LogsAnExpiredCertificateButStillStarts) {
 
     ASSERT_EQ(logged.size(), 1U);
     EXPECT_NE(logged[0].find("has expired"), std::string::npos);
+}
+
+TEST_F(TlsTest, StartCanBeTriedAgainOnceItsFilesAreThere) {
+    const auto later_certificate = directory_ / "later-cert.pem";
+    ServerOptions options = tlsOptions();
+    options.tls->certificate_file = later_certificate.string();
+    Server server{router_, std::move(options)};
+
+    const auto refused = server.start();
+    ASSERT_FALSE(refused);
+    EXPECT_NE(refused.error().message().find("certificate"), std::string::npos);
+
+    std::filesystem::copy_file(certificate_, later_certificate);
+    const auto started = server.start();
+    ASSERT_TRUE(started) << started.error().message();
+
+    auto https = client(server.port());
+    ASSERT_TRUE(https.connect());
+    EXPECT_EQ(https.send(http::verb::get, "/hello").result_int(), 200);
+}
+
+TEST_F(TlsTest, ASlowHandshakeOnOneThreadDoesNotStopAnother) {
+    ServerOptions options = tlsOptions();
+    options.io_threads = 4;
+    const auto port = startServer(std::move(options));
+
+    std::vector<std::unique_ptr<TlsClient>> clients;
+    for (int i = 0; i < 40; ++i) {
+        clients.push_back(std::make_unique<TlsClient>(port, certificate_));
+        ASSERT_TRUE(clients.back()->connect()) << i;
+    }
+    for (const auto& https : clients) {
+        ASSERT_EQ(https->send(http::verb::get, "/hello").result_int(), 200);
+    }
+    EXPECT_EQ(calls_.load(), 40);
 }
 
 TEST_F(TlsTest, RefusesToStartWithAMissingCertificate) {

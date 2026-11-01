@@ -62,7 +62,7 @@ Run `sudo ./install.sh` from a newer package to upgrade. It keeps your settings 
 | The machine boots | It starts automatically, once the network is up |
 | It crashes | systemd restarts it after 2 seconds. Repeated failures stop that, under systemd's default limits |
 | Its settings are invalid (exit code 78) | It isn't restarted, because that wouldn't help. Fix them and run `systemctl start` |
-| `systemctl stop` | It stops accepting connections and lets requests finish, for up to 45 seconds |
+| `systemctl stop` | It stops accepting connections and lets requests finish. After 30 seconds, handlers are [asked to stop](web.md#long-running-handlers), and after 45, systemd kills whatever is left |
 | Logs | They go to the system journal. Read them with `journalctl -u my-api` |
 
 A missing secret exits with code 1, so it's restarted a few times before systemd gives up.

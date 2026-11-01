@@ -31,6 +31,9 @@ struct ServerOptions {
     std::uint16_t port{8080};
     /// Threads that run handlers. 0 uses one for each processor core.
     std::size_t worker_threads{0};
+    /// Threads that move bytes and do TLS work, which handlers don't run on. 0 uses one for every
+    /// two processor cores, with at least 1 and at most 4.
+    std::size_t io_threads{0};
     std::size_t max_body_bytes{1024 * 1024};
     /// Connections beyond this limit are closed at once.
     std::size_t max_connections{1024};
@@ -41,6 +44,9 @@ struct ServerOptions {
     /// A request that has waited this long for a worker gets a 503, and its handler doesn't run. Its
     /// client may well have gone, and running old work would make every later request wait too.
     std::chrono::milliseconds queue_timeout{std::chrono::seconds{5}};
+    /// How long a handler should take, from when its request arrived. Nothing enforces this, and a
+    /// long-running handler should check Request::shouldStop().
+    std::chrono::milliseconds handler_deadline{std::chrono::seconds{30}};
     /// Addresses such as "10.0.0.5" or "10.0.0.0/8" of proxies whose X-Forwarded-For header can be
     /// believed. Anyone can send that header, so with none listed, it's ignored.
     std::vector<std::string> trusted_proxies;
@@ -61,11 +67,13 @@ public:
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
 
-    /// Binds the address and starts serving. Fails if the address can't be used.
+    /// Binds the address and starts serving. Fails if the address can't be used, and can then be
+    /// called again. Calling it on a running or stopped server fails.
     Result<void> start();
 
     /// Stops accepting connections, lets requests finish, and returns when everything has stopped.
-    /// A handler still running after the timeout can't be interrupted, so this waits for it.
+    /// After shutdown_timeout, handlers still running are asked to stop through Request::stopToken().
+    /// C++ can't safely end a thread from outside, so this waits for them, however long they take.
     void stop() noexcept;
 
     /// The port in use. This is the real port after start(), even if the option was 0.

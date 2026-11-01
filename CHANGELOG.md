@@ -132,6 +132,12 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - On Linux, a package includes a systemd service, and scripts that install, upgrade and remove it. The service runs under its own account with limited access to the system.
 - Applications tell systemd when they're ready and when they're stopping.
 
+### Server threads and lifecycle
+
+- `cppboot.server.io_threads`: connections now share several network threads, by default one for every two cores, from 1 to 4. On 4 logical cores, this more than doubled throughput, and a flood of TLS handshakes hurt other connections about 9 times less.
+- `Request::shouldStop()`, `stopToken()` and `deadline()`, with `cppboot.server.handler_deadline_seconds`, so that a long-running handler can stop when asked. After the shutdown timeout, the server asks handlers to stop, and logs how many are still running.
+- **Fix:** `Server::start()` can now be called again after it fails, such as once a port is free. Before this, it reported that the server had already started.
+
 ### Stress tests and overload
 
 - `cppboot-stress-client`, `scripts/stress-linux.sh` and a Stress workflow, which check responses, memory, open files and threads over long runs.

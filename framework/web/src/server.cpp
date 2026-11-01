@@ -12,6 +12,8 @@
 #include <iterator>
 #include <list>
 #include <memory>
+#include <mutex>
+#include <stop_token>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -223,6 +225,42 @@ std::string forwardedClient(const http::request<http::string_body>& request,
     return client;
 }
 
+enum class ServerState { Created, Running, Stopped };
+
+std::size_t threadCount(std::size_t requested) {
+    return requested != 0 ? requested
+                          : std::max<std::size_t>(1, std::thread::hardware_concurrency());
+}
+
+/// Half the cores leaves the others for handlers. The limit is as far as this has been measured.
+std::size_t networkThreadCount(std::size_t requested) {
+    constexpr std::size_t kMostByDefault = 4;
+    return requested != 0 ? requested
+                          : std::clamp<std::size_t>(std::thread::hardware_concurrency() / 2, 1,
+                                                    kMostByDefault);
+}
+
+/// One network thread and the connections it serves. Only this thread touches them, so they need no
+/// locks, and a slow TLS handshake here can't delay a connection on another one.
+struct NetworkThread {
+    NetworkThread() : work(asio::make_work_guard(io)), drain_timer(io) {}
+
+    asio::io_context io;
+    // Keeps run() going while this thread has no connections yet.
+    asio::executor_work_guard<asio::io_context::executor_type> work;
+    asio::steady_timer drain_timer;
+    std::list<Connection> connections;
+    std::jthread thread;
+};
+
+std::vector<std::unique_ptr<NetworkThread>> makeNetworkThreads(std::size_t count) {
+    std::vector<std::unique_ptr<NetworkThread>> threads;
+    for (std::size_t i = 0; i < count; ++i) {
+        threads.push_back(std::make_unique<NetworkThread>());
+    }
+    return threads;
+}
+
 }  // namespace
 
 struct Server::Impl {
@@ -230,16 +268,33 @@ struct Server::Impl {
         : router(router_in),
           options(std::move(options_in)),
           log_error(std::move(log_error_in)),
-          acceptor(io),
-          drain_timer(io),
-          workers(options.worker_threads != 0
-                      ? options.worker_threads
-                      : std::max<std::size_t>(1, std::thread::hardware_concurrency())) {}
+          network_threads(makeNetworkThreads(networkThreadCount(options.io_threads))),
+          acceptor(network_threads.front()->io),
+          workers(threadCount(options.worker_threads)) {}
 
     void logError(std::string_view message) const {
         if (log_error) {
             log_error(message);
         }
+    }
+
+    /// Runs when connections have had their time to finish. It can only ask, because C++ can't safely
+    /// end a thread from outside.
+    void askHandlersToStop() {
+        // Read first, because asking can wake a handler, which then finishes at once.
+        const auto running = running_handlers.load();
+        if (handler_stop.request_stop() && running > 0) {
+            logError("Shutdown timeout reached, with " + std::to_string(running) +
+                     " handlers still running. They've been asked to stop, and shutdown waits "
+                     "until they do");
+        }
+    }
+
+    Response runHandlerNow(Request request) {
+        running_handlers.fetch_add(1);
+        Response response = router.handle(std::move(request));
+        running_handlers.fetch_sub(1);
+        return response;
     }
 
     /// Runs on a worker. The workers take requests in order, so once the oldest is too old, this
@@ -258,7 +313,7 @@ struct Server::Impl {
         }
 
         if (waited <= options.queue_timeout) {
-            co_return router.handle(std::move(request));
+            co_return runHandlerNow(std::move(request));
         }
 
         const auto shed = shed_since_log.fetch_add(1) + 1;
@@ -279,21 +334,27 @@ struct Server::Impl {
         co_return response;
     }
 
+    /// Runs on the first network thread, and shares connections out among all of them.
     asio::awaitable<void> accept() {
         while (true) {
-            auto [error, socket] = co_await acceptor.async_accept(kAsTuple);
+            NetworkThread& owner = *network_threads[next_network_thread];
+            next_network_thread = (next_network_thread + 1) % network_threads.size();
+
+            tcp::socket socket{owner.io};
+            auto [error] = co_await acceptor.async_accept(socket, kAsTuple);
             if (stopping) {
                 co_return;
             }
             if (error) {
                 // Usually a temporary shortage, such as running out of file handles.
                 logError("Accepting a connection failed: " + error.message());
-                asio::steady_timer pause{io, std::chrono::milliseconds{100}};
+                asio::steady_timer pause{co_await asio::this_coro::executor,
+                                         std::chrono::milliseconds{100}};
                 static_cast<void>(co_await pause.async_wait(kAsTuple));
                 continue;
             }
 
-            if (connections.size() >= options.max_connections) {
+            if (connection_count.load() >= options.max_connections) {
                 boost::system::error_code ignored;
                 socket.close(ignored);
                 continue;
@@ -310,14 +371,19 @@ struct Server::Impl {
             boost::system::error_code ignored;
             socket.set_option(tcp::no_delay(true), ignored);
 
-            connections.emplace_back(std::move(socket), tls_context.get(),
-                                     normalized(remote.address()).to_string(),
-                                     isTrusted(trusted_proxies, remote.address()));
-            asio::co_spawn(io, serve(std::prev(connections.end())), asio::detached);
+            connection_count.fetch_add(1);
+            asio::post(owner.io, [this, &owner, socket = std::move(socket),
+                                  peer = normalized(remote.address()).to_string(),
+                                  trusted = isTrusted(trusted_proxies, remote.address())]() mutable {
+                owner.connections.emplace_back(std::move(socket), tls_context.get(), std::move(peer),
+                                               trusted);
+                asio::co_spawn(owner.io, serve(owner, std::prev(owner.connections.end())),
+                               asio::detached);
+            });
         }
     }
 
-    asio::awaitable<void> serve(std::list<Connection>::iterator connection) {
+    asio::awaitable<void> serve(NetworkThread& owner, std::list<Connection>::iterator connection) {
         if (auto* const tls = std::get_if<TlsStream>(&connection->stream)) {
             co_await serveTls(*connection, *tls);
         } else {
@@ -328,10 +394,11 @@ struct Server::Impl {
         beast::tcp_stream& transport = connection->transport();
         transport.socket().shutdown(tcp::socket::shutdown_send, ignored);
         transport.socket().close(ignored);
-        connections.erase(connection);
+        owner.connections.erase(connection);
+        connection_count.fetch_sub(1);
 
-        if (stopping && connections.empty()) {
-            drain_timer.cancel();
+        if (stopping && owner.connections.empty()) {
+            owner.drain_timer.cancel();
         }
     }
 
@@ -395,6 +462,9 @@ struct Server::Impl {
                     connection.peer_is_trusted
                         ? forwardedClient(beast_request, trusted_proxies, connection.peer)
                         : connection.peer);
+                request.value().setStopToken(handler_stop.get_token());
+                request.value().setDeadline(std::chrono::steady_clock::now() +
+                                            options.handler_deadline);
             }
             Response response = !request ? errorResponse(400, statusReason(400))
                                          : co_await asio::co_spawn(
@@ -428,51 +498,67 @@ struct Server::Impl {
         static_cast<void>(co_await http::async_write(stream, response, kAsTuple));
     }
 
-    /// Runs on the network thread. Idle connections close now, and busy ones after their response.
-    void beginStop() {
-        stopping = true;
+    /// Runs on each network thread. Idle connections close now, and busy ones after their response.
+    void beginStop(NetworkThread& owner) {
+        if (&owner == network_threads.front().get()) {
+            boost::system::error_code ignored;
+            acceptor.close(ignored);
+        }
 
-        boost::system::error_code ignored;
-        acceptor.close(ignored);
-
-        for (Connection& connection : connections) {
+        for (Connection& connection : owner.connections) {
             if (!connection.busy) {
                 connection.transport().cancel();
             }
         }
 
-        if (!connections.empty()) {
-            drain_timer.expires_after(options.shutdown_timeout);
-            drain_timer.async_wait([this](const boost::system::error_code& error) {
+        if (!owner.connections.empty()) {
+            owner.drain_timer.expires_after(options.shutdown_timeout);
+            owner.drain_timer.async_wait([this, &owner](const boost::system::error_code& error) {
                 if (!error) {
-                    for (Connection& connection : connections) {
+                    askHandlersToStop();
+                    for (Connection& connection : owner.connections) {
                         connection.transport().cancel();
                     }
                 }
             });
         }
+
+        owner.work.reset();
+    }
+
+    /// Undoes everything start() did before it failed, so that it can be called again.
+    void resetAfterFailedStart() {
+        boost::system::error_code ignored;
+        acceptor.close(ignored);
+        trusted_proxies.clear();
+        tls_context.reset();
+        bound_port.store(0);
     }
 
     const Router& router;
     ServerOptions options;
     LogFunction log_error;
+
+    // These don't change while the server runs, so every thread can read them.
     std::vector<AddressRange> trusted_proxies;
-
-    asio::io_context io;
-    tcp::acceptor acceptor;
-    asio::steady_timer drain_timer;
-    asio::thread_pool workers;
     std::unique_ptr<asio::ssl::context> tls_context;
-    std::list<Connection> connections;
-    // Only read and written on the network thread.
-    bool stopping{false};
 
-    std::jthread network_thread;
+    std::vector<std::unique_ptr<NetworkThread>> network_threads;
+    tcp::acceptor acceptor;
+    asio::thread_pool workers;
+    // Only the first network thread uses this, in accept().
+    std::size_t next_network_thread{0};
+
+    std::atomic<bool> stopping{false};
+    std::atomic<std::size_t> connection_count{0};
+    std::stop_source handler_stop;
+    std::atomic<std::size_t> running_handlers{0};
     std::atomic<std::uint64_t> shed_since_log{0};
     std::atomic<std::chrono::steady_clock::rep> next_shed_log_ticks{0};
     std::atomic<std::uint16_t> bound_port{0};
-    std::atomic<bool> started{false};
-    std::atomic<bool> stop_called{false};
+
+    std::mutex lifecycle_mutex;
+    ServerState state{ServerState::Created};
 };
 
 Server::Server(const Router& router, ServerOptions options, LogFunction log_error)
@@ -484,11 +570,19 @@ Server::~Server() {
 
 Result<void> Server::start() {
     Impl& impl = *impl_;
-    if (impl.started.exchange(true)) {
+    const std::lock_guard lock{impl.lifecycle_mutex};
+
+    if (impl.state == ServerState::Running) {
         return Error{ErrorCode::InvalidState, "The server has already been started"};
     }
+    if (impl.state == ServerState::Stopped) {
+        return Error{ErrorCode::InvalidState,
+                     "This server has been stopped, so create a new one to serve again"};
+    }
 
+    // The state only changes at the end, so a failure leaves a server that can try again.
     const auto fail = [&](const std::string& action, const boost::system::error_code& error) {
+        impl.resetAfterFailedStart();
         return Error{ErrorCode::IoError, "Cannot " + action + " " + impl.options.host + ":" +
                                              std::to_string(impl.options.port) + ": " +
                                              error.message()};
@@ -497,6 +591,7 @@ Result<void> Server::start() {
     for (const std::string& proxy : impl.options.trusted_proxies) {
         auto range = parseAddressRange(proxy);
         if (!range) {
+            impl.resetAfterFailedStart();
             return range.error();
         }
         impl.trusted_proxies.push_back(std::move(range).value());
@@ -505,6 +600,7 @@ Result<void> Server::start() {
     if (impl.options.tls) {
         auto context = makeTlsContext(*impl.options.tls, impl.log_error);
         if (!context) {
+            impl.resetAfterFailedStart();
             return context.error();
         }
         impl.tls_context = std::move(context).value();
@@ -547,22 +643,35 @@ Result<void> Server::start() {
     impl.bound_port.store(local.port());
 
     for (int i = 0; i < kConcurrentAccepts; ++i) {
-        asio::co_spawn(impl.io, impl.accept(), asio::detached);
+        asio::co_spawn(impl.network_threads.front()->io, impl.accept(), asio::detached);
     }
-    impl.network_thread = std::jthread{[&impl] { impl.io.run(); }};
+    for (const auto& network_thread : impl.network_threads) {
+        network_thread->thread =
+            std::jthread{[&io = network_thread->io] { io.run(); }};
+    }
+    impl.state = ServerState::Running;
     return {};
 }
 
 void Server::stop() noexcept {
     Impl& impl = *impl_;
-    if (impl.stop_called.exchange(true)) {
+    const std::lock_guard lock{impl.lifecycle_mutex};
+
+    if (impl.state == ServerState::Stopped) {
         return;
     }
 
-    if (impl.started.load() && impl.network_thread.joinable()) {
-        asio::post(impl.io, [&impl] { impl.beginStop(); });
-        impl.network_thread.join();
+    if (impl.state == ServerState::Running) {
+        impl.stopping.store(true);
+        for (const auto& network_thread : impl.network_threads) {
+            asio::post(network_thread->io,
+                       [&impl, &owner = *network_thread] { impl.beginStop(owner); });
+        }
+        for (const auto& network_thread : impl.network_threads) {
+            network_thread->thread.join();
+        }
     }
+    impl.state = ServerState::Stopped;
     impl.workers.join();
 }
 

@@ -4,12 +4,18 @@
 
 ## Threads
 
-The server has one network thread and a pool of worker threads.
+The server has a set of network threads and a pool of worker threads.
 
-- **Network thread:** runs all connection handling, as Asio coroutines. Connection state is only touched here, so it needs no locks.
-- **Worker pool:** runs `Router::handle`. The session coroutine hands each request over and resumes on the network thread when the response is ready.
+- **Network threads:** run all connection handling, as Asio coroutines. Each has its own `io_context` and list of connections. A connection stays on one thread for life, and only that thread touches it, so connection state needs no locks.
+- **Worker pool:** runs `Router::handle`. The session coroutine hands each request over and resumes on its own network thread when the response is ready.
 
-Developers can write ordinary blocking handlers without stalling other connections. One network thread is enough for now, because it only moves bytes. Benchmarks can justify more later.
+Developers can write ordinary blocking handlers without stalling other connections.
+
+The first network thread owns the acceptor, and hands each new connection to the next thread in turn. So a thread is chosen before knowing how busy it will be, and a few expensive connections can land together. Separate listening sockets with `SO_REUSEPORT` wouldn't help, because Windows doesn't have that behavior.
+
+The default is one network thread for every two cores, from 1 to 4. It started at one thread, because that seemed enough to move bytes, and because a benchmark should justify more. TLS provided that: on 4 logical cores, 4 threads served more than twice as many HTTPS requests as one, and a flood of handshakes hurt other connections about 9 times less. See the [benchmarks](../benchmarks.md#network-threads). The limit of 4 is as far as this has been measured, and `io_threads` can go higher.
+
+TLS handshakes stay on network threads, rather than getting their own executor. A stream can't easily move between executors after a handshake, and more threads gave most of the benefit without that complexity.
 
 Each connection handles one request at a time, so the number of queued requests is limited by `max_connections`. That bounds memory under load.
 
@@ -52,10 +58,16 @@ It has limits. A handler that has already started can't be stopped. A client tha
 
 1. Stop accepting connections, and close idle ones.
 2. Let each running request finish and send its response, with `Connection: close`.
-3. After `shutdown_timeout`, cancel network operations on all connections.
+3. After `shutdown_timeout`, ask handlers still running to stop, log how many there are, and cancel network operations on all connections.
 4. Wait for the worker pool.
 
-A running handler can't be safely interrupted in C++, so step 4 waits for it, and the shutdown timeout doesn't limit handlers.
+A running handler can't be safely interrupted in C++, so step 4 waits for it, and the shutdown timeout doesn't limit handlers that ignore the request to stop. `Request::stopToken()` and `Request::shouldStop()` make stopping cooperative. A timeout that ended the process instead wouldn't be safe for a library to choose, because a handler may be halfway through a change. A service manager can make that choice, and the Linux service does, after 45 seconds.
+
+Handlers get `shutdown_timeout` to finish before being asked, so that a normal request doesn't see a stop request just because shutdown started.
+
+## Lifecycle
+
+A server is `Created`, `Running` or `Stopped`. A failed `start()` undoes what it did and stays `Created`, so it can be called again, such as once a port is free. A stopped server can't start again, because its thread pools have ended, so that needs a new `Server`. A mutex means `start()` and `stop()` can't overlap.
 
 ## Routing
 

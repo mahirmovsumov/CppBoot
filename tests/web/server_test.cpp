@@ -4,7 +4,9 @@
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
 #include <chrono>
+#include <condition_variable>
 #include <cppboot/cppboot.hpp>
+#include <cstdlib>
 #include <cppboot/web/server_module.hpp>
 #include <filesystem>
 #include <future>
@@ -78,10 +80,17 @@ private:
     beast::flat_buffer buffer_;
 };
 
+/// CTest runs these tests a second time with this set, so that they all cover many network threads.
+std::size_t ioThreadsForTests() {
+    const char* const value = std::getenv("CPPBOOT_TEST_IO_THREADS");
+    return value != nullptr ? static_cast<std::size_t>(std::stoul(value)) : 1;
+}
+
 ServerOptions testOptions() {
     ServerOptions options;
     options.port = 0;
     options.worker_threads = 4;
+    options.io_threads = ioThreadsForTests();
     return options;
 }
 
@@ -244,6 +253,258 @@ TEST_F(ServerTest, RejectsRequestsThatWaitedTooLongForAWorker) {
     const std::lock_guard lock{log_mutex};
     ASSERT_FALSE(logged.empty());
     EXPECT_NE(logged.front().find("Too busy"), std::string::npos);
+}
+
+TEST_F(ServerTest, StartCanBeTriedAgainAfterItFails) {
+    router_.get("/hello", [](const Request&) { return Response::text("hello"); });
+
+    // Something else has the port.
+    asio::io_context io;
+    tcp::acceptor other{io};
+    other.open(tcp::v4());
+    other.bind(tcp::endpoint{asio::ip::make_address(kLoopback), 0});
+    other.listen();
+    const auto port = other.local_endpoint().port();
+
+    ServerOptions options = testOptions();
+    options.port = port;
+    Server server{router_, std::move(options)};
+
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const auto refused = server.start();
+        ASSERT_FALSE(refused);
+        EXPECT_NE(refused.error().message().find("bind"), std::string::npos)
+            << refused.error().message();
+    }
+
+    other.close();
+    const auto started = server.start();
+    ASSERT_TRUE(started) << started.error().message();
+    EXPECT_EQ(server.port(), port);
+
+    Client client{port};
+    EXPECT_EQ(client.send(http::verb::get, "/hello").body(), "hello");
+}
+
+TEST_F(ServerTest, StartFailsOnARunningServer) {
+    Server& server = startServer();
+    const auto again = server.start();
+    ASSERT_FALSE(again);
+    EXPECT_EQ(again.error().code(), ErrorCode::InvalidState);
+
+    // That mustn't have disturbed the server, which answers even though no route matches.
+    Client client{server.port()};
+    EXPECT_EQ(client.send(http::verb::get, "/nothing").result_int(), 404);
+}
+
+TEST_F(ServerTest, StartFailsOnAStoppedServer) {
+    Server& server = startServer();
+    server.stop();
+    const auto again = server.start();
+    ASSERT_FALSE(again);
+    EXPECT_EQ(again.error().code(), ErrorCode::InvalidState);
+    EXPECT_NE(again.error().message().find("create a new one"), std::string::npos);
+}
+
+TEST_F(ServerTest, StopWorksOnAServerThatNeverStarted) {
+    Server server{router_, testOptions()};
+    server.stop();
+    server.stop();
+    EXPECT_FALSE(server.start());
+}
+
+TEST_F(ServerTest, StopWorksAfterAFailedStart) {
+    ServerOptions options = testOptions();
+    options.host = "not an address";
+    Server server{router_, std::move(options)};
+    EXPECT_FALSE(server.start());
+    server.stop();
+}
+
+TEST_F(ServerTest, ManyNetworkThreadsServeManyConnectionsAtOnce) {
+    std::atomic<int> calls{0};
+    router_.get("/count", [&](const Request&) {
+        calls.fetch_add(1);
+        return Response::text("counted");
+    });
+    ServerOptions options = testOptions();
+    options.io_threads = 4;
+    const auto port = startServer(std::move(options)).port();
+
+    std::vector<std::unique_ptr<Client>> clients;
+    for (int i = 0; i < 200; ++i) {
+        clients.push_back(std::make_unique<Client>(port));
+    }
+    for (int round = 0; round < 5; ++round) {
+        for (const auto& client : clients) {
+            ASSERT_EQ(client->send(http::verb::get, "/count").body(), "counted");
+        }
+    }
+    EXPECT_EQ(calls.load(), 1000);
+}
+
+TEST_F(ServerTest, ConnectionLimitCountsEveryNetworkThread) {
+    router_.get("/hello", [](const Request&) { return Response::text("hello"); });
+    ServerOptions options = testOptions();
+    options.io_threads = 4;
+    options.max_connections = 8;
+    const auto port = startServer(std::move(options)).port();
+
+    std::vector<std::unique_ptr<Client>> clients;
+    for (int i = 0; i < 8; ++i) {
+        clients.push_back(std::make_unique<Client>(port));
+        ASSERT_EQ(clients.back()->send(http::verb::get, "/hello").result_int(), 200);
+    }
+
+    Client beyond_the_limit{port};
+    EXPECT_TRUE(beyond_the_limit.closedByServer());
+
+    // A freed place can be used, including on another thread.
+    clients.pop_back();
+    bool served = false;
+    for (int attempt = 0; attempt < 50 && !served; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        Client another{port};
+        boost::system::error_code error;
+        try {
+            served = another.send(http::verb::get, "/hello").result_int() == 200;
+        } catch (const boost::system::system_error&) {
+            served = false;
+        }
+    }
+    EXPECT_TRUE(served);
+}
+
+TEST_F(ServerTest, StopEndsIdleConnectionsOnEveryNetworkThread) {
+    ServerOptions options = testOptions();
+    options.io_threads = 4;
+    router_.get("/hello", [](const Request&) { return Response::text("hello"); });
+    Server& server = startServer(std::move(options));
+
+    std::vector<std::unique_ptr<Client>> clients;
+    for (int i = 0; i < 16; ++i) {
+        clients.push_back(std::make_unique<Client>(server.port()));
+        ASSERT_EQ(clients.back()->send(http::verb::get, "/hello").result_int(), 200);
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    server.stop();
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds{5});
+}
+
+TEST_F(ServerTest, StopAsksRunningHandlersToStopAfterTheTimeout) {
+    std::promise<void> entered;
+    std::atomic<bool> stopped_by_token{false};
+    router_.get("/forever", [&](const Request& request) {
+        entered.set_value();
+        std::mutex mutex;
+        std::condition_variable_any changed;
+        std::unique_lock lock{mutex};
+        changed.wait(lock, request.stopToken(), [] { return false; });
+        stopped_by_token = request.shouldStop();
+        return Response::text("gave up");
+    });
+
+    std::mutex log_mutex;
+    std::vector<std::string> logged;
+    ServerOptions options = testOptions();
+    options.shutdown_timeout = std::chrono::milliseconds{200};
+    Server server{router_, std::move(options), [&](std::string_view message) {
+                      const std::lock_guard lock{log_mutex};
+                      logged.emplace_back(message);
+                  }};
+    ASSERT_TRUE(server.start());
+
+    Client client{server.port()};
+    client.sendRaw("GET /forever HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    entered.get_future().wait();
+
+    const auto start = std::chrono::steady_clock::now();
+    server.stop();
+    const auto took = std::chrono::steady_clock::now() - start;
+
+    EXPECT_TRUE(stopped_by_token.load());
+    EXPECT_GE(took, std::chrono::milliseconds{150});
+    EXPECT_LT(took, std::chrono::seconds{10});
+
+    const std::lock_guard lock{log_mutex};
+    ASSERT_EQ(logged.size(), 1U);
+    EXPECT_NE(logged.front().find("1 handlers still running"), std::string::npos) << logged.front();
+}
+
+TEST_F(ServerTest, HandlersThatFinishInTimeAreNotAskedToStop) {
+    std::promise<void> entered;
+    std::promise<void> release;
+    std::atomic<bool> asked_to_stop{true};
+    router_.get("/short", [&](const Request& request) {
+        entered.set_value();
+        release.get_future().wait();
+        asked_to_stop = request.stopToken().stop_requested();
+        return Response::text("finished");
+    });
+
+    ServerOptions options = testOptions();
+    options.shutdown_timeout = std::chrono::seconds{20};
+    Server& server = startServer(std::move(options));
+
+    Client client{server.port()};
+    client.sendRaw("GET /short HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    entered.get_future().wait();
+
+    std::jthread stopper{[&server] { server.stop(); }};
+    std::this_thread::sleep_for(std::chrono::milliseconds{100});
+    release.set_value();
+
+    const auto response = client.read();
+    EXPECT_EQ(response.body(), "finished");
+    EXPECT_FALSE(asked_to_stop.load());
+}
+
+TEST_F(ServerTest, ARequestKnowsItsDeadline) {
+    std::promise<void> entered;
+    std::atomic<bool> before_deadline{true};
+    std::atomic<bool> after_deadline{false};
+    router_.get("/deadline", [&](const Request& request) {
+        before_deadline = request.shouldStop();
+        std::this_thread::sleep_until(request.deadline() + std::chrono::milliseconds{5});
+        after_deadline = request.shouldStop();
+        return Response::text("done");
+    });
+
+    ServerOptions options = testOptions();
+    options.handler_deadline = std::chrono::milliseconds{100};
+    const auto port = startServer(std::move(options)).port();
+
+    Client client{port};
+    EXPECT_EQ(client.send(http::verb::get, "/deadline").body(), "done");
+    EXPECT_FALSE(before_deadline.load());
+    EXPECT_TRUE(after_deadline.load());
+}
+
+TEST(RequestTest, HasNoLimitsUntilAServerSetsThem) {
+    const Request request = Request::create(Method::Get, "/").value();
+    EXPECT_FALSE(request.shouldStop());
+    EXPECT_FALSE(request.stopToken().stop_possible());
+}
+
+TEST(ReadServerOptionsTest, ReadsNetworkThreadsAndTheDeadline) {
+    config::ConfigSources sources;
+    sources.directory = std::filesystem::temp_directory_path() / "cppboot-absent-directory";
+
+    const auto defaults = readServerOptions(config::Config::load(sources).value());
+    ASSERT_TRUE(defaults);
+    EXPECT_EQ(defaults.value().io_threads, 0U);
+    EXPECT_EQ(defaults.value().handler_deadline, std::chrono::seconds{30});
+
+    sources.defaults = {{"cppboot.server.io_threads", "4"},
+                        {"cppboot.server.handler_deadline_seconds", "2"}};
+    const auto custom = readServerOptions(config::Config::load(sources).value());
+    ASSERT_TRUE(custom);
+    EXPECT_EQ(custom.value().io_threads, 4U);
+    EXPECT_EQ(custom.value().handler_deadline, std::chrono::seconds{2});
+
+    sources.defaults = {{"cppboot.server.io_threads", "-1"}};
+    EXPECT_FALSE(readServerOptions(config::Config::load(sources).value()));
 }
 
 TEST_F(ServerTest, DoesNotRunAQueuedRequestWhoseClientHasGone) {

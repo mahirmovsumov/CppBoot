@@ -54,6 +54,16 @@ Result<ServerOptions> readServerOptions(const config::Config& config) {
         !r) {
         return r.error();
     }
+    if (auto r = read("cppboot.server.io_threads", static_cast<std::int64_t>(options.io_threads), 0,
+                      4096, [&](std::int64_t v) { options.io_threads = static_cast<std::size_t>(v); });
+        !r) {
+        return r.error();
+    }
+    if (auto r = read("cppboot.server.handler_deadline_seconds", 30, 1, 86400,
+                      [&](std::int64_t v) { options.handler_deadline = std::chrono::seconds{v}; });
+        !r) {
+        return r.error();
+    }
     if (auto r = read("cppboot.server.max_body_bytes",
                       static_cast<std::int64_t>(options.max_body_bytes), 0, kMaxCount,
                       [&](std::int64_t v) { options.max_body_bytes = static_cast<std::size_t>(v); });

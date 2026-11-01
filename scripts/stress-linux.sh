@@ -6,7 +6,7 @@
 #
 # "sanitized" is for a build with AddressSanitizer or ThreadSanitizer. These change how memory
 # behaves, so its growth isn't judged, and they report what they find through the exit code. Set
-# STRESS_DATABASE_URL to use another database.
+# STRESS_DATABASE_URL to use another database, and STRESS_IO_THREADS for the number of network threads.
 set -u
 
 build_dir="$1"
@@ -30,6 +30,9 @@ fail() {
 
 server_args=(--cppboot.server.port="$port" --cppboot.logging.level=warn)
 client_args=(--port "$port")
+if [ -n "${STRESS_IO_THREADS:-}" ]; then
+    server_args+=(--cppboot.server.io_threads="$STRESS_IO_THREADS")
+fi
 if [ -n "${STRESS_DATABASE_URL:-}" ]; then
     server_args+=(--cppboot.database.url="$STRESS_DATABASE_URL")
 else
@@ -127,7 +130,7 @@ if alive; then
     max_files="$(awk 'BEGIN {max = 0} $3 > max {max = $3} END {print max}' "$work/samples")"
     max_threads="$(awk 'BEGIN {max = 0} $4 > max {max = $4} END {print max}' "$work/samples")"
     echo "Largest during the run: $max_files open files, $max_threads threads"
-    # The worker pool is fixed, and a database connection pool adds at most a few.
+    # Both thread pools are fixed.
     [ "$max_threads" -le $((idle_threads + 8)) ] || fail "threads grew from $idle_threads to $max_threads"
 
     kill -TERM "$server_pid"

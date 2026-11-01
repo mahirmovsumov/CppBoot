@@ -51,6 +51,11 @@ if(WIN32)
 endif()
 cppboot_apply_compiler_options(cppboot-web-tests)
 add_test(NAME cppboot-web-tests COMMAND cppboot-web-tests)
+# The same tests again, with connections shared among several network threads.
+add_test(NAME cppboot-web-tests-many-io-threads COMMAND cppboot-web-tests)
+set_tests_properties(cppboot-web-tests-many-io-threads PROPERTIES
+    ENVIRONMENT "CPPBOOT_TEST_IO_THREADS=4"
+)
 
 add_executable(cppboot-security-tests security/security_test.cpp)
 target_link_libraries(cppboot-security-tests PRIVATE

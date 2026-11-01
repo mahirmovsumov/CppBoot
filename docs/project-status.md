@@ -132,7 +132,8 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 - Marked classes are always singletons. Transient and scoped components need manual registration.
 - Every header in `src` adds time to the build, because the generator parses each one.
 - Tokens can't be revoked, so they stay valid until they expire.
-- An open HTTPS connection uses 76 to 95 KB, against 4 to 6 KB for plain HTTP, and all encryption runs on one thread.
+- An open HTTPS connection uses 76 to 95 KB, against 4 to 6 KB for plain HTTP.
+- A handler that doesn't check `request.shouldStop()` can't be stopped, so it can hold up shutdown. A blocking call such as a database query needs its own timeout.
 - A renewed certificate needs a restart, and there's no HTTP/2.
 - Rate limits only apply to routes you mark, count per address and per process, and reset when the application restarts.
 - A struct used with a query but not marked with `CPPBOOT_ROW` fails when it runs, not when it builds.

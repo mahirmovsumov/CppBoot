@@ -84,6 +84,7 @@ int main(int argc, char* argv[]) {
     options.default_settings = {
         {"cppboot.logging.level", "warn"},
         {"cppboot.server.port", "18090"},
+        {"cppboot.server.io_threads", "1"},
         {"cppboot.server.max_connections", "1000000"},
         {"cppboot.server.request_timeout_seconds", "3600"},
     };
