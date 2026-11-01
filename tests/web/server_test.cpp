@@ -365,7 +365,6 @@ TEST_F(ServerTest, ConnectionLimitCountsEveryNetworkThread) {
     for (int attempt = 0; attempt < 50 && !served; ++attempt) {
         std::this_thread::sleep_for(std::chrono::milliseconds{20});
         Client another{port};
-        boost::system::error_code error;
         try {
             served = another.send(http::verb::get, "/hello").result_int() == 200;
         } catch (const boost::system::system_error&) {
