@@ -8,6 +8,10 @@ on:
         description: How long each run lasts
         type: number
         default: 30
+      only:
+        description: Run just this one, such as "asan https". Empty runs them all
+        type: string
+        default: ""
 
 jobs:
   linux:
@@ -22,6 +26,7 @@ jobs:
           - { name: release postgresql, build_type: Release, flags: "", protocol: http, kind: plain, database: postgresql, io_threads: 2 }
           - { name: asan https, build_type: Debug, flags: "-fsanitize=address,undefined -fno-omit-frame-pointer", protocol: https, kind: sanitized, database: sqlite, io_threads: 4 }
           - { name: tsan http, build_type: Debug, flags: "-fsanitize=thread -fno-omit-frame-pointer -DBOOST_ASIO_DISABLE_FENCED_BLOCK", protocol: http, kind: sanitized, database: sqlite, io_threads: 4 }
+          - { name: tsan https, build_type: Debug, flags: "-fsanitize=thread -fno-omit-frame-pointer -DBOOST_ASIO_DISABLE_FENCED_BLOCK", protocol: https, kind: sanitized, database: sqlite, io_threads: 4 }
     name: ${{ matrix.name }}
     services:
       postgres:
@@ -39,8 +44,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
+        if: inputs.only == '' || inputs.only == matrix.name
         run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - name: Build
+        if: inputs.only == '' || inputs.only == matrix.name
         env:
           FLAGS: ${{ matrix.flags }}
           BUILD_TYPE: ${{ matrix.build_type }}
@@ -50,6 +57,7 @@ jobs:
             -DCPPBOOT_BUILD_EXAMPLES=OFF -DCPPBOOT_BUILD_CODEGEN=OFF
           cmake --build build/stress --target cppboot-stress-server cppboot-stress-client cppboot-load
       - name: Run
+        if: inputs.only == '' || inputs.only == matrix.name
         env:
           MINUTES: ${{ inputs.minutes }}
           PROTOCOL: ${{ matrix.protocol }}

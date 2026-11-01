@@ -395,8 +395,18 @@ public:
                     body.front() = '<';
                     body.back() = '>';
                 }
+                const auto started = Clock::now();
                 auto [error, response] =
                     co_await connection->send(request(http::verb::post, "/echo", body));
+                if (error) {
+                    // How long it took shows whether the server's request timeout ended it.
+                    const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        Clock::now() - started);
+                    shared_.results.failed("echo", "request: " + error.message() + ", after " +
+                                                       std::to_string(took.count()) + " ms, with " +
+                                                       std::to_string(size) + " bytes");
+                    break;
+                }
                 if (!check("echo", error, response, 200, body)) {
                     break;
                 }
