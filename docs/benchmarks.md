@@ -144,6 +144,21 @@ This was one run. The other user's own sign-in used one of the 10 attempts, beca
 
 The check itself [costs under 1% of a request for IPv4, and about 2% for IPv6](architecture/014-rate-limiting.md#cost), on routes that have a limit.
 
+## Network threads
+
+The other tables on this page use 1 network thread. This one uses the Windows laptop, with the server on 4 logical cores (2 physical) and 4 worker threads, and the load generator on the other 8. Each value is the range over 2 rounds. A server limited to one core has only 1 network thread by default, so this doesn't apply there.
+
+| Test | 1 thread | 2 threads | 4 threads |
+|---|---|---|---|
+| HTTP, small response (requests/second) | 10,400 to 10,600 | 14,800 to 15,400 | 22,700 to 24,000 |
+| HTTPS, small response | 8,100 to 9,400 | 12,900 to 13,900 | 20,600 to 20,700 |
+| HTTPS, 64 KB response | 1,500 to 1,800 | 2,700 to 2,800 | 3,500 to 4,100 |
+| New HTTPS connection for every request | 700 to 900 | 1,200 | 1,400 to 1,600 |
+| One open connection during a flood of handshakes, p50 | 5.5 to 5.8 ms | 2.4 to 4.5 ms | 0.5 to 0.8 ms |
+| The same, p99 | 14 to 18 ms | 10 ms | 6 to 13 ms |
+
+The default is one network thread for every two cores, from 1 to 4. More than 4 hasn't been measured.
+
 ## Stress tests
 
 These check that the server keeps working correctly over time, rather than how fast it is. For 30 minutes, many kinds of client ran at once: ones that check every response, including bodies and database rollbacks, and ones that leave mid-request, send garbage, stall, or send too much. Any response a client didn't expect counts as a failure, and so does doing too little work.
