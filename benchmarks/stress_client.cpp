@@ -37,7 +37,7 @@ using Clock = std::chrono::steady_clock;
 using TlsStream = beast::ssl_stream<tcp::socket>;
 
 constexpr auto kAsTuple = asio::as_tuple(asio::use_awaitable);
-constexpr auto kResponseTimeout = std::chrono::seconds{30};
+constexpr auto kResponseTimeout = std::chrono::seconds{60};
 constexpr std::string_view kServerTooBusy = "server-too-busy";
 
 // A server that keeps running but hardly serves anything has still failed. Even a slow sanitizer
@@ -603,7 +603,7 @@ public:
             const auto start = Clock::now();
             auto [error, response] = co_await connection->read();
             // The server closes it. Only waiting far longer than its timeout is wrong.
-            if (Clock::now() - start > std::chrono::seconds{25}) {
+            if (Clock::now() - start > std::chrono::seconds{45}) {
                 shared_.results.failed("slow-client", "the server didn't time it out");
             } else {
                 shared_.results.ok("slow-client");

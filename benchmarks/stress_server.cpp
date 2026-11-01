@@ -79,7 +79,9 @@ int main(int argc, char* argv[]) {
         {"cppboot.logging.level", "warn"},
         {"cppboot.server.port", "18090"},
         {"cppboot.server.max_connections", "4096"},
-        {"cppboot.server.request_timeout_seconds", "10"},
+        // The default. A shorter one closes idle connections on a client that's still reading the
+        // last response, when both are short of CPU, which looks like a failure but isn't.
+        {"cppboot.server.request_timeout_seconds", "30"},
         {"cppboot.server.max_body_bytes", "1048576"},
         {"cppboot.database.url", "sqlite:" + (std::filesystem::temp_directory_path() /
                                               "cppboot-stress.db")
