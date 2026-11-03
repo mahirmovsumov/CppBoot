@@ -2,7 +2,9 @@
 
 This file records what has been added to CppBoot. Versions follow [semantic versioning](https://semver.org). Until 1.0, any release may change the API.
 
-## Unreleased: 0.1.0
+## 0.1.0, pre-release, 2026-11-04
+
+The first release, marked as a pre-release because the API can still change, and CppBoot hasn't had an independent security review.
 
 ### Installation
 
