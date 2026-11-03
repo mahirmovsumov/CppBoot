@@ -4,11 +4,11 @@ Work through this for each release. A major release needs all of it, and later r
 
 ## Decisions only the owner can make
 
-These block 1.0, and none has been made yet:
+These block 1.0:
 
-- [ ] **A license.** The repository has none, which means nobody else may legally use, copy or change the code. Choose one before publishing.
+- [ ] **A license.** The repository has none, which means others can read the code but may not legally use, copy or change it.
 - [ ] **An independent security review.** The project's own tests can't replace one. It should cover token handling, password storage, HTTP parsing limits, TLS settings and the service's limits.
-- [ ] **Making the repository public,** if that's the plan. It's private now.
+- [x] **Making the repository public.** Done, with the owner as the only account that can push.
 - [ ] **How people get the SDK.** Building from source is the only way today, and it needs the compiler and libraries installed.
 
 ## Before each release
