@@ -91,8 +91,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: sdk-windows
+      # Windows PowerShell 5.1, which comes with Windows, because that's what most developers have.
       - name: Install
-        shell: pwsh
+        shell: powershell
         run: |
           $archive = (Get-ChildItem cppboot-sdk-*-windows-x64.zip).FullName
           ./scripts/install.ps1 -Archive $archive -Msys2Root C:\msys64

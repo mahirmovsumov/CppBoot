@@ -1,0 +1,41 @@
+name: Install check
+
+# Runs the published one-line installers, exactly as the documentation shows, on clean machines.
+# This covers what the Release workflow can't: finding the release, downloading it and checking it.
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install with the one-line command, in a clean container
+        run: |
+          docker run --rm ubuntu:24.04 bash -c '
+            set -e
+            apt-get update -q && apt-get install -y -q curl
+            curl -fsSL https://raw.githubusercontent.com/mahirmovsumov/CppBoot/main/scripts/install.sh | bash
+            export PATH="$HOME/.cppboot/bin:$PATH"
+            cppboot doctor --full'
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      # Windows PowerShell 5.1, which comes with Windows, rather than PowerShell 7, because that's
+      # what most developers have.
+      - name: Install with the one-line command
+        shell: powershell
+        run: |
+          irm https://raw.githubusercontent.com/mahirmovsumov/CppBoot/main/scripts/install.ps1 | iex
+      - name: Use it from a new terminal
+        shell: pwsh
+        run: |
+          $env:PATH = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          $env:CPPBOOT_TOOLCHAIN = [Environment]::GetEnvironmentVariable('CPPBOOT_TOOLCHAIN', 'User')
+          cppboot doctor --full
+          if ($LASTEXITCODE -ne 0) { exit 1 }

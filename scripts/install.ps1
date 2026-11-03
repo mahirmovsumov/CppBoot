@@ -30,6 +30,10 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# Windows PowerShell 5.1, which comes with Windows, needs -UseBasicParsing, or downloads fail on a
+# machine where Internet Explorer has never been set up.
+$PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true
+
 $repository = 'mahirmovsumov/CppBoot'
 $packages = 'gcc', 'clang', 'cmake', 'ninja', 'gdb', 'yaml-cpp', 'spdlog', 'gtest', 'boost',
     'nlohmann-json', 'postgresql', 'sqlite3', 'openssl' | ForEach-Object { "mingw-w64-ucrt-x86_64-$_" }
@@ -87,7 +91,10 @@ function Get-SdkArchive([string]$work) {
     Step "Downloading CppBoot $number"
     $path = Join-Path $work $name
     Invoke-WebRequest $asset.browser_download_url -OutFile $path
-    $line = (Invoke-WebRequest $sums.browser_download_url).Content -split "`n" | Where-Object { $_ -match [regex]::Escape($name) }
+    # Saved to a file, because a download's content can come back as bytes rather than text.
+    $sums_path = Join-Path $work 'SHA256SUMS'
+    Invoke-WebRequest $sums.browser_download_url -OutFile $sums_path
+    $line = Get-Content $sums_path | Where-Object { $_ -match "\s\*?$([regex]::Escape($name))$" } | Select-Object -First 1
     $expected = ($line -split '\s+')[0]
     if (-not $expected -or (Get-FileHash $path -Algorithm SHA256).Hash -ne $expected.ToUpper()) {
         throw "The download doesn't match its checksum, so it wasn't installed."
