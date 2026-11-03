@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -84,6 +85,25 @@ Result<void> generate(const fs::path& output, const std::vector<fs::path>& heade
     return render(output, declarations, includes, options);
 }
 
+/// libclang can name a file through a symbolic link and "..", such as
+/// "/../lib/gcc/x86_64-linux-gnu/14/../../../../include/c++/14/string" on Ubuntu, where /lib links to
+/// /usr/lib. Ninja removes ".." without following the link, which names a file that doesn't exist,
+/// so it would read every header again on every build. This resolves each path the way the system
+/// does, and drops duplicates and anything that doesn't exist.
+std::vector<fs::path> resolvedPaths(const std::vector<fs::path>& paths) {
+    std::vector<fs::path> resolved;
+    for (const fs::path& path : paths) {
+        std::error_code error;
+        fs::path real = fs::weakly_canonical(path, error);
+        if (!error && fs::exists(real, error)) {
+            resolved.push_back(std::move(real));
+        }
+    }
+    std::sort(resolved.begin(), resolved.end());
+    resolved.erase(std::unique(resolved.begin(), resolved.end()), resolved.end());
+    return resolved;
+}
+
 Result<void> scan(const fs::path& header, const fs::path& output, const fs::path& depfile,
                   const std::vector<std::string>& compiler_arguments) {
     std::vector<fs::path> included_files;
@@ -102,7 +122,7 @@ Result<void> scan(const fs::path& header, const fs::path& output, const fs::path
         return written;
     }
     if (!depfile.empty()) {
-        return writeFile(depfile, codegen::makeDepfile(output, included_files));
+        return writeFile(depfile, codegen::makeDepfile(output, resolvedPaths(included_files)));
     }
     return {};
 }

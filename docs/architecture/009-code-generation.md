@@ -65,6 +65,8 @@ Each header gets its own step, `cppboot-codegen --scan`, which saves what it fou
 - **Checks still see everything.** Missing dependencies, cycles and duplicate routes involve several headers, so the merge step checks all of them every time. That's fast, because it doesn't parse anything.
 - **Warnings print once,** when a header is read, rather than on every build.
 
+The dependency file has every path resolved through symbolic links. libclang can name a file as `/../lib/gcc/x86_64-linux-gnu/14/../../../../include/c++/14/string` on Ubuntu, where `/lib` links to `/usr/lib`. Ninja removes `..` without following links, which names a file that doesn't exist, so every header was read again on every build. Only Linux CI showed this.
+
 There's no separate cache to manage, because the saved scans are ordinary build outputs. A damaged one gives an error that says to rebuild.
 
 ### Reading headers as the compiler does
