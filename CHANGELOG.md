@@ -132,6 +132,12 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - On Linux, a package includes a systemd service, and scripts that install, upgrade and remove it. The service runs under its own account with limited access to the system.
 - Applications tell systemd when they're ready and when they're stopping.
 
+### Faster, more accurate code generation
+
+- The generator now reads headers with the target's definitions and options, as well as its include folders. Before this, a class inside `#ifdef` was found or missed differently from how the compiler saw it.
+- Each header is read in its own build step, and again only when it, or a file it includes, changes. In a project of 50 headers, a rebuild after changing one went from 80 seconds to 15.
+- A change in a file that a header includes, such as one outside `src`, now runs the generator again. Before this, it was missed.
+
 ### Server threads and lifecycle
 
 - `cppboot.server.io_threads`: connections now share several network threads, by default one for every two cores, from 1 to 4. On 4 logical cores, this more than doubled throughput, and a flood of TLS handshakes hurt other connections about 9 times less.

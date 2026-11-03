@@ -54,12 +54,42 @@ The parser decides where each function parameter comes from. Its type decides th
 
 The SDK installs a copy of Clang's built-in headers, about 15 MB, in `lib/cppboot/clang`. The installed tool finds them relative to its own location, and they're always the same version as the libclang it was built with. When running from a build folder, it uses the path found at build time.
 
-`cppboot_generate_components()` runs the tool during the build, and passes it the target's include folders. A project made by `cppboot create` calls it with every `.hpp` file in `src`, so files are found automatically. Changing a listed header runs the generator again.
+`cppboot_generate_components()` runs the tool during the build. A project made by `cppboot create` calls it with every `.hpp` file in `src`, so files are found automatically.
+
+## Build steps
+
+Each header gets its own step, `cppboot-codegen --scan`, which saves what it found as JSON in the build folder. A last step, `--merge`, reads every saved scan, checks them together and writes the generated header. So:
+
+- **Only changed headers are read again.** A step reruns when its header changes, or any file that header includes, which the tool lists in a dependency file from libclang. Ninja and Make read this. With other CMake generators, only the header itself counts.
+- **Headers are read in parallel,** because the steps are independent.
+- **Checks still see everything.** Missing dependencies, cycles and duplicate routes involve several headers, so the merge step checks all of them every time. That's fast, because it doesn't parse anything.
+- **Warnings print once,** when a header is read, rather than on every build.
+
+There's no separate cache to manage, because the saved scans are ordinary build outputs. A damaged one gives an error that says to rebuild.
+
+### Reading headers as the compiler does
+
+The scan step gets the target's include folders, definitions and options, including those from the libraries it links to, plus `CMAKE_CXX_FLAGS` for the build type. So a class inside `#ifdef FEATURE` is found exactly when the compiler sees it.
+
+These come from CMake's generator expressions rather than `compile_commands.json`. That file lists source files, not headers, so it would need a guess at which entry applies. Not every CMake generator writes it, and the expressions give the same information directly.
+
+A target's options are written for GCC or Clang, and libclang rejects some of them, so the tool keeps only those that change what a header declares: `-I`, `-D`, `-U`, `-isystem`, `-iquote`, `-idirafter`, `-include`, `-imacros`, `-isysroot` and `-std=`. Warnings and optimization options are left out. Options set some other way, such as a compiler wrapper or a toolchain file's hidden flags, aren't seen.
+
+## Build time
+
+Measured on Windows with an i7-8750H, in a project of 50 headers with one service each:
+
+| | Before separate steps | After |
+|---|---|---|
+| First build | 85 to 93 s | 40 to 51 s |
+| Rebuild after one independent header changed | 80 s, all 50 read again | 15 s, 1 read again |
+| Rebuild after one header in a chain of 50 changed | 84 s, all read again | 28 to 30 s, the 26 that include it read again |
+
+Most of what remains is compiling `main.cpp`, which includes the generated header and so every listed header.
 
 ## Known limits
 
 - **libclang is still required:** the installed tool links to libclang as a shared library, so that has to be on the machine. The SDK isn't a standalone download yet.
-- **Build time:** each listed header adds a libclang parse to the build, including headers with no marked classes. This will need caching or parallel runs as projects grow.
-- **Changes in included files:** only listed headers trigger the generator, so a change in a header outside `src` that affects a constructor won't run it again.
+- **Build time:** each listed header still needs a libclang parse the first time, including headers with no marked classes.
 - **Absolute includes:** generated headers include their inputs by absolute path, so they can't be moved between machines. That's acceptable because they are build output.
 - **Interfaces:** only direct abstract base classes count, and each interface can have only one provider. Choosing between providers needs a qualifier feature.

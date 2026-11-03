@@ -907,7 +907,8 @@ std::string clangResourceDirectory() {
 }
 
 Result<Declarations> parseDeclarations(const std::filesystem::path& header,
-                                       const std::vector<std::string>& compiler_arguments) {
+                                       const std::vector<std::string>& compiler_arguments,
+                                       std::vector<std::filesystem::path>* included_files) {
     const std::string resource_directory = clangResourceDirectory();
     std::vector<const char*> arguments = {
         "-x", "c++", "-std=c++20", "-DCPPBOOT_CODEGEN", "-resource-dir", resource_directory.c_str(),
@@ -934,6 +935,18 @@ Result<Declarations> parseDeclarations(const std::filesystem::path& header,
 
     if (const std::string errors = collectErrors(unit.get()); !errors.empty()) {
         return Error{ErrorCode::ParseError, "Can't compile " + path + ":\n" + errors};
+    }
+
+    if (included_files != nullptr) {
+        clang_getInclusions(
+            unit.get(),
+            [](CXFile file, CXSourceLocation*, unsigned, CXClientData data) {
+                const std::string name = toString(clang_getFileName(file));
+                if (!name.empty()) {
+                    static_cast<std::vector<std::filesystem::path>*>(data)->emplace_back(name);
+                }
+            },
+            included_files);
     }
 
     Walk walk;

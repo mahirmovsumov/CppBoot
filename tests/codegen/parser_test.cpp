@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cppboot/codegen/parser.hpp>
 #include <filesystem>
 #include <fstream>
@@ -480,6 +481,39 @@ TEST_F(ParserTest, DoesNotWarnAboutStateThatLooksSafe) {
     EXPECT_EQ(warnings(R"(class Plain {
         public: void add(int v);
         private: std::vector<int> v_; };)"), "");
+}
+
+TEST_F(ParserTest, ListsEveryFileAHeaderUses) {
+    const auto path = directory_ / "uses.hpp";
+    std::ofstream{directory_ / "helper.hpp"} << "#pragma once\nstruct Helper {};\n";
+    std::ofstream{path, std::ios::binary} << kPreamble << "#include \"helper.hpp\"\nclass SERVICE S {};\n";
+
+    std::vector<std::filesystem::path> files;
+    const auto result = parseDeclarations(path, {"-I" + directory_.string()}, &files);
+    ASSERT_TRUE(result) << result.error().message();
+
+    const auto has = [&](const std::string& name) {
+        return std::any_of(files.begin(), files.end(), [&](const std::filesystem::path& file) {
+            return file.filename() == name;
+        });
+    };
+    EXPECT_TRUE(has("uses.hpp"));
+    EXPECT_TRUE(has("helper.hpp"));
+    EXPECT_TRUE(has("memory"));
+}
+
+TEST_F(ParserTest, DefinitionsChangeWhatIsFound) {
+    const std::string source = "#ifdef WITH_EXTRA\nclass SERVICE Extra {};\n#endif\nclass SERVICE Always {};";
+    const auto path = directory_ / "conditional.hpp";
+    std::ofstream{path, std::ios::binary} << kPreamble << source;
+
+    const auto without = parseDeclarations(path, {});
+    ASSERT_TRUE(without);
+    EXPECT_EQ(without.value().components.size(), 1U);
+
+    const auto with = parseDeclarations(path, {"-DWITH_EXTRA"});
+    ASSERT_TRUE(with);
+    EXPECT_EQ(with.value().components.size(), 2U);
 }
 
 TEST_F(ParserTest, ReadsRateLimits) {

@@ -130,7 +130,7 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 - A package includes its own copies of libraries such as OpenSSL, so a security fix in one means building a new package.
 - A Windows package can't install as a service.
 - Marked classes are always singletons. Transient and scoped components need manual registration.
-- Every header in `src` adds time to the build, because the generator parses each one.
+- Every header in `src` adds time to the first build, because the generator parses each one. After that, only changed headers are parsed again.
 - Tokens can't be revoked, so they stay valid until they expire.
 - An open HTTPS connection uses 76 to 95 KB, against 4 to 6 KB for plain HTTP.
 - A handler that doesn't check `request.shouldStop()` can't be stopped, so it can hold up shutdown. A blocking call such as a database query needs its own timeout.

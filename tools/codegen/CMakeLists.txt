@@ -38,6 +38,7 @@ endif()
 add_library(cppboot-codegen-lib STATIC
     src/model.cpp
     src/parser.cpp
+    src/scan.cpp
 )
 target_include_directories(cppboot-codegen-lib PUBLIC include)
 target_include_directories(cppboot-codegen-lib SYSTEM PRIVATE ${CPPBOOT_LIBCLANG_INCLUDE_DIR})
@@ -48,6 +49,7 @@ target_link_libraries(cppboot-codegen-lib
     PUBLIC cppboot::base
     PRIVATE
         cppboot::platform
+        nlohmann_json::nlohmann_json
         ${CPPBOOT_LIBCLANG_LIBRARY}
 )
 cppboot_apply_compiler_options(cppboot-codegen-lib)

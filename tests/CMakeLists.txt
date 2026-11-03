@@ -112,6 +112,7 @@ if(CPPBOOT_BUILD_CODEGEN)
     add_executable(cppboot-codegen-tests
         codegen/model_test.cpp
         codegen/parser_test.cpp
+        codegen/scan_test.cpp
     )
     target_link_libraries(cppboot-codegen-tests PRIVATE
         cppboot-codegen-lib

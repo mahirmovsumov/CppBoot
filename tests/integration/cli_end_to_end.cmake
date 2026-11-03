@@ -326,6 +326,73 @@ public:
     file(REMOVE ${CHECKS_DIR}/src/racy.hpp)
 endif()
 
+# The generator has to read headers as the compiler does: with the target's definitions and options.
+run_cli(code output ${WORK_DIR} create demo-context)
+expect_exit_code("${code}" 0 "create for compiler context" "${output}")
+set(CONTEXT_DIR ${WORK_DIR}/demo-context)
+file(APPEND ${CONTEXT_DIR}/CMakeLists.txt "
+target_compile_definitions(demo-context PRIVATE FEATURE_FROM_DEFINITIONS)
+target_compile_options(demo-context PRIVATE -DFEATURE_FROM_OPTIONS -Wall)
+")
+foreach(feature FEATURE_FROM_DEFINITIONS FEATURE_FROM_OPTIONS)
+    file(WRITE ${CONTEXT_DIR}/src/${feature}.hpp "#pragma once
+#include <cppboot/cppboot.hpp>
+#ifdef ${feature}
+class CPPBOOT_SERVICE ${feature}_Module : public cppboot::Module {
+public:
+    std::string_view name() const noexcept override { return \"${feature}\"; }
+    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
+        context.logger().info(\"Found ${feature}\");
+        return {};
+    }
+};
+#endif
+")
+endforeach()
+
+# The generated file depends on a setting in a header outside src, which the generator has to notice.
+file(WRITE ${CONTEXT_DIR}/settings.hpp "#pragma once\n#define WITH_OPTIONAL_MODULE 1\n")
+file(WRITE ${CONTEXT_DIR}/src/optional_module.hpp "#pragma once
+#include <cppboot/cppboot.hpp>
+#include \"../settings.hpp\"
+#if WITH_OPTIONAL_MODULE
+class CPPBOOT_SERVICE OptionalModule : public cppboot::Module {
+public:
+    std::string_view name() const noexcept override { return \"optional\"; }
+    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
+        context.logger().info(\"Optional module is on\");
+        return {};
+    }
+};
+#endif
+")
+run_cli(code output ${CONTEXT_DIR} run --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run with compiler context" "${output}")
+expect_contains("${output}" "Found FEATURE_FROM_DEFINITIONS" "a definition reaches the generator")
+expect_contains("${output}" "Found FEATURE_FROM_OPTIONS" "an option reaches the generator")
+expect_contains("${output}" "Optional module is on" "an included setting reaches the generator")
+
+# Changing only the included file must read that header again. Without that, the generated file
+# would still register OptionalModule, which no longer exists, and the build would fail.
+file(WRITE ${CONTEXT_DIR}/settings.hpp "#pragma once\n#define WITH_OPTIONAL_MODULE 0\n")
+run_cli(code output ${CONTEXT_DIR} run --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run after an included file changed" "${output}")
+string(FIND "${output}" "Optional module is on" optional_position)
+if(NOT optional_position EQUAL -1)
+    message(FATAL_ERROR "an included file changed, but the generator didn't notice:\n${output}")
+endif()
+
+# Changing one header reads only that one again.
+file(APPEND ${CONTEXT_DIR}/src/greeting.hpp "\n// Changed.\n")
+run_cli(code output ${CONTEXT_DIR} build)
+expect_exit_code("${code}" 0 "build after one header changed" "${output}")
+string(REGEX MATCHALL "Reading CppBoot marks in [^\n]+" reads "${output}")
+list(LENGTH reads read_count)
+if(NOT read_count EQUAL 1)
+    message(FATAL_ERROR "one header changed, but ${read_count} were read again:\n${output}")
+endif()
+expect_contains("${output}" "Reading CppBoot marks in greeting.hpp" "build after one header changed")
+
 # The code in the tutorials and guides has to work as printed, or it goes stale without anyone noticing.
 # This returns the first code block after a piece of text in a document.
 function(read_code_block document marker result_var)
