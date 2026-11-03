@@ -82,4 +82,6 @@ Press Ctrl+C to stop the application. To deploy it, run `cppboot package`.
 
 ## License
 
-CppBoot has no license yet, so it can't be used or copied without the owner's permission.
+CppBoot is licensed under the [Apache License 2.0](LICENSE). You can use, change and share it, including in commercial software, as long as you keep the license and [notice](NOTICE). It also grants a license to any patents its contributors hold on their contributions.
+
+CppBoot uses other open source projects, which keep their own licenses. See [third-party software](THIRD_PARTY.md), especially before shipping a package.

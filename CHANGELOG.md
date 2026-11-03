@@ -4,6 +4,11 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 
 ## Unreleased: 0.1.0
 
+### License
+
+- CppBoot is now licensed under the Apache License 2.0, with `NOTICE`, and `THIRD_PARTY.md` listing the projects it uses.
+- The SDK installs these in `share/doc/cppboot`, and installs LLVM's license with Clang's headers where it can find it.
+
 ### Application runtime
 
 - `cppboot::Application`, the framework entry point, which owns the lifecycle, configuration, logging and modules.

@@ -202,6 +202,9 @@ Run the same command with a newer package to upgrade. Your settings and data sta
 To try it without installing, run this from this folder:
 
     ./bin/@NAME@
+
+The libraries in lib come from other projects, under their own licenses. If you give this package
+to someone else, include those licenses. CppBoot's THIRD_PARTY.md lists the ones it uses.
 )";
 
 constexpr std::string_view kWindowsReadme = R"(# @NAME@
@@ -210,6 +213,9 @@ This folder has everything @NAME@ needs. It doesn't need CppBoot or a compiler. 
 folder, so that it finds its settings:
 
     bin\@NAME@.exe
+
+The libraries in bin come from other projects, under their own licenses. If you give this package
+to someone else, include those licenses. CppBoot's THIRD_PARTY.md lists the ones it uses.
 )";
 
 constexpr std::string_view kRuntimeLibrariesScript = R"(# Copies an executable's shared libraries next to it. Run with: cmake -DEXE=... -DLIB_DIR=... -P <file>

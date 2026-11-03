@@ -19,6 +19,7 @@ The server doesn't need CppBoot or a compiler. These limits apply:
 - **glibc:** a Linux package includes every library except glibc, so the server needs the same or a newer version than the machine that built it. Build on the oldest system you deploy to.
 - **Security updates:** the package includes its own copies of libraries such as OpenSSL. A system update won't fix them, so **build and install a new package when one of them has a security fix.**
 - **The processor:** a package only runs on the kind of processor that built it.
+- **Licenses:** the package includes libraries from other projects. If you give it to someone else, include their licenses, which [THIRD_PARTY.md](../../THIRD_PARTY.md) lists.
 - **`cppboot.yaml` is copied as it is:** so don't put secrets in it. The `--postgresql` sample has a local development password, which you should override in the service's settings.
 
 ## Install as a Linux service

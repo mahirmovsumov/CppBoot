@@ -66,3 +66,18 @@ install(TARGETS cppboot-codegen
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 install(DIRECTORY ${libclang_resource_dir}/include DESTINATION lib/cppboot/clang)
+
+# Those headers come from LLVM, so their license goes with them. Systems keep it in different places.
+file(GLOB llvm_license_candidates
+    ${libclang_root}/share/licenses/clang/LICENSE
+    ${libclang_root}/../share/licenses/clang/LICENSE
+    ${libclang_root}/LICENSE.TXT
+    /usr/share/doc/libclang-common-*-dev/copyright
+    /usr/share/doc/libclang*-dev/copyright
+)
+list(GET llvm_license_candidates 0 llvm_license)
+if(llvm_license)
+    install(FILES ${llvm_license} DESTINATION lib/cppboot/clang RENAME LICENSE.TXT)
+else()
+    message(WARNING "LLVM's license wasn't found, so the SDK won't include it with Clang's headers.")
+endif()

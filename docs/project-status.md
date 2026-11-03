@@ -112,7 +112,7 @@ Over 30 minutes in each of 5 builds, [stress tests](benchmarks.md#stress-tests) 
 
 ## Before 1.0
 
-All the planned phases for 1.0 are complete, but 1.0 hasn't been released. The [release checklist](release-checklist.md) lists what's left, and these need the owner's decision: a license, an independent security review, and how people get the SDK. The repository is public, and only its owner can change it.
+All the planned phases for 1.0 are complete, but 1.0 hasn't been released. The [release checklist](release-checklist.md) lists what's left, and these need the owner's decision: an independent security review, and how people get the SDK. The repository is public under the [Apache License 2.0](../LICENSE), and only its owner can change it.
 
 ## Main decisions
 

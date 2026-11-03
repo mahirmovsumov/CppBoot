@@ -6,7 +6,7 @@ Work through this for each release. A major release needs all of it, and later r
 
 These block 1.0:
 
-- [ ] **A license.** The repository has none, which means others can read the code but may not legally use, copy or change it.
+- [x] **A license.** Apache License 2.0, with `NOTICE` and `THIRD_PARTY.md`.
 - [ ] **An independent security review.** The project's own tests can't replace one. It should cover token handling, password storage, HTTP parsing limits, TLS settings and the service's limits.
 - [x] **Making the repository public.** Done, with the owner as the only account that can push.
 - [ ] **How people get the SDK.** Building from source is the only way today, and it needs the compiler and libraries installed.

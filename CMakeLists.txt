@@ -44,6 +44,7 @@ if(CPPBOOT_BUILD_CODEGEN)
 endif()
 
 cppboot_install_package()
+install(FILES LICENSE NOTICE THIRD_PARTY.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/cppboot)
 
 if(CPPBOOT_BUILD_EXAMPLES)
     add_subdirectory(examples/hello-world)
