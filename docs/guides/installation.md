@@ -12,7 +12,7 @@ irm https://raw.githubusercontent.com/mahirmovsumov/CppBoot/main/scripts/install
 
 This:
 
-1. **Installs MSYS2,** if it isn't already in `C:\msys64` or `D:\msys64`. MSYS2 provides GCC, CMake, Ninja, libclang and the libraries CppBoot uses.
+1. **Installs MSYS2,** if it isn't already in `C:\msys64` or `D:\msys64`. MSYS2 provides GCC, CMake, Ninja, libclang and the libraries CppBoot uses. Its installer comes over HTTPS from MSYS2's own releases on GitHub, which publish no checksum to check it against.
 2. **Installs and updates those packages** with `pacman`. This updates the rest of MSYS2 too.
 3. **Downloads the SDK** from the latest release, checks it against the release's checksums, and unpacks it into `%LOCALAPPDATA%\CppBoot\sdk`.
 4. **Changes your account's environment:** it adds the SDK to `PATH`, and sets `CPPBOOT_TOOLCHAIN` to MSYS2's `ucrt64\bin` folder. It doesn't add MSYS2 to `PATH`, where its programs could take the place of others, such as Git's. `cppboot` adds that folder for the programs it starts.
@@ -74,6 +74,10 @@ cppboot doctor --full
 Each problem comes with what to do about it. It exits with 0 if there are none, so a script can use it.
 
 It also warns if your compiler is a different version from the one the SDK was built with. Libraries built by one version don't always link with another, which can happen after MSYS2 updates its compiler. The fix is to install the SDK again, or with `-FromSource`.
+
+### Other copies of libraries on Windows
+
+Some installers put their own copies of libraries on Windows, such as PostgreSQL's in `C:\Program Files\PostgreSQL`. Those are built for Microsoft's compiler, and don't link with MSYS2's. So a CppBoot project looks for PostgreSQL, SQLite and OpenSSL in MSYS2 first. To use another copy, set `PostgreSQL_ROOT`, `SQLite3_ROOT` or `OPENSSL_ROOT_DIR`.
 
 ## Upgrade and remove
 

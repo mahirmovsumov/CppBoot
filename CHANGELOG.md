@@ -10,6 +10,7 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot doctor`, which checks the installation, the tools and the libraries together, and says how to fix each problem. `--full` also builds and runs a sample project.
 - Downloadable SDKs, built and tested on clean machines by a Release workflow. The Windows SDK carries the libraries its own programs need, so it works before anything is on PATH.
 - `CPPBOOT_TOOLCHAIN`, a folder that `cppboot` puts first on PATH for the programs it starts.
+- **Fix:** with MinGW, projects now find PostgreSQL, SQLite and OpenSSL in the compiler's own folder first. Before this, a Windows machine with PostgreSQL installed could find its copy, built for Microsoft's compiler, and fail to link.
 
 ### License
 

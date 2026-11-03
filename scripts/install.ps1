@@ -47,16 +47,10 @@ function Find-Msys2 {
 function Install-Msys2([string]$root) {
     Step "Installing MSYS2 into $root"
     $installer = Join-Path $env:TEMP 'msys2-installer.exe'
+    # MSYS2 publishes no checksum for this file, so its integrity rests on downloading it over HTTPS
+    # from MSYS2's own releases on GitHub.
     $source = 'https://github.com/msys2/msys2-installer/releases/download/nightly-x86_64/msys2-x86_64-latest.exe'
     Invoke-WebRequest $source -OutFile $installer
-    try {
-        $expected = ((Invoke-WebRequest "$source.sha256").Content -split '\s+')[0]
-        if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $expected.ToUpper()) {
-            throw "The MSYS2 installer doesn't match its checksum, so it wasn't run."
-        }
-    } catch [System.Net.WebException] {
-        Write-Warning "MSYS2's checksum couldn't be downloaded, so the installer wasn't checked."
-    }
     & $installer in --confirm-command --accept-messages --root ($root -replace '\\', '/') | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "The MSYS2 installer failed with exit code $LASTEXITCODE." }
     Remove-Item $installer

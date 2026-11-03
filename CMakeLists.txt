@@ -15,6 +15,7 @@ option(CPPBOOT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(CPPBOOT_BUNDLE_RUNTIME "Install the shared libraries that the SDK's own programs need, for a downloadable SDK on Windows" OFF)
 
 include(cmake/CompilerOptions.cmake)
+include(cmake/CppBootPreferToolchain.cmake)
 include(cmake/CppBootTargets.cmake)
 include(cmake/CppBootCodegen.cmake)
 
