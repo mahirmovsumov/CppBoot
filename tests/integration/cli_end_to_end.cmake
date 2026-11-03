@@ -389,7 +389,16 @@ expect_exit_code("${code}" 0 "build after one header changed" "${output}")
 string(REGEX MATCHALL "Reading CppBoot marks in [^\n]+" reads "${output}")
 list(LENGTH reads read_count)
 if(NOT read_count EQUAL 1)
-    message(FATAL_ERROR "one header changed, but ${read_count} were read again:\n${output}")
+    # Shows why, since this has differed between platforms.
+    file(GLOB_RECURSE depfiles ${CONTEXT_DIR}/build/*.json.d)
+    list(GET depfiles 0 first_depfile)
+    file(READ ${first_depfile} depfile_text)
+    file(APPEND ${CONTEXT_DIR}/src/greeting.hpp "\n// Changed again.\n")
+    execute_process(COMMAND ninja -d explain WORKING_DIRECTORY ${CONTEXT_DIR}/build
+                    OUTPUT_VARIABLE explained ERROR_VARIABLE explained)
+    message(FATAL_ERROR "one header changed, but ${read_count} were read again:\n${output}\n"
+                        "A dependency file, ${first_depfile}:\n${depfile_text}\n"
+                        "Ninja's reasons on the next build:\n${explained}")
 endif()
 expect_contains("${output}" "Reading CppBoot marks in greeting.hpp" "build after one header changed")
 
