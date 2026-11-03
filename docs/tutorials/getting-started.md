@@ -4,28 +4,15 @@ In this tutorial, you install CppBoot on Windows, create an application and add 
 
 This tutorial builds a background service. The [next ones](../README.md#using-cppboot) add a web API, a database and sign-in.
 
-## Install the tools
+## Install CppBoot
 
-1. Install MSYS2 from <https://www.msys2.org> into `D:\msys64`.
-2. From the root of the CppBoot repository, run these commands in PowerShell:
-
-   ```powershell
-   .\scripts\install-deps.ps1
-   . .\scripts\dev-env.ps1
-   ```
-
-   The first script installs GCC, Clang, CMake, Ninja and the libraries CppBoot needs. The second adds them to PATH for the current PowerShell window only, so run it again in each new window.
-
-## Build and install CppBoot
+In PowerShell, run:
 
 ```powershell
-cmake --preset release
-cmake --build --preset release
-cmake --install build\release --prefix D:\cppboot-sdk
-$env:PATH = "D:\cppboot-sdk\bin;$env:PATH"
+irm https://raw.githubusercontent.com/mahirmovsumov/CppBoot/main/scripts/install.ps1 | iex
 ```
 
-To check the installation, run `cppboot info`. It prints the version and the install folder.
+This installs MSYS2 if you don't have it, which provides the compiler and libraries, then the CppBoot SDK. It ends by running `cppboot doctor`, which should say `Everything CppBoot needs is ready.` Then open a new PowerShell window. The [installation guide](../guides/installation.md) explains what it changes, and how to install on Linux.
 
 ## Create an application
 

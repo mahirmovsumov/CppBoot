@@ -51,6 +51,14 @@ run_cli(code output ${WORK_DIR} info)
 expect_exit_code("${code}" 0 "info" "${output}")
 expect_contains("${output}" "CppBoot ${EXPECTED_VERSION}" "info")
 
+run_cli(code output ${WORK_DIR} doctor)
+expect_exit_code("${code}" 0 "doctor" "${output}")
+expect_contains("${output}" "Everything CppBoot needs is ready" "doctor")
+expect_contains("${output}" "a test project found CppBoot" "doctor")
+
+run_cli(code output ${WORK_DIR} doctor --everything)
+expect_exit_code("${code}" 2 "doctor with an unknown option" "${output}")
+
 run_cli(code output ${WORK_DIR} create demo-app)
 expect_exit_code("${code}" 0 "create" "${output}")
 

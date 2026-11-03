@@ -4,6 +4,13 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 
 ## Unreleased: 0.1.0
 
+### Installation
+
+- Installers for Windows and Ubuntu 24.04, which set up the compiler and libraries, download the SDK, check it against its checksums, and run `cppboot doctor`. On Windows, they install MSYS2 if needed.
+- `cppboot doctor`, which checks the installation, the tools and the libraries together, and says how to fix each problem. `--full` also builds and runs a sample project.
+- Downloadable SDKs, built and tested on clean machines by a Release workflow. The Windows SDK carries the libraries its own programs need, so it works before anything is on PATH.
+- `CPPBOOT_TOOLCHAIN`, a folder that `cppboot` puts first on PATH for the programs it starts.
+
 ### License
 
 - CppBoot is now licensed under the Apache License 2.0, with `NOTICE`, and `THIRD_PARTY.md` listing the projects it uses.

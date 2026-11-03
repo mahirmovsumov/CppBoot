@@ -71,6 +71,10 @@ Press Ctrl+C to stop the application.
 
 Builds a release into `build-release/`, then puts it in `dist/` with everything it needs to run on another machine. On Linux, that includes a systemd service and a script that installs it. See [Deployment](deployment.md).
 
+### `cppboot doctor`
+
+Checks that everything CppBoot needs is installed and works together, and says how to fix each problem. Add `--full` to also build and run a sample project. See [Installation](installation.md#check-an-installation).
+
 ### `cppboot info`
 
 Shows the CppBoot version, the install folder and the project in the current folder.
@@ -90,5 +94,7 @@ Shows the list of commands.
 `cppboot build` returns CMake's exit code if the build fails, and `cppboot run` returns the application's exit code.
 
 ## Finding the CppBoot installation
+
+If `CPPBOOT_TOOLCHAIN` names a folder, the tool puts it first on `PATH` for the programs it starts, such as CMake and your application. The Windows installer sets it to MSYS2's tools.
 
 The tool expects to be in the `bin` folder of a CppBoot installation, and it uses that installation for new builds. To use a different one, set `CPPBOOT_HOME` to its folder. A project records the location on its first build, so delete the project's `build` folder after changing it.

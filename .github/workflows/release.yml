@@ -1,0 +1,153 @@
+name: Release
+
+# A tag such as v0.1.0 builds the SDKs, tests the installers with them on clean machines, and only
+# then publishes a release. Starting it by hand does everything except publish.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-linux:
+    runs-on: ubuntu-24.04
+    # Built in the same system that users install it on, so its libraries match theirs.
+    container: ubuntu:24.04
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q git g++ cmake ninja-build libclang-dev \
+            libyaml-cpp-dev libspdlog-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+      - uses: actions/checkout@v4
+      - name: Build and pack
+        run: |
+          version="$(sed -nE 's/^project\(CppBoot VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)"
+          cmake -S . -B build/sdk -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCPPBOOT_BUILD_TESTS=OFF -DCPPBOOT_BUILD_EXAMPLES=OFF
+          cmake --build build/sdk
+          cmake --install build/sdk --prefix "stage/cppboot-sdk-$version"
+          tar -C stage -czf "cppboot-sdk-$version-linux-x64.tar.gz" "cppboot-sdk-$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-linux
+          path: cppboot-sdk-*-linux-x64.tar.gz
+
+  sdk-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          pacboy: gcc:p clang:p cmake:p ninja:p yaml-cpp:p spdlog:p gtest:p boost:p nlohmann-json:p postgresql:p sqlite3:p openssl:p
+      - name: Build and pack
+        run: |
+          version="$(sed -nE 's/^project\(CppBoot VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)"
+          cmake -S . -B build/sdk -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCPPBOOT_BUILD_TESTS=OFF -DCPPBOOT_BUILD_EXAMPLES=OFF -DCPPBOOT_BUNDLE_RUNTIME=ON
+          cmake --build build/sdk
+          cmake --install build/sdk --prefix "stage/cppboot-sdk-$version"
+          cd stage && cmake -E tar cf "../cppboot-sdk-$version-windows-x64.zip" --format=zip "cppboot-sdk-$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-windows
+          path: cppboot-sdk-*-windows-x64.zip
+
+  # A clean Ubuntu, with nothing but what the installer adds.
+  test-linux:
+    needs: sdk-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-linux
+      - name: Install and check in a clean container
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work ubuntu:24.04 bash -c '
+            set -e
+            apt-get update -q && apt-get install -y -q curl
+            bash scripts/install.sh --archive cppboot-sdk-*-linux-x64.tar.gz
+            export PATH="$HOME/.cppboot/bin:$PATH"
+            cppboot doctor --full
+            cd /tmp && cppboot create release-check --web --security --actuator
+            cd release-check
+            CPPBOOT_SECURITY_JWT_SECRET=a-long-secret-for-the-release-check-only \
+            CPPBOOT_MYAPP_PASSWORD=release-check \
+              cppboot run --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true'
+
+  # The runner's own MSYS2, as a developer who already has it would have.
+  test-windows:
+    needs: sdk-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-windows
+      - name: Install
+        shell: pwsh
+        run: |
+          $archive = (Get-ChildItem cppboot-sdk-*-windows-x64.zip).FullName
+          ./scripts/install.ps1 -Archive $archive -Msys2Root C:\msys64
+      - name: Use it from a new terminal
+        shell: pwsh
+        run: |
+          # A new terminal only gets what the installer saved for the account.
+          $env:PATH = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          $env:CPPBOOT_TOOLCHAIN = [Environment]::GetEnvironmentVariable('CPPBOOT_TOOLCHAIN', 'User')
+          cppboot doctor --full
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Set-Location $env:RUNNER_TEMP
+          cppboot create release-check --web --security --actuator
+          Set-Location release-check
+          $env:CPPBOOT_SECURITY_JWT_SECRET = 'a-long-secret-for-the-release-check-only'
+          $env:CPPBOOT_MYAPP_PASSWORD = 'release-check'
+          cppboot run --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  # A machine with no MSYS2, so the installer has to install it.
+  test-windows-new-msys2:
+    needs: sdk-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-windows
+      - name: Install, including MSYS2
+        shell: pwsh
+        run: |
+          $archive = (Get-ChildItem cppboot-sdk-*-windows-x64.zip).FullName
+          ./scripts/install.ps1 -Archive $archive -Msys2Root D:\fresh-msys64
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cppboot doctor --full
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test-linux, test-windows, test-windows-new-msys2]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cp scripts/install.ps1 scripts/install.sh .
+          sha256sum cppboot-sdk-* install.ps1 install.sh > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$TAG" --prerelease --title "CppBoot ${TAG#v}" --notes-file docs/release-notes.md \
+            cppboot-sdk-* install.ps1 install.sh SHA256SUMS

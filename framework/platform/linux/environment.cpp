@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <string_view>
 
 #include "cppboot/platform/environment.hpp"
@@ -17,6 +18,13 @@ std::map<std::string, std::string> environmentVariables() {
         }
     }
     return variables;
+}
+
+void prependToPath(const std::filesystem::path& folder) {
+    const char* const current = std::getenv("PATH");
+    const std::string updated =
+        folder.string() + (current != nullptr && *current != '\0' ? ":" + std::string{current} : "");
+    setenv("PATH", updated.c_str(), 1);
 }
 
 }  // namespace cppboot::platform

@@ -28,4 +28,14 @@ std::map<std::string, std::string> environmentVariables() {
     return variables;
 }
 
+void prependToPath(const std::filesystem::path& folder) {
+    const DWORD size = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+    std::wstring current(size, L'\0');
+    if (size > 0) {
+        current.resize(GetEnvironmentVariableW(L"PATH", current.data(), size));
+    }
+    const std::wstring updated = folder.wstring() + (current.empty() ? L"" : L";" + current);
+    SetEnvironmentVariableW(L"PATH", updated.c_str());
+}
+
 }  // namespace cppboot::platform

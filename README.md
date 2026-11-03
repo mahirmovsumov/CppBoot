@@ -30,6 +30,30 @@ That's a whole route. CppBoot creates the class and passes in its dependencies, 
 cppboot create banking-api --web --postgresql --security --actuator
 ```
 
+## Install
+
+Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/mahirmovsumov/CppBoot/main/scripts/install.ps1 | iex
+```
+
+Ubuntu 24.04:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mahirmovsumov/CppBoot/main/scripts/install.sh | bash
+```
+
+Then:
+
+```text
+cppboot create hello-world --web
+cd hello-world
+cppboot run
+```
+
+The installers set up the compiler and libraries too, and end with `cppboot doctor`, which checks everything and says how to fix what isn't right. See the [installation guide](docs/guides/installation.md).
+
 ## Build on Windows
 
 1. Install MSYS2 from <https://www.msys2.org> into `D:\msys64`.
@@ -54,22 +78,15 @@ ctest --preset dev
 
 The `asan` and `tsan` presets run the same tests under the sanitizers, and work on Linux only.
 
-## Create a project
-
-Install CppBoot, then use the installed CLI. The compiler, CMake and Ninja must be on PATH.
+## Install a build of your own
 
 ```powershell
 cmake --preset release
 cmake --build --preset release
 cmake --install build\release --prefix D:\cppboot-sdk
 $env:PATH = "D:\cppboot-sdk\bin;$env:PATH"
-
-cppboot create hello-world
-cd hello-world
-cppboot run
+cppboot doctor
 ```
-
-Press Ctrl+C to stop the application. To deploy it, run `cppboot package`.
 
 ## Documentation
 

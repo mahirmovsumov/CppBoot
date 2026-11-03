@@ -126,7 +126,7 @@ The [system architecture](architecture/001-system-architecture.md) explains thes
 
 ## Known limits
 
-- The SDK isn't a standalone download, because it needs the compiler, libraries and libclang installed. Packages of your application don't need any of this.
+- Downloaded SDKs are for Windows with MSYS2 and for Ubuntu 24.04. Other Linux systems build it from source with the installer. MSYS2 updates its compiler often, and an SDK built with an older one may not link, which `cppboot doctor` warns about.
 - A package includes its own copies of libraries such as OpenSSL, so a security fix in one means building a new package.
 - A Windows package can't install as a service.
 - Marked classes are always singletons. Transient and scoped components need manual registration.

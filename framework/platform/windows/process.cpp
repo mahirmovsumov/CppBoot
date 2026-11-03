@@ -97,6 +97,72 @@ Result<int> runProcess(const ProcessOptions& options) {
     return static_cast<int>(exit_code);
 }
 
+Result<ProcessOutput> runProcessCapturingOutput(const ProcessOptions& options) {
+    if (options.command.empty()) {
+        return Error{ErrorCode::InvalidArgument, "No command to run"};
+    }
+
+    std::wstring command_line;
+    for (const std::string& argument : options.command) {
+        if (!command_line.empty()) {
+            command_line += L' ';
+        }
+        appendQuoted(command_line, detail::toWide(argument));
+    }
+    const std::wstring directory = options.working_directory.wstring();
+
+    SECURITY_ATTRIBUTES inheritable{};
+    inheritable.nLength = sizeof(inheritable);
+    inheritable.bInheritHandle = TRUE;
+    HANDLE read_end = nullptr;
+    HANDLE write_end = nullptr;
+    if (CreatePipe(&read_end, &write_end, &inheritable, 0) == FALSE) {
+        return lastError("CreatePipe");
+    }
+    // Only the child gets the end it writes to.
+    SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = write_end;
+    startup.hStdError = write_end;
+    PROCESS_INFORMATION process{};
+
+    const BOOL created =
+        CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+                       nullptr, directory.empty() ? nullptr : directory.c_str(), &startup, &process);
+    // Closing this end here means reading ends when the child, the only other holder, exits.
+    CloseHandle(write_end);
+    if (created == FALSE) {
+        auto error = lastError("Starting " + options.command.front());
+        CloseHandle(read_end);
+        return error;
+    }
+    CloseHandle(process.hThread);
+
+    ProcessOutput result;
+    char buffer[4096];
+    DWORD received = 0;
+    while (ReadFile(read_end, buffer, sizeof(buffer), &received, nullptr) != FALSE && received > 0) {
+        result.output.append(buffer, received);
+    }
+    CloseHandle(read_end);
+
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exit_code = 1;
+    const BOOL read = GetExitCodeProcess(process.hProcess, &exit_code);
+    auto read_error = read == FALSE ? std::optional<Error>{lastError("GetExitCodeProcess")}
+                                    : std::nullopt;
+    CloseHandle(process.hProcess);
+    if (read_error) {
+        return *std::move(read_error);
+    }
+    result.exit_code = static_cast<int>(exit_code);
+    return result;
+}
+
 Result<std::filesystem::path> executablePath() {
     std::wstring buffer(MAX_PATH, L'\0');
     while (true) {

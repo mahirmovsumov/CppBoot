@@ -131,6 +131,94 @@ Result<int> runProcess(const ProcessOptions& options) {
     return WEXITSTATUS(status);
 }
 
+Result<ProcessOutput> runProcessCapturingOutput(const ProcessOptions& options) {
+    if (options.command.empty()) {
+        return Error{ErrorCode::InvalidArgument, "No command to run"};
+    }
+
+    std::vector<char*> arguments;
+    arguments.reserve(options.command.size() + 1);
+    for (const std::string& argument : options.command) {
+        arguments.push_back(const_cast<char*>(argument.c_str()));
+    }
+    arguments.push_back(nullptr);
+    const std::string action = "Starting " + options.command.front();
+
+    int exec_status[2];
+    if (pipe2(exec_status, O_CLOEXEC) != 0) {
+        return errnoError("pipe2", errno);
+    }
+    int output[2];
+    if (pipe2(output, O_CLOEXEC) != 0) {
+        const int error_number = errno;
+        close(exec_status[0]);
+        close(exec_status[1]);
+        return errnoError("pipe2", error_number);
+    }
+
+    const pid_t child = fork();
+    if (child < 0) {
+        const int error_number = errno;
+        for (const int descriptor : {exec_status[0], exec_status[1], output[0], output[1]}) {
+            close(descriptor);
+        }
+        return errnoError("fork", error_number);
+    }
+
+    if (child == 0) {
+        close(exec_status[0]);
+        close(output[0]);
+        // dup2 clears close-on-exec on the copies, so the program keeps them.
+        const bool redirected = dup2(output[1], STDOUT_FILENO) >= 0 && dup2(output[1], STDERR_FILENO) >= 0;
+        const bool changed = options.working_directory.empty() ||
+                             chdir(options.working_directory.c_str()) == 0;
+        if (redirected && changed) {
+            execvp(arguments[0], arguments.data());
+        }
+        const int error_number = errno;
+        const ssize_t written = write(exec_status[1], &error_number, sizeof(error_number));
+        static_cast<void>(written);
+        _exit(127);
+    }
+
+    close(exec_status[1]);
+    close(output[1]);
+
+    ProcessOutput result;
+    char buffer[4096];
+    while (true) {
+        const ssize_t count = read(output[0], buffer, sizeof(buffer));
+        if (count > 0) {
+            result.output.append(buffer, static_cast<std::size_t>(count));
+        } else if (count == 0 || errno != EINTR) {
+            break;
+        }
+    }
+    close(output[0]);
+
+    int exec_error = 0;
+    ssize_t received = 0;
+    do {
+        received = read(exec_status[0], &exec_error, sizeof(exec_error));
+    } while (received == -1 && errno == EINTR);
+    close(exec_status[0]);
+
+    int status = 0;
+    pid_t waited = 0;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited == -1 && errno == EINTR);
+
+    if (received > 0) {
+        return errnoError(action, exec_error);
+    }
+    if (waited == -1) {
+        return errnoError("waitpid", errno);
+    }
+    result.exit_code = WIFSIGNALED(status) ? 128 + WTERMSIG(status) : WEXITSTATUS(status);
+    return result;
+}
+
 Result<std::filesystem::path> executablePath() {
     std::error_code error;
     auto path = std::filesystem::read_symlink("/proc/self/exe", error);
