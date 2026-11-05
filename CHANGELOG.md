@@ -2,6 +2,20 @@
 
 This file records what has been added to CppBoot. Versions follow [semantic versioning](https://semver.org). Until 1.0, any release may change the API.
 
+## Unreleased
+
+### Command-line tool
+
+- `cppboot create` with no name asks for the name and each option.
+- `cppboot add <kind> <Name>`, which adds a service, controller, repository, middleware, module or health check to `src`. A repository also gets a migration. It never replaces a file, and checks that the project has what the kind needs.
+- New projects have a `tests/` folder, with a test that checks every component can get what its constructor asks for.
+- `cppboot test`, which builds and runs the tests, with `--sanitize` as for `build` and `run`.
+- `cppboot dev`, which builds and runs the project, then stops it, builds it and starts it again whenever you save a change. Type `r` to restart, or `q` to quit.
+- `ChildProcess` in the platform library, which starts a process without waiting for it, and stops it as Ctrl+C would.
+- New projects have Visual Studio Code settings in `.vscode/`: tasks for build, dev, run and test, with compiler errors in the Problems panel, debugging with F5, and code completion from `build/compile_commands.json`. See [Editors](docs/guides/editors.md).
+- `cppboot doctor` warns if GoogleTest or gdb is missing, and the Linux installer installs gdb.
+- After creating a project with `--security`, `cppboot create` shows the environment variables to set before running it.
+
 ## 0.1.0, pre-release, 2026-11-04
 
 The first release, marked as a pre-release because the API can still change, and CppBoot hasn't had an independent security review.

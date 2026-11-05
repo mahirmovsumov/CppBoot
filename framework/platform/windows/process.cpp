@@ -163,6 +163,91 @@ Result<ProcessOutput> runProcessCapturingOutput(const ProcessOptions& options) {
     return result;
 }
 
+struct ChildProcess::Impl {
+    HANDLE process{nullptr};
+    DWORD id{0};
+    std::optional<int> exit_code;
+
+    ~Impl() {
+        if (process != nullptr) {
+            CloseHandle(process);
+        }
+    }
+};
+
+Result<ChildProcess> ChildProcess::start(const ProcessOptions& options) {
+    if (options.command.empty()) {
+        return Error{ErrorCode::InvalidArgument, "No command to run"};
+    }
+
+    std::wstring command_line;
+    for (const std::string& argument : options.command) {
+        if (!command_line.empty()) {
+            command_line += L' ';
+        }
+        appendQuoted(command_line, detail::toWide(argument));
+    }
+    const std::wstring directory = options.working_directory.wstring();
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    // Its own process group, so Ctrl+C reaches only this process, which then decides when to stop
+    // the child. Ctrl+Break still reaches it, and that's what stop() sends.
+    const BOOL created = CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, TRUE,
+                                        CREATE_NEW_PROCESS_GROUP, nullptr,
+                                        directory.empty() ? nullptr : directory.c_str(), &startup,
+                                        &process);
+    if (created == FALSE) {
+        return lastError("Starting " + options.command.front());
+    }
+    CloseHandle(process.hThread);
+
+    auto impl = std::make_unique<Impl>();
+    impl->process = process.hProcess;
+    impl->id = process.dwProcessId;
+    return ChildProcess{std::move(impl)};
+}
+
+ChildProcess::ChildProcess(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+ChildProcess::ChildProcess(ChildProcess&& other) noexcept = default;
+ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
+    if (this != &other) {
+        if (impl_) {
+            stop(std::chrono::seconds{10});
+        }
+        impl_ = std::move(other.impl_);
+    }
+    return *this;
+}
+
+ChildProcess::~ChildProcess() {
+    if (impl_) {
+        stop(std::chrono::seconds{10});
+    }
+}
+
+std::optional<int> ChildProcess::exitCode() {
+    if (!impl_->exit_code && WaitForSingleObject(impl_->process, 0) == WAIT_OBJECT_0) {
+        DWORD code = 1;
+        GetExitCodeProcess(impl_->process, &code);
+        impl_->exit_code = static_cast<int>(code);
+    }
+    return impl_->exit_code;
+}
+
+int ChildProcess::stop(std::chrono::milliseconds timeout) {
+    if (const auto code = exitCode()) {
+        return *code;
+    }
+    GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, impl_->id);
+    if (WaitForSingleObject(impl_->process, static_cast<DWORD>(timeout.count())) != WAIT_OBJECT_0) {
+        TerminateProcess(impl_->process, 1);
+        WaitForSingleObject(impl_->process, INFINITE);
+    }
+    return exitCode().value_or(1);
+}
+
 Result<std::filesystem::path> executablePath() {
     std::wstring buffer(MAX_PATH, L'\0');
     while (true) {

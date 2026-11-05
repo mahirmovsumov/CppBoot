@@ -73,7 +73,11 @@ cppboot doctor --full
 
 Each problem comes with what to do about it. It exits with 0 if there are none, so a script can use it.
 
+It warns, rather than failing, if GoogleTest or gdb is missing, because only `cppboot test` and debugging need them.
+
 It also warns if your compiler is a different version from the one the SDK was built with. Libraries built by one version don't always link with another, which can happen after MSYS2 updates its compiler. The fix is to install the SDK again, or with `-FromSource`.
+
+Next, [set up your editor](editors.md).
 
 ### Other copies of libraries on Windows
 

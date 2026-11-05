@@ -16,7 +16,7 @@ cd my-app
 cppboot run
 ```
 
-To add functionality, you add a class to `src` and mark it. CppBoot creates it and passes in what it needs, with no registration code:
+To add functionality, you add a class to `src` and mark it, or let `cppboot add service User` write one. CppBoot creates it and passes in what it needs, with no registration code. `cppboot test` runs the tests that each project comes with:
 
 ```cpp
 class CPPBOOT_SERVICE UserService {

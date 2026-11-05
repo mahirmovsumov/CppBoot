@@ -5,6 +5,7 @@
 Start with the tutorial, then use the guides as a reference.
 
 - [Installation](guides/installation.md): the installers for Windows and Linux, and `cppboot doctor`
+- [Editors](guides/editors.md): building, testing and debugging in Visual Studio Code, and code completion in any editor
 - [Getting started](tutorials/getting-started.md): install CppBoot and create your first application
 - [Build a REST API](tutorials/rest-api.md): controllers, JSON and error handling
 - [Store data in a database](tutorials/database.md): queries, migrations and schema changes

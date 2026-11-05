@@ -1,6 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,6 +36,31 @@ struct ProcessOutput {
 /// it. Its input stays this process's input. A program that can't be found returns an
 /// ErrorCode::NotFound error.
 Result<ProcessOutput> runProcessCapturingOutput(const ProcessOptions& options);
+
+/// A process that runs alongside this one, sharing its console, until it exits or stop() ends it.
+class ChildProcess {
+public:
+    /// A program that can't be found returns an ErrorCode::NotFound error.
+    static Result<ChildProcess> start(const ProcessOptions& options);
+
+    ChildProcess(ChildProcess&& other) noexcept;
+    ChildProcess& operator=(ChildProcess&& other) noexcept;
+    /// Stops it, if it's still running.
+    ~ChildProcess();
+
+    /// Its exit code if it has exited, without waiting. A child ended by a Linux signal returns 128
+    /// plus the signal number.
+    std::optional<int> exitCode();
+
+    /// Asks it to shut down, as Ctrl+C would, and waits. If it's still running after the timeout,
+    /// it's ended without the chance to clean up. Returns its exit code.
+    int stop(std::chrono::milliseconds timeout);
+
+private:
+    struct Impl;
+    explicit ChildProcess(std::unique_ptr<Impl> impl);
+    std::unique_ptr<Impl> impl_;
+};
 
 /// Returns the full path of the running executable.
 Result<std::filesystem::path> executablePath();

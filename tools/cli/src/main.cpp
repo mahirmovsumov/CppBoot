@@ -6,5 +6,5 @@
 
 int main(int argc, char* argv[]) {
     const std::vector<std::string> arguments(argv + 1, argv + argc);
-    return cppboot::cli::run(arguments, std::cout, std::cerr);
+    return cppboot::cli::run(arguments, std::cin, std::cout, std::cerr);
 }

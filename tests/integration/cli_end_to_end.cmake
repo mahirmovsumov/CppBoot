@@ -53,8 +53,12 @@ expect_contains("${output}" "CppBoot ${EXPECTED_VERSION}" "info")
 
 run_cli(code output ${WORK_DIR} doctor)
 expect_exit_code("${code}" 0 "doctor" "${output}")
-expect_contains("${output}" "Everything CppBoot needs is ready" "doctor")
 expect_contains("${output}" "a test project found CppBoot" "doctor")
+# Warnings are fine here, such as for a missing debugger, but problems aren't.
+string(FIND "${output}" "  problem  " problem_position)
+if(NOT problem_position EQUAL -1)
+    message(FATAL_ERROR "doctor: it found a problem:\n${output}")
+endif()
 
 run_cli(code output ${WORK_DIR} doctor --everything)
 expect_exit_code("${code}" 2 "doctor with an unknown option" "${output}")
@@ -197,6 +201,62 @@ run_cli(code output ${WORK_DIR}/banking-api run
 expect_exit_code("${code}" 0 "run with every option" "${output}")
 expect_contains("${output}" "Applied 1 new database migrations" "run with every option")
 expect_contains("${output}" "Server listening on port" "run with every option")
+
+# Every kind that cppboot add makes has to build, be found and start, with its migration applied.
+foreach(kind_and_name service:Billing controller:Invoice repository:Order middleware:Audit
+                      module:Report health:Queue)
+    string(REPLACE ":" ";" kind_and_name "${kind_and_name}")
+    run_cli(code output ${WORK_DIR}/banking-api add ${kind_and_name})
+    expect_exit_code("${code}" 0 "add ${kind_and_name}" "${output}")
+endforeach()
+run_cli(code output ${WORK_DIR}/banking-api add service Billing)
+expect_exit_code("${code}" 1 "add over an existing class" "${output}")
+expect_contains("${output}" "already exists" "add over an existing class")
+run_cli(code output ${WORK_DIR}/banking-api run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run with added classes" "${output}")
+expect_contains("${output}" "Applied 1 new database migrations" "run with added classes")
+expect_contains("${output}" "ReportModule started" "run with added classes")
+
+# The tests that new projects come with have to pass, including the check that everything fits.
+run_cli(code output ${WORK_DIR}/banking-api test)
+expect_exit_code("${code}" 0 "test with every option" "${output}")
+expect_contains("${output}" "ComponentsTest.FitTogether" "test with every option")
+run_cli(code output ${WORK_DIR}/demo-api test --gtest_filter=UserServiceTest.*)
+expect_exit_code("${code}" 0 "test a web project" "${output}")
+expect_contains("${output}" "1 test from 1 test suite ran" "test a web project")
+
+# A failing test has to fail cppboot test.
+file(WRITE ${WORK_DIR}/demo-api/tests/failing_test.cpp
+    "#include <gtest/gtest.h>\nTEST(FailingTest, Fails) { EXPECT_EQ(1, 2); }\n")
+run_cli(code output ${WORK_DIR}/demo-api test)
+expect_exit_code("${code}" 1 "test with a failing test" "${output}")
+expect_contains("${output}" "FailingTest.Fails" "test with a failing test")
+file(REMOVE ${WORK_DIR}/demo-api/tests/failing_test.cpp)
+
+# cppboot dev has to build and run, then build and run again after a change, and quit when asked.
+run_cli(code output ${WORK_DIR} create demo-dev)
+expect_exit_code("${code}" 0 "create for cppboot dev" "${output}")
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -DPROJECT_DIR=${WORK_DIR}/demo-dev
+        -DEXECUTABLE=${WORK_DIR}/demo-dev/build/demo-dev${EXE_SUFFIX}
+        -P ${CMAKE_CURRENT_LIST_DIR}/dev_driver.cmake
+    COMMAND ${CPPBOOT} dev --cppboot.runtime.shutdown_after_start=true
+    WORKING_DIRECTORY ${WORK_DIR}/demo-dev
+    RESULTS_VARIABLE codes
+    OUTPUT_VARIABLE output
+    ERROR_VARIABLE errors
+    TIMEOUT 900
+)
+message(STATUS "cppboot dev -> ${codes}")
+expect_exit_code("${codes}" "0;0" "cppboot dev" "${output}\n${errors}")
+expect_contains("${output}" "a file changed, so it's building again" "cppboot dev")
+expect_contains("${output}" "the application stopped, with exit code 0" "cppboot dev")
+string(REGEX MATCHALL "cppboot dev: running" runs "${output}")
+list(LENGTH runs run_count)
+if(NOT run_count EQUAL 2)
+    message(FATAL_ERROR "cppboot dev: expected 2 runs, got ${run_count}:\n${output}\n${errors}")
+endif()
 
 # The actuator alone has to give a plain project a server.
 run_cli(code output ${WORK_DIR} create demo-watched --actuator)

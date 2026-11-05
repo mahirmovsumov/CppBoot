@@ -8,6 +8,9 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <memory>
+#include <optional>
 #include <cstring>
 #include <system_error>
 
@@ -217,6 +220,123 @@ Result<ProcessOutput> runProcessCapturingOutput(const ProcessOptions& options) {
     }
     result.exit_code = WIFSIGNALED(status) ? 128 + WTERMSIG(status) : WEXITSTATUS(status);
     return result;
+}
+
+struct ChildProcess::Impl {
+    pid_t id{0};
+    std::optional<int> exit_code;
+};
+
+Result<ChildProcess> ChildProcess::start(const ProcessOptions& options) {
+    if (options.command.empty()) {
+        return Error{ErrorCode::InvalidArgument, "No command to run"};
+    }
+
+    std::vector<char*> arguments;
+    arguments.reserve(options.command.size() + 1);
+    for (const std::string& argument : options.command) {
+        arguments.push_back(const_cast<char*>(argument.c_str()));
+    }
+    arguments.push_back(nullptr);
+    const std::string action = "Starting " + options.command.front();
+
+    int exec_status[2];
+    if (pipe2(exec_status, O_CLOEXEC) != 0) {
+        return errnoError("pipe2", errno);
+    }
+
+    const pid_t child = fork();
+    if (child < 0) {
+        const int error_number = errno;
+        close(exec_status[0]);
+        close(exec_status[1]);
+        return errnoError("fork", error_number);
+    }
+
+    if (child == 0) {
+        close(exec_status[0]);
+        const bool changed = options.working_directory.empty() ||
+                             chdir(options.working_directory.c_str()) == 0;
+        if (changed) {
+            execvp(arguments[0], arguments.data());
+        }
+        const int error_number = errno;
+        const ssize_t written = write(exec_status[1], &error_number, sizeof(error_number));
+        static_cast<void>(written);
+        _exit(127);
+    }
+
+    close(exec_status[1]);
+    int exec_error = 0;
+    ssize_t received = 0;
+    do {
+        received = read(exec_status[0], &exec_error, sizeof(exec_error));
+    } while (received == -1 && errno == EINTR);
+    close(exec_status[0]);
+    if (received > 0) {
+        int status = 0;
+        while (waitpid(child, &status, 0) == -1 && errno == EINTR) {
+        }
+        return errnoError(action, exec_error);
+    }
+
+    auto impl = std::make_unique<Impl>();
+    impl->id = child;
+    return ChildProcess{std::move(impl)};
+}
+
+ChildProcess::ChildProcess(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+ChildProcess::ChildProcess(ChildProcess&& other) noexcept = default;
+ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
+    if (this != &other) {
+        if (impl_) {
+            stop(std::chrono::seconds{10});
+        }
+        impl_ = std::move(other.impl_);
+    }
+    return *this;
+}
+
+ChildProcess::~ChildProcess() {
+    if (impl_) {
+        stop(std::chrono::seconds{10});
+    }
+}
+
+std::optional<int> ChildProcess::exitCode() {
+    if (!impl_->exit_code) {
+        int status = 0;
+        pid_t waited = 0;
+        do {
+            waited = waitpid(impl_->id, &status, WNOHANG);
+        } while (waited == -1 && errno == EINTR);
+        if (waited == impl_->id) {
+            impl_->exit_code = WIFSIGNALED(status) ? 128 + WTERMSIG(status) : WEXITSTATUS(status);
+        } else if (waited == -1) {
+            // Already collected elsewhere, so there's nothing left to wait for.
+            impl_->exit_code = 1;
+        }
+    }
+    return impl_->exit_code;
+}
+
+int ChildProcess::stop(std::chrono::milliseconds timeout) {
+    if (const auto code = exitCode()) {
+        return *code;
+    }
+    kill(impl_->id, SIGTERM);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!exitCode() && std::chrono::steady_clock::now() < deadline) {
+        usleep(20'000);
+    }
+    if (!exitCode()) {
+        kill(impl_->id, SIGKILL);
+        int status = 0;
+        while (waitpid(impl_->id, &status, 0) == -1 && errno == EINTR) {
+        }
+        impl_->exit_code = 128 + SIGKILL;
+    }
+    return *impl_->exit_code;
 }
 
 Result<std::filesystem::path> executablePath() {

@@ -2,6 +2,7 @@ find_package(GTest CONFIG REQUIRED)
 
 # Reports what it received, so the process tests can check what runProcess passed along.
 add_executable(cppboot-test-child helpers/process_child.cpp)
+target_link_libraries(cppboot-test-child PRIVATE cppboot::platform)
 cppboot_apply_compiler_options(cppboot-test-child)
 
 add_executable(cppboot-unit-tests
@@ -196,6 +197,6 @@ if(CPPBOOT_BUILD_CODEGEN)
     # Sanitizer flags have to reach the generated project too, or it won't link.
     set_tests_properties(cppboot-cli-end-to-end PROPERTIES
         ENVIRONMENT "CXXFLAGS=${CMAKE_CXX_FLAGS}"
-        TIMEOUT 600
+        TIMEOUT 1200
     )
 endif()

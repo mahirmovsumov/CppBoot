@@ -2,13 +2,20 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <thread>
 #include <map>
 #include <fstream>
+#include <functional>
+#include <istream>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <system_error>
 #include <utility>
 
@@ -16,6 +23,8 @@
 #include "cppboot/config/config.hpp"
 #include "cppboot/platform/environment.hpp"
 #include "cppboot/platform/process.hpp"
+#include "cppboot/platform/signals.hpp"
+#include "generators.hpp"
 #include "package_files.hpp"
 
 namespace cppboot::cli {
@@ -27,15 +36,21 @@ namespace fs = std::filesystem;
 constexpr std::string_view kUsage = R"(Usage: cppboot <command> [arguments]
 
 Commands:
-  create <name>     Create a new project in a new folder
+  create [name]     Create a new project in a new folder. With no name, it asks what you want
                     Add --web for a web API with a sample controller
                     Add --sqlite or --postgresql with --web to store its data in a database
                     Add --security with --web for sign-in and protected routes
                     Add --actuator for health and metrics routes
+  add <kind> <Name> Add a class to the project's src folder, where kind is one of: service,
+                    controller, repository, middleware, module, health
+                    A repository also gets a migration that creates its table
   build             Build the project in the current folder
   run [arguments]   Build and run the project, passing arguments to the application
-                    Put --sanitize=address or --sanitize=thread first on build or run to find
-                    memory errors or data races, on Linux
+  dev [arguments]   Build and run the project, and do it again whenever you save a change
+  test [arguments]  Build and run the tests in tests/, passing arguments such as
+                    --gtest_filter=Order* to them
+                    Put --sanitize=address or --sanitize=thread first on build, run or test to
+                    find memory errors or data races, on Linux
   package           Build a release into dist/, with everything needed to run it elsewhere
                     On Linux, this includes a systemd service and a script that installs it
   doctor            Check that everything CppBoot needs is installed, and say how to fix what isn't
@@ -92,7 +107,7 @@ constexpr std::string_view kSecuritySettings = R"(
 
 // "@NAME@" is replaced with the project name. "@LIBRARIES@", "@GENERATE_OPTIONS@", "@SETTINGS@" and
 // "@ID_COLUMN@" depend on the project's options.
-constexpr std::array<ProjectFile, 10> kProjectFiles = {{
+constexpr std::array<ProjectFile, 17> kProjectFiles = {{
     {"CMakeLists.txt", R"(cmake_minimum_required(VERSION 3.25)
 
 project(@NAME@ LANGUAGES CXX)
@@ -115,6 +130,25 @@ cppboot_generate_components(@NAME@ @GENERATE_OPTIONS@HEADERS ${headers})
 # than letting it read or write memory it shouldn't. It costs very little, so it's on in every build.
 target_compile_definitions(@NAME@ PRIVATE _GLIBCXX_ASSERTIONS)
 target_compile_options(@NAME@ PRIVATE -Wall -Wextra)
+
+# Tests in tests/, which cppboot test builds and runs. They aren't part of a normal build. They're
+# built with the application's code, except main.cpp, so they can use its classes.
+find_package(GTest QUIET)
+if(GTest_FOUND)
+    file(GLOB_RECURSE test_sources CONFIGURE_DEPENDS tests/*.cpp)
+    set(application_sources ${sources})
+    list(FILTER application_sources EXCLUDE REGEX "/src/main\\.cpp$")
+    add_executable(@NAME@-tests EXCLUDE_FROM_ALL ${test_sources} ${application_sources})
+    target_include_directories(@NAME@-tests PRIVATE src)
+    target_link_libraries(@NAME@-tests PRIVATE @LIBRARIES@ GTest::gtest_main)
+    cppboot_generate_components(@NAME@-tests @GENERATE_OPTIONS@HEADERS ${headers})
+    target_compile_definitions(@NAME@-tests PRIVATE _GLIBCXX_ASSERTIONS)
+    target_compile_options(@NAME@-tests PRIVATE -Wall -Wextra)
+else()
+    add_custom_target(@NAME@-tests
+        COMMAND ${CMAKE_COMMAND} -E echo "The tests need GoogleTest. Run cppboot doctor to see how to install it."
+        COMMAND ${CMAKE_COMMAND} -E false)
+endif()
 )"},
     {"cppboot.yaml", R"(cppboot:
   application:
@@ -344,6 +378,144 @@ private:
 );
 )",
      ProjectFiles::WithDatabase},
+    {"tests/components_test.cpp", R"(#include <gtest/gtest.h>
+
+#include <cppboot/cppboot.hpp>
+#include <cppboot/di/container.hpp>
+#include <memory>
+#include <utility>
+
+#include "cppboot_components.generated.hpp"
+
+// Checks that every component can get what its constructor asks for, without creating any of them.
+// It fails if, for example, a constructor takes a class that isn't marked as a component.
+TEST(ComponentsTest, FitTogether) {
+    auto config = cppboot::config::Config::load({});
+    ASSERT_TRUE(config) << config.error().message();
+    auto logger = cppboot::logging::Logger::create({});
+    ASSERT_TRUE(logger) << logger.error().message();
+
+    cppboot::di::Container container;
+    container.registerInstance(std::make_shared<cppboot::config::Config>(std::move(config).value()));
+    container.registerInstance(std::make_shared<cppboot::logging::Logger>(std::move(logger).value()));
+    cppboot::generated::registerComponents(container);
+
+    const auto valid = container.validate();
+    EXPECT_TRUE(valid) << valid.error().message();
+}
+)"},
+    {"tests/greeting_test.cpp", R"(#include <gtest/gtest.h>
+
+#include "greeting.hpp"
+
+// A component is a plain class, so a test can create one and call it.
+TEST(GreetingServiceTest, Greets) {
+    const GreetingService greetings;
+    EXPECT_EQ(greetings.greeting(), "Hello from CppBoot!");
+}
+)",
+     ProjectFiles::PlainOnly},
+    {"tests/users_test.cpp", R"(#include <gtest/gtest.h>
+
+#include "users.hpp"
+
+// A component is a plain class, so a test can create one and call it, without a server.
+TEST(UserServiceTest, FindsAUser) {
+    const UserService users;
+    EXPECT_EQ(users.find(7).name, "user-7");
+}
+
+TEST(UserControllerTest, ReturnsTheUser) {
+    UserService users;
+    const UserController controller{users};
+    EXPECT_EQ(controller.get(7).id, 7);
+}
+)",
+     ProjectFiles::WebWithoutDatabase},
+    {".vscode/extensions.json", R"({
+  "recommendations": ["ms-vscode.cpptools", "llvm-vs-code-extensions.vscode-clangd"]
+}
+)"},
+    {".vscode/settings.json", R"({
+  // Both read the compiler's settings for each file from the first build, so run cppboot build once.
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+  "clangd.arguments": ["--compile-commands-dir=${workspaceFolder}/build", "--header-insertion=never"],
+  // The cppboot tasks configure the project, so CMake Tools doesn't need to.
+  "cmake.configureOnOpen": false,
+  "files.exclude": {
+    "build*/": true,
+    "dist/": true
+  }
+}
+)"},
+    // A different delimiter, because the patterns below contain )".
+    {".vscode/tasks.json", R"json({
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cppboot: build",
+      "type": "shell",
+      "command": "cppboot build",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": { "base": "$gcc", "fileLocation": ["autoDetect", "${workspaceFolder}/build"] }
+    },
+    {
+      "label": "cppboot: dev",
+      "detail": "Build and run, and do it again whenever you save a change",
+      "type": "shell",
+      "command": "cppboot dev",
+      "isBackground": true,
+      "problemMatcher": {
+        "base": "$gcc",
+        "fileLocation": ["autoDetect", "${workspaceFolder}/build"],
+        "background": {
+          "activeBegins": true,
+          "beginsPattern": "cppboot dev: (a file changed|restarting)",
+          "endsPattern": "cppboot dev: (running|the build failed)"
+        }
+      }
+    },
+    {
+      "label": "cppboot: run",
+      "type": "shell",
+      "command": "cppboot run",
+      "problemMatcher": { "base": "$gcc", "fileLocation": ["autoDetect", "${workspaceFolder}/build"] }
+    },
+    {
+      "label": "cppboot: test",
+      "type": "shell",
+      "command": "cppboot test",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": { "base": "$gcc", "fileLocation": ["autoDetect", "${workspaceFolder}/build"] }
+    }
+  ]
+}
+)json"},
+    {".vscode/launch.json", R"({
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug @NAME@",
+      "type": "cppdbg",
+      "request": "launch",
+      "preLaunchTask": "cppboot: build",
+      "program": "${workspaceFolder}/build/@NAME@",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
+      // On Windows, the debugger and the libraries the application needs are in MSYS2's folder,
+      // which the installer records in CPPBOOT_TOOLCHAIN.
+      "windows": {
+        "program": "${workspaceFolder}/build/@NAME@.exe",
+        "miDebuggerPath": "${env:CPPBOOT_TOOLCHAIN}/gdb.exe",
+        "environment": [{ "name": "PATH", "value": "${env:CPPBOOT_TOOLCHAIN};${env:PATH}" }]
+      }
+    }
+  ]
+}
+)"},
     {".gitignore", R"(build/
 build-*/
 dist/
@@ -520,7 +692,9 @@ Result<void> checkSanitizerAvailable(Sanitizer sanitizer) {
     return {};
 }
 
-Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer = Sanitizer::None) {
+/// Builds the application, or the target given instead.
+Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer = Sanitizer::None,
+                         const std::string& target = {}) {
     if (auto available = checkSanitizerAvailable(sanitizer); !available) {
         return available.error();
     }
@@ -549,7 +723,295 @@ Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer = Saniti
         }
     }
 
-    return runTool({"cmake", "--build", folder}, directory);
+    std::vector<std::string> command{"cmake", "--build", folder};
+    if (!target.empty()) {
+        command.insert(command.end(), {"--target", target});
+    }
+    return runTool(std::move(command), directory);
+}
+
+/// Builds the tests in tests/ and runs them, passing arguments such as --gtest_filter=Order* on.
+Result<int> testProject(const fs::path& directory, const std::vector<std::string>& arguments,
+                        Sanitizer sanitizer) {
+    auto name = readProjectName(directory);
+    if (!name) {
+        return name.error();
+    }
+    std::error_code ignored;
+    if (!fs::exists(directory / "tests", ignored)) {
+        return Error{ErrorCode::NotFound,
+                     "This project has no tests folder. Projects made with cppboot create have one."};
+    }
+
+    const std::string target = name.value() + "-tests";
+    auto built = buildProject(directory, sanitizer, target);
+    if (!built || built.value() != 0) {
+        return built;
+    }
+
+    std::vector<std::string> command{
+        (directory / buildFolder(sanitizer) / platform::executableFileName(target)).string()};
+    command.insert(command.end(), arguments.begin(), arguments.end());
+    // From the project folder, as the application runs, so the tests read the same cppboot.yaml.
+    return platform::runProcess({std::move(command), directory});
+}
+
+/// When each watched file last changed, and its size, which also catches a change within the same
+/// clock tick.
+using FileStates = std::map<fs::path, std::pair<fs::file_time_type, std::uintmax_t>>;
+
+/// The files that change what cppboot dev builds or runs: src, db, CMakeLists.txt and the settings.
+FileStates watchedFiles(const fs::path& directory) {
+    FileStates files;
+    const auto add = [&](const fs::path& path) {
+        std::error_code error;
+        const auto time = fs::last_write_time(path, error);
+        const auto size = error ? 0 : fs::file_size(path, error);
+        if (!error) {
+            files[path] = {time, size};
+        }
+    };
+
+    for (const char* folder : {"src", "db"}) {
+        std::error_code error;
+        for (fs::recursive_directory_iterator entry{directory / folder, error}, end;
+             !error && entry != end; entry.increment(error)) {
+            std::error_code type_error;
+            if (entry->is_regular_file(type_error)) {
+                add(entry->path());
+            }
+        }
+    }
+    std::error_code error;
+    for (const fs::directory_entry& entry : fs::directory_iterator{directory, error}) {
+        const std::string file = entry.path().filename().string();
+        if (file == "CMakeLists.txt" ||
+            (entry.path().extension() == ".yaml" && file.starts_with("cppboot"))) {
+            add(entry.path());
+        }
+    }
+    return files;
+}
+
+/// What someone typed while cppboot dev runs. A thread reads it, because reading waits.
+struct DevCommands {
+    std::atomic<bool> restart{false};
+    std::atomic<bool> quit{false};
+};
+
+std::shared_ptr<DevCommands> readDevCommands(std::istream& in) {
+    auto commands = std::make_shared<DevCommands>();
+    // It's left running at exit, still waiting for a line, so it holds only what outlives it.
+    std::thread{[commands, &in] {
+        std::string line;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            if (line == "q" || line == "quit") {
+                commands->quit = true;
+                return;
+            }
+            if (line == "r" || line.empty()) {
+                commands->restart = true;
+            }
+        }
+    }}.detach();
+    return commands;
+}
+
+/// Builds and runs the project, then does it again whenever a watched file changes, until Ctrl+C.
+Result<int> developProject(const fs::path& directory, const std::vector<std::string>& arguments,
+                           std::istream& in, std::ostream& out) {
+    using namespace std::chrono_literals;
+    auto name = readProjectName(directory);
+    if (!name) {
+        return name.error();
+    }
+    auto signal = platform::ShutdownSignal::install();
+    if (!signal) {
+        return signal.error();
+    }
+    const auto commands = readDevCommands(in);
+    const auto stopping = [&] { return signal.value().requested() || commands->quit.load(); };
+    const auto say = [&](std::string_view message) { out << "cppboot dev: " << message << std::endl; };
+
+    std::vector<std::string> command{
+        (directory / "build" / platform::executableFileName(name.value())).string()};
+    const auto first = !arguments.empty() && arguments.front() == "--" ? 1 : 0;
+    command.insert(command.end(), arguments.begin() + first, arguments.end());
+
+    std::optional<platform::ChildProcess> application;
+    FileStates seen;
+    bool rebuild = true;
+    while (!stopping()) {
+        if (rebuild) {
+            rebuild = false;
+            // On Windows, a running program can't be replaced, so it stops before the build.
+            if (application) {
+                application->stop(10s);
+                application.reset();
+            }
+            // Taken before the build, so that a change made during it starts another one.
+            seen = watchedFiles(directory);
+            auto built = buildProject(directory);
+            if (stopping()) {
+                break;
+            }
+            if (!built) {
+                say(built.error().message());
+            } else if (built.value() != 0) {
+                say("the build failed. Fix it and save, and it builds again.");
+            } else if (auto started = platform::ChildProcess::start({command, directory}); !started) {
+                say(started.error().message());
+            } else {
+                application = std::move(started).value();
+                say("running. It restarts when you save a change. Type r and Enter to restart now, or "
+                    "press Ctrl+C to stop.");
+            }
+        }
+
+        std::this_thread::sleep_for(250ms);
+        if (application) {
+            if (const auto code = application->exitCode()) {
+                say("the application stopped, with exit code " + std::to_string(*code) +
+                    ". It starts again when you save a change.");
+                application.reset();
+            }
+        }
+
+        FileStates now = watchedFiles(directory);
+        if (now != seen) {
+            // Editors often save in more than one step, so this waits until the files settle.
+            do {
+                seen = std::move(now);
+                std::this_thread::sleep_for(200ms);
+                now = watchedFiles(directory);
+            } while (now != seen && !stopping());
+            say("a file changed, so it's building again");
+            rebuild = true;
+        }
+        if (commands->restart.exchange(false)) {
+            say("restarting");
+            rebuild = true;
+        }
+    }
+
+    if (application) {
+        say("stopping the application");
+        application->stop(10s);
+    }
+    return 0;
+}
+
+/// Asks a question until it gets an answer that check accepts. Returns nothing at the end of input.
+std::optional<std::string> ask(std::istream& in, std::ostream& out, std::string_view question,
+                               std::string_view fallback,
+                               const std::function<bool(const std::string&)>& check) {
+    while (true) {
+        out << question << (fallback.empty() ? "" : " [" + std::string{fallback} + "]") << ": "
+            << std::flush;
+        std::string answer;
+        if (!std::getline(in, answer)) {
+            out << '\n';
+            return std::nullopt;
+        }
+        while (!answer.empty() && std::isspace(static_cast<unsigned char>(answer.back())) != 0) {
+            answer.pop_back();
+        }
+        answer.erase(0, answer.find_first_not_of(" \t"));
+        if (answer.empty()) {
+            answer = fallback;
+        }
+        if (check(answer)) {
+            return answer;
+        }
+    }
+}
+
+std::optional<bool> askYesNo(std::istream& in, std::ostream& out, std::string_view question) {
+    const auto answer = ask(in, out, std::string{question} + " (y/n)", "n", [&](const std::string& text) {
+        const bool known = text == "y" || text == "yes" || text == "n" || text == "no";
+        if (!known) {
+            out << "  Answer y or n.\n";
+        }
+        return known;
+    });
+    if (!answer) {
+        return std::nullopt;
+    }
+    return answer->front() == 'y';
+}
+
+/// Asks for what cppboot create would otherwise take as arguments.
+std::optional<std::pair<std::string, ProjectOptions>> askForProject(std::istream& in,
+                                                                     std::ostream& out) {
+    const auto name = ask(in, out, "Project name", "", [&](const std::string& text) {
+        auto valid = validateProjectName(text);
+        if (!valid) {
+            out << "  " << valid.error().message() << '\n';
+            return false;
+        }
+        std::error_code ignored;
+        if (fs::exists(fs::current_path() / text, ignored)) {
+            out << "  A folder with that name already exists here.\n";
+            return false;
+        }
+        return true;
+    });
+    if (!name) {
+        return std::nullopt;
+    }
+
+    ProjectOptions options;
+    const auto web = askYesNo(in, out, "A web API, with a sample controller?");
+    if (!web) {
+        return std::nullopt;
+    }
+    options.web = *web;
+    if (options.web) {
+        const auto database = ask(in, out, "Database: none, sqlite or postgresql?", "none",
+                                  [&](const std::string& text) {
+                                      const bool known = text == "none" || text == "sqlite" ||
+                                                         text == "postgresql";
+                                      if (!known) {
+                                          out << "  Answer none, sqlite or postgresql.\n";
+                                      }
+                                      return known;
+                                  });
+        if (!database) {
+            return std::nullopt;
+        }
+        options.database = *database == "sqlite"       ? ProjectDatabase::Sqlite
+                           : *database == "postgresql" ? ProjectDatabase::Postgresql
+                                                       : ProjectDatabase::None;
+        const auto security = askYesNo(in, out, "Sign-in and protected routes?");
+        if (!security) {
+            return std::nullopt;
+        }
+        options.security = *security;
+    }
+    const auto actuator = askYesNo(in, out, "Health and metrics routes?");
+    if (!actuator) {
+        return std::nullopt;
+    }
+    options.actuator = *actuator;
+    return std::pair{*name, options};
+}
+
+/// What to set before running a new project, if anything.
+void printNextSteps(std::ostream& out, const std::string& name, const ProjectOptions& options) {
+    out << "Created " << name << ". Next:\n  cd " << name << '\n';
+    if (options.security) {
+#if defined(_WIN32)
+        out << "  $env:CPPBOOT_SECURITY_JWT_SECRET = '<at least 32 random characters>'\n"
+               "  $env:CPPBOOT_MYAPP_PASSWORD = '<a password for the sample account>'\n";
+#else
+        out << "  export CPPBOOT_SECURITY_JWT_SECRET='<at least 32 random characters>'\n"
+               "  export CPPBOOT_MYAPP_PASSWORD='<a password for the sample account>'\n";
+#endif
+    }
+    out << "  cppboot run\n";
 }
 
 Result<int> runProject(const fs::path& directory, std::vector<std::string> arguments,
@@ -701,6 +1163,9 @@ constexpr std::string_view kFixLibclang =
 constexpr std::string_view kFixLibraries =
     "Run the installer again, which installs the libraries CppBoot needs";
 constexpr std::string_view kFromSource = "install.ps1 -FromSource";
+constexpr std::string_view kFixGoogleTest =
+    "Install it in MSYS2: pacman -S mingw-w64-ucrt-x86_64-gtest";
+constexpr std::string_view kFixDebugger = "Install it in MSYS2: pacman -S mingw-w64-ucrt-x86_64-gdb";
 #else
 constexpr std::string_view kInstallAgain =
     "Run the installer again: curl -fsSL "
@@ -712,6 +1177,8 @@ constexpr std::string_view kFixLibraries =
     "Install them: sudo apt-get install g++ libyaml-cpp-dev libspdlog-dev libboost-dev "
     "nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev libgtest-dev";
 constexpr std::string_view kFromSource = "install.sh --from-source";
+constexpr std::string_view kFixGoogleTest = "Install it: sudo apt-get install libgtest-dev";
+constexpr std::string_view kFixDebugger = "Install it: sudo apt-get install gdb";
 #endif
 
 /// Programs that CMake runs need the toolchain on PATH. On Windows, the installer records MSYS2's
@@ -830,8 +1297,9 @@ private:
 constexpr std::string_view kProbeProject = R"(cmake_minimum_required(VERSION 3.25)
 project(cppboot_doctor LANGUAGES CXX)
 find_package(CppBoot CONFIG REQUIRED)
+find_package(GTest QUIET)
 file(WRITE ${CMAKE_BINARY_DIR}/doctor.txt
-    "cmake=${CMAKE_VERSION}\ncompiler_id=${CMAKE_CXX_COMPILER_ID}\ncompiler_version=${CMAKE_CXX_COMPILER_VERSION}\n")
+    "cmake=${CMAKE_VERSION}\ncompiler_id=${CMAKE_CXX_COMPILER_ID}\ncompiler_version=${CMAKE_CXX_COMPILER_VERSION}\ngtest=${GTest_FOUND}\n")
 )";
 
 /// Builds and runs a sample web project with a database, which uses most of the SDK.
@@ -902,6 +1370,15 @@ int runDoctor(std::ostream& out, bool full) {
         report.ok("Ninja", firstLine(ninja->output));
     }
 
+    // Only debugging needs it, so it's a warning.
+    const auto gdb = capture({"gdb", "--version"});
+    if (!gdb || gdb->exit_code != 0) {
+        report.warn("Debugger", "gdb isn't on PATH, so editors can't debug projects",
+                    std::string{kFixDebugger});
+    } else {
+        report.ok("Debugger", firstLine(gdb->output));
+    }
+
     const auto codegen =
         capture({(prefix.value() / "bin" / platform::executableFileName("cppboot-codegen")).string(),
                  "--print-resource-dir"});
@@ -936,6 +1413,12 @@ int runDoctor(std::ostream& out, bool full) {
             report.ok("Compiler and libraries", "a test project found CppBoot and everything it "
                                                 "needs, with " +
                                                     compiler);
+            if (found.count("gtest") != 0 && (found.at("gtest") == "TRUE" || found.at("gtest") == "1")) {
+                report.ok("GoogleTest", "found, so cppboot test works");
+            } else {
+                report.warn("GoogleTest", "not found, so cppboot test won't work",
+                            std::string{kFixGoogleTest});
+            }
 
             if (built_with.count("compiler_id") != 0 && found.count("compiler_id") != 0) {
                 const std::string sdk_compiler =
@@ -1069,6 +1552,13 @@ Result<std::string> readProjectName(const fs::path& directory) {
 }
 
 int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostream& err) {
+    // Never destroyed, because cppboot dev reads its input on a thread that it leaves running.
+    static auto* const nothing = new std::istringstream;
+    return run(arguments, *nothing, out, err);
+}
+
+int run(const std::vector<std::string>& arguments, std::istream& in, std::ostream& out,
+        std::ostream& err) {
     if (arguments.empty()) {
         err << kUsage;
         return kExitUsage;
@@ -1108,6 +1598,21 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
                 names.push_back(argument);
             }
         }
+        // With no arguments at all, it asks.
+        if (rest.empty()) {
+            auto answers = askForProject(in, out);
+            if (!answers) {
+                err << "cppboot: no answers to read. Give the name instead: cppboot create <name>\n";
+                return kExitUsage;
+            }
+            if (auto created = createProject(answers->first, fs::current_path(), answers->second);
+                !created) {
+                err << "cppboot: " << created.error().message() << '\n';
+                return 1;
+            }
+            printNextSteps(out, answers->first, answers->second);
+            return 0;
+        }
         if (names.size() != 1 || (sqlite && postgresql)) {
             err << kUsage;
             return kExitUsage;
@@ -1126,9 +1631,37 @@ int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostre
         if (auto created = createProject(names.front(), fs::current_path(), options); !created) {
             result = created.error();
         } else {
-            out << "Created " << names.front() << ". Next:\n  cd " << names.front()
-                << "\n  cppboot run\n";
+            printNextSteps(out, names.front(), options);
         }
+    } else if (command == "add") {
+        if (rest.size() != 2) {
+            err << kUsage;
+            return kExitUsage;
+        }
+        auto added = addComponent(fs::current_path(), rest[0], rest[1]);
+        if (!added) {
+            result = added.error();
+        } else {
+            for (const fs::path& file : added.value()) {
+                out << "Created " << file.generic_string() << '\n';
+            }
+            out << "The next build finds it, with no registration needed.\n";
+        }
+    } else if (command == "dev") {
+        out.flush();
+        result = developProject(fs::current_path(), rest, in, out);
+    } else if (command == "test") {
+        std::vector<std::string> remaining = rest;
+        const auto sanitizer = takeSanitizer(remaining);
+        if (!sanitizer) {
+            err << kUsage;
+            return kExitUsage;
+        }
+        if (!remaining.empty() && remaining.front() == "--") {
+            remaining.erase(remaining.begin());
+        }
+        out.flush();
+        result = testProject(fs::current_path(), remaining, *sanitizer);
     } else if (command == "build" || command == "run") {
         std::vector<std::string> remaining = rest;
         const auto sanitizer = takeSanitizer(remaining);

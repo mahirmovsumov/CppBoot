@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 
+#include "generators.hpp"
 #include "package_files.hpp"
 
 using cppboot::ErrorCode;
@@ -291,6 +292,133 @@ TEST_F(CliTest, PackageTakesNoArguments) {
     std::ostringstream out;
     std::ostringstream err;
     EXPECT_EQ(cppboot::cli::run({"package", "extra"}, out, err), cppboot::cli::kExitUsage);
+}
+
+TEST_F(CliTest, ProjectsHaveTestsThatAreLeftOutOfNormalBuilds) {
+    ASSERT_TRUE(createProject("plain", directory_));
+    ASSERT_TRUE(createProject("web-app", directory_, {.web = true}));
+    ASSERT_TRUE(createProject("store", directory_, {.web = true, .database = cppboot::cli::ProjectDatabase::Sqlite}));
+
+    for (const char* name : {"plain", "web-app", "store"}) {
+        const auto root = directory_ / name;
+        EXPECT_TRUE(std::filesystem::exists(root / "tests" / "components_test.cpp")) << name;
+        const std::string cmake = readFile(root / "CMakeLists.txt");
+        EXPECT_NE(cmake.find(std::string{"add_executable("} + name + "-tests EXCLUDE_FROM_ALL"),
+                  std::string::npos)
+            << name;
+    }
+    EXPECT_TRUE(std::filesystem::exists(directory_ / "plain" / "tests" / "greeting_test.cpp"));
+    EXPECT_NE(readFile(directory_ / "plain" / ".vscode" / "launch.json").find("build/plain.exe"),
+              std::string::npos);
+    EXPECT_NE(readFile(directory_ / "plain" / ".vscode" / "tasks.json").find("cppboot dev"),
+              std::string::npos);
+    EXPECT_TRUE(std::filesystem::exists(directory_ / "web-app" / "tests" / "users_test.cpp"));
+    // The store's sample needs a database, so it only has the wiring test.
+    EXPECT_FALSE(std::filesystem::exists(directory_ / "store" / "tests" / "users_test.cpp"));
+}
+
+TEST_F(CliTest, CreateAsksWhenGivenNoArguments) {
+    const auto previous = std::filesystem::current_path();
+    std::filesystem::current_path(directory_);
+    // An invalid name and an unknown answer are asked again.
+    std::istringstream in{"2bad\nasked\ny\nmysql\nsqlite\n\ny\n"};
+    std::ostringstream out;
+    std::ostringstream err;
+    const int code = cppboot::cli::run({"create"}, in, out, err);
+    std::filesystem::current_path(previous);
+
+    ASSERT_EQ(code, 0) << err.str();
+    const auto root = directory_ / "asked";
+    const std::string cmake = readFile(root / "CMakeLists.txt");
+    EXPECT_NE(cmake.find("cppboot::data"), std::string::npos);
+    EXPECT_NE(cmake.find("ACTUATOR"), std::string::npos);
+    EXPECT_EQ(cmake.find("cppboot::security"), std::string::npos);
+    EXPECT_NE(readFile(root / "cppboot.yaml").find("sqlite:asked.db"), std::string::npos);
+    EXPECT_NE(out.str().find("Answer none, sqlite or postgresql"), std::string::npos);
+}
+
+TEST_F(CliTest, CreateWithNothingToReadFails) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cppboot::cli::run({"create"}, out, err), cppboot::cli::kExitUsage);
+}
+
+TEST_F(CliTest, AddWritesAMarkedClass) {
+    ASSERT_TRUE(createProject("app", directory_));
+    const auto root = directory_ / "app";
+
+    const auto added = cppboot::cli::addComponent(root, "service", "OrderItem");
+    ASSERT_TRUE(added) << added.error().describe();
+    ASSERT_EQ(added.value().size(), 1u);
+    EXPECT_EQ(added.value().front().generic_string(), "src/order_item_service.hpp");
+    const std::string header = readFile(root / "src" / "order_item_service.hpp");
+    EXPECT_NE(header.find("class CPPBOOT_SERVICE OrderItemService"), std::string::npos);
+    EXPECT_EQ(header.find('@'), std::string::npos);
+
+    // A name that already has the suffix keeps it once.
+    ASSERT_TRUE(cppboot::cli::addComponent(root, "module", "ReportModule"));
+    EXPECT_TRUE(std::filesystem::exists(root / "src" / "report_module.hpp"));
+}
+
+TEST_F(CliTest, AddNeverOverwrites) {
+    ASSERT_TRUE(createProject("app", directory_));
+    const auto root = directory_ / "app";
+    ASSERT_TRUE(cppboot::cli::addComponent(root, "service", "Order"));
+    std::ofstream{root / "src" / "order_service.hpp", std::ios::binary} << "mine";
+
+    const auto again = cppboot::cli::addComponent(root, "service", "Order");
+    ASSERT_FALSE(again);
+    EXPECT_EQ(again.error().code(), ErrorCode::InvalidState);
+    EXPECT_EQ(readFile(root / "src" / "order_service.hpp"), "mine");
+}
+
+TEST_F(CliTest, AddChecksTheNameKindAndProject) {
+    ASSERT_TRUE(createProject("app", directory_));
+    const auto root = directory_ / "app";
+    for (const char* name : {"", "order", "Order-Item", "Order Item", "../Evil"}) {
+        EXPECT_FALSE(cppboot::cli::addComponent(root, "service", name)) << name;
+    }
+    EXPECT_FALSE(cppboot::cli::addComponent(root, "widget", "Order"));
+    // A plain project has no web server, database or actuator.
+    EXPECT_FALSE(cppboot::cli::addComponent(root, "controller", "Order"));
+    EXPECT_FALSE(cppboot::cli::addComponent(root, "repository", "Order"));
+    EXPECT_FALSE(cppboot::cli::addComponent(root, "health", "Queue"));
+    EXPECT_FALSE(cppboot::cli::addComponent(directory_, "service", "Order"));
+    EXPECT_FALSE(std::filesystem::exists(root / "src" / "order_controller.hpp"));
+}
+
+TEST_F(CliTest, AddRepositoryWritesTheNextMigration) {
+    ASSERT_TRUE(createProject("store", directory_, {.web = true, .database = cppboot::cli::ProjectDatabase::Postgresql}));
+    const auto root = directory_ / "store";
+
+    const auto added = cppboot::cli::addComponent(root, "repository", "Order");
+    ASSERT_TRUE(added) << added.error().describe();
+    ASSERT_EQ(added.value().size(), 2u);
+    const auto migration = root / "db" / "migrations" / "002_create_orders.sql";
+    ASSERT_TRUE(std::filesystem::exists(migration));
+    EXPECT_NE(readFile(migration).find("CREATE TABLE orders"), std::string::npos);
+    EXPECT_NE(readFile(migration).find("BIGSERIAL"), std::string::npos);
+    EXPECT_NE(readFile(root / "src" / "order_repository.hpp").find("FROM orders"), std::string::npos);
+
+    // The users table already exists, so a User repository would fail at startup.
+    EXPECT_FALSE(cppboot::cli::addComponent(root, "repository", "User"));
+}
+
+TEST_F(CliTest, AddControllerUsesAPluralPath) {
+    ASSERT_TRUE(createProject("web-app", directory_, {.web = true, .actuator = true}));
+    const auto root = directory_ / "web-app";
+    ASSERT_TRUE(cppboot::cli::addComponent(root, "controller", "Invoice"));
+    EXPECT_NE(readFile(root / "src" / "invoice_controller.hpp").find("CPPBOOT_CONTROLLER(\"/api/invoices\")"),
+              std::string::npos);
+    EXPECT_TRUE(cppboot::cli::addComponent(root, "middleware", "Audit"));
+    EXPECT_TRUE(cppboot::cli::addComponent(root, "health", "Queue"));
+}
+
+TEST_F(CliTest, AddAndTestNeedTheirArguments) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cppboot::cli::run({"add", "service"}, out, err), cppboot::cli::kExitUsage);
+    EXPECT_EQ(cppboot::cli::run({"test", "--sanitize=memory"}, out, err), cppboot::cli::kExitUsage);
 }
 
 TEST_F(CliTest, InfoPrintsTheVersion) {

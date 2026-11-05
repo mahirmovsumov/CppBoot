@@ -133,6 +133,36 @@ Run `cppboot run`, and the log now ends with `Good morning, CppBoot.`. You can o
 cppboot run --greeting.name=Alex
 ```
 
+## Restart on every change
+
+Instead of running `cppboot run` after each change, run this once:
+
+```powershell
+cppboot dev
+```
+
+It builds and starts the application, and each time you save a file in `src`, it stops the application, builds it and starts it again. Press Ctrl+C to stop it.
+
+## Test it
+
+The project came with tests in `tests/`. Run them:
+
+```powershell
+cppboot test
+```
+
+`tests/greeting_test.cpp` creates a `GreetingService` and checks what it returns, because a component is a plain class. `tests/components_test.cpp` checks that every component can get what its constructor asks for, so it would have caught the mistake from earlier too.
+
+## Add more with the CLI
+
+`cppboot add` writes a marked class for you. This adds `src/billing_service.hpp`, which the next build finds:
+
+```powershell
+cppboot add service Billing
+```
+
+See the [command-line guide](../guides/cli.md#cppboot-add-kind-name) for every kind.
+
 ## Next steps
 
 - [Build a REST API](rest-api.md).

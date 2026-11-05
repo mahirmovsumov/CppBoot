@@ -31,7 +31,12 @@ Result<void> createProject(std::string_view name, const std::filesystem::path& p
 /// Reads the application name of the project in a directory.
 Result<std::string> readProjectName(const std::filesystem::path& directory);
 
-/// Runs a command, where arguments excludes the program name, and returns the exit code.
+/// Runs a command, where arguments excludes the program name, and returns the exit code. Commands
+/// that ask questions, such as create with no name, read the answers from in.
+int run(const std::vector<std::string>& arguments, std::istream& in, std::ostream& out,
+        std::ostream& err);
+
+/// Runs a command with nothing to read answers from.
 int run(const std::vector<std::string>& arguments, std::ostream& out, std::ostream& err);
 
 }  // namespace cppboot::cli
