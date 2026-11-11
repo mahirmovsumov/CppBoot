@@ -18,6 +18,9 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 
 ### Fewer dependencies
 
+- Settings files no longer use yaml-cpp. CppBoot's own reader handles the YAML that settings use, and names the line of anything else. See [what a settings file can contain](docs/guides/configuration.md#what-a-settings-file-can-contain).
+- **Change:** a key written twice in the same map is now an error. Before, the last one silently won.
+- A fuzz job in CI feeds random input to the settings reader for two minutes on every push.
 - Logging no longer uses spdlog and {fmt}. CppBoot's own logger writes the same lines, with the level in color on a terminal, and turns color off for `NO_COLOR`, pipes and files. Nothing changes for applications.
 
 ### Health and metrics

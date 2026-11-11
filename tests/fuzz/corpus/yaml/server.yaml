@@ -1,0 +1,4 @@
+cppboot:
+  server:
+    port: 8080
+    trusted_proxies: [10.0.0.1, "::1"]

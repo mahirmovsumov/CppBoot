@@ -11,6 +11,7 @@ option(CPPBOOT_BUILD_TESTS "Build CppBoot tests" ON)
 option(CPPBOOT_BUILD_EXAMPLES "Build CppBoot examples" ON)
 option(CPPBOOT_BUILD_CODEGEN "Build the code generator, which requires libclang" ON)
 option(CPPBOOT_BUILD_BENCHMARKS "Build the benchmark server and load generator" OFF)
+option(CPPBOOT_BUILD_FUZZERS "Build the parser fuzz targets, which need Clang" OFF)
 option(CPPBOOT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(CPPBOOT_BUNDLE_RUNTIME "Install the shared libraries that the SDK's own programs need, for a downloadable SDK on Windows" OFF)
 
@@ -20,7 +21,6 @@ include(cmake/CppBootTargets.cmake)
 include(cmake/CppBootCodegen.cmake)
 
 find_package(Threads REQUIRED)
-find_package(yaml-cpp CONFIG REQUIRED)
 find_package(Boost CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(PostgreSQL REQUIRED)
@@ -90,6 +90,10 @@ endif()
 
 if(CPPBOOT_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
+endif()
+
+if(CPPBOOT_BUILD_FUZZERS)
+    add_subdirectory(tests/fuzz)
 endif()
 
 if(CPPBOOT_BUILD_TESTS)

@@ -3,7 +3,6 @@
 include(CMakeFindDependencyMacro)
 include("${CMAKE_CURRENT_LIST_DIR}/CppBootPreferToolchain.cmake")
 find_dependency(Threads)
-find_dependency(yaml-cpp CONFIG)
 find_dependency(Boost CONFIG)
 find_dependency(nlohmann_json CONFIG)
 find_dependency(PostgreSQL)

@@ -18,6 +18,7 @@ add_executable(cppboot-unit-tests
     unit/result_test.cpp
     unit/signals_test.cpp
     unit/worker_group_test.cpp
+    unit/yaml_test.cpp
 )
 
 target_link_libraries(cppboot-unit-tests PRIVATE
@@ -27,8 +28,11 @@ target_link_libraries(cppboot-unit-tests PRIVATE
 )
 target_compile_definitions(cppboot-unit-tests PRIVATE
     CPPBOOT_TEST_CHILD="$<TARGET_FILE:cppboot-test-child>"
+    CPPBOOT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 add_dependencies(cppboot-unit-tests cppboot-test-child)
+# For parsers that are internal to their libraries.
+target_include_directories(cppboot-unit-tests PRIVATE ${PROJECT_SOURCE_DIR}/framework/config/src)
 
 cppboot_apply_compiler_options(cppboot-unit-tests)
 

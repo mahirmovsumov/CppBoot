@@ -6,7 +6,6 @@ CppBoot is licensed under the [Apache License 2.0](LICENSE). It uses these proje
 |---|---|---|---|
 | [Boost](https://www.boost.org) (Asio and Beast) | Boost Software License 1.0 | The web server | Applications, as compiled code |
 | [nlohmann/json](https://github.com/nlohmann/json) | MIT | JSON, and part of the public API as `cppboot::web::Json` | Applications, as compiled code |
-| [yaml-cpp](https://github.com/jbeder/yaml-cpp) | MIT | Reading `cppboot.yaml` | Packages, as a shared library |
 | [OpenSSL](https://www.openssl.org) | Apache License 2.0 | HTTPS, tokens and password hashing | Packages, as shared libraries |
 | [libpq](https://www.postgresql.org) | PostgreSQL License | PostgreSQL access | Packages, as a shared library |
 | [SQLite](https://www.sqlite.org) | Public domain | SQLite access | Packages, as a shared library |

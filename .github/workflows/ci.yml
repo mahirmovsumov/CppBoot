@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - run: cmake --preset ${{ matrix.preset }}
       - run: cmake --build --preset ${{ matrix.preset }}
       - run: ctest --preset ${{ matrix.preset }}
@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - run: cmake --preset release
       - run: cmake --build --preset release
       - run: cmake --install build/release --prefix "$RUNNER_TEMP/sdk"
@@ -77,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - name: Build
         env:
           FLAGS: ${{ matrix.flags }}
@@ -90,6 +90,31 @@ jobs:
         env:
           STRESS_IO_THREADS: 4
 
+  # Random input for each parser that reads text CppBoot didn't write, under the memory checker.
+  # Everything is built with coverage for libFuzzer, so it can find paths inside the libraries.
+  fuzz:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+      - name: Build
+        run: |
+          cmake -S . -B build/fuzz -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined" \
+            -DCPPBOOT_BUILD_FUZZERS=ON -DCPPBOOT_BUILD_TESTS=OFF -DCPPBOOT_BUILD_EXAMPLES=OFF \
+            -DCPPBOOT_BUILD_CODEGEN=OFF
+          cmake --build build/fuzz --target cppboot-fuzzers
+      - name: Fuzz
+        run: |
+          for fuzzer in build/fuzz/tests/fuzz/cppboot-*-fuzz; do
+            name="$(basename "$fuzzer" | sed -e 's/^cppboot-//' -e 's/-fuzz$//')"
+            corpus="$RUNNER_TEMP/corpus-$name"
+            cp -r "tests/fuzz/corpus/$name" "$corpus"
+            echo "=== $name"
+            "$fuzzer" -max_total_time=120 -max_len=4096 -timeout=5 "$corpus"
+          done
+
   windows:
     runs-on: windows-latest
     defaults:
@@ -100,7 +125,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          pacboy: gcc:p clang:p cmake:p ninja:p yaml-cpp:p gtest:p boost:p nlohmann-json:p postgresql:p sqlite3:p openssl:p
+          pacboy: gcc:p clang:p cmake:p ninja:p gtest:p boost:p nlohmann-json:p postgresql:p sqlite3:p openssl:p
       - run: cmake --preset dev
       - run: cmake --build --preset dev
       - run: ctest --preset dev

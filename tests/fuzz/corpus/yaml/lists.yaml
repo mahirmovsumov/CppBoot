@@ -1,0 +1,13 @@
+routes:
+  - path: /a
+    limit: 5
+  - plain
+text: |
+  one
+  two
+folded: >-
+  a
+
+  b
+q: "é\x41\n"
+s: 'it''s'

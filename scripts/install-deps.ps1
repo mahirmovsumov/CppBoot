@@ -14,7 +14,7 @@ $env:CHERE_INVOKING = '1'
 & $bash -lc 'pacman -Syu --noconfirm'
 & $bash -lc 'pacman -Syu --noconfirm'
 
-$packages = 'gcc', 'clang', 'cmake', 'ninja', 'gdb', 'yaml-cpp', 'gtest', 'boost', 'nlohmann-json', 'postgresql', 'sqlite3', 'openssl' |
+$packages = 'gcc', 'clang', 'cmake', 'ninja', 'gdb', 'gtest', 'boost', 'nlohmann-json', 'postgresql', 'sqlite3', 'openssl' |
     ForEach-Object { "mingw-w64-ucrt-x86_64-$_" }
 & $bash -lc "pacman -S --needed --noconfirm $($packages -join ' ')"
 if ($LASTEXITCODE -ne 0) { throw "pacman failed with exit code $LASTEXITCODE" }

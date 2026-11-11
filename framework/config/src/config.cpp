@@ -1,14 +1,15 @@
 #include "cppboot/config/config.hpp"
 
-#include <yaml-cpp/yaml.h>
-
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <charconv>
 #include <fstream>
+#include <sstream>
 #include <system_error>
 #include <utility>
+
+#include "yaml.hpp"
 
 namespace cppboot::config {
 
@@ -38,48 +39,45 @@ std::string lowercase(std::string_view text) {
     return result;
 }
 
-void flatten(const YAML::Node& node, const std::string& prefix, Config::Values& out) {
-    switch (node.Type()) {
-        case YAML::NodeType::Map:
-            for (const auto& entry : node) {
-                const auto key = entry.first.as<std::string>();
-                flatten(entry.second, prefix.empty() ? key : prefix + "." + key, out);
+void flatten(const detail::YamlNode& node, const std::string& prefix, Config::Values& out) {
+    switch (node.kind) {
+        case detail::YamlNode::Kind::Map:
+            for (const auto& [key, value] : node.entries) {
+                flatten(value, prefix.empty() ? key : prefix + "." + key, out);
             }
             break;
-        case YAML::NodeType::Sequence: {
-            std::size_t index = 0;
-            for (const auto& entry : node) {
-                flatten(entry, prefix + "." + std::to_string(index), out);
-                ++index;
+        case detail::YamlNode::Kind::Sequence:
+            for (std::size_t index = 0; index < node.items.size(); ++index) {
+                flatten(node.items[index], prefix + "." + std::to_string(index), out);
             }
             break;
-        }
-        case YAML::NodeType::Scalar:
-            out.insert_or_assign(prefix, node.Scalar());
+        case detail::YamlNode::Kind::Scalar:
+            out.insert_or_assign(prefix, node.scalar);
             break;
-        case YAML::NodeType::Null:
-        case YAML::NodeType::Undefined:
+        case detail::YamlNode::Kind::Null:
             break;
     }
 }
 
 Result<void> mergeYamlFile(const std::filesystem::path& path, Config::Values& values) {
-    std::ifstream input{path};
+    std::ifstream input{path, std::ios::binary};
     if (!input) {
         return Error{ErrorCode::IoError, "Cannot open configuration file " + path.generic_string()};
     }
+    std::stringstream text;
+    text << input.rdbuf();
 
-    try {
-        const YAML::Node root = YAML::Load(input);
-        if (!root.IsNull() && !root.IsMap()) {
-            return Error{ErrorCode::ParseError,
-                         "Configuration file must contain a map: " + path.generic_string()};
-        }
-        flatten(root, {}, values);
-    } catch (const YAML::Exception& exception) {
+    auto root = detail::parseYaml(text.str());
+    if (!root) {
         return Error{ErrorCode::ParseError,
-                     "Invalid YAML in " + path.generic_string() + ": " + exception.what()};
+                     "Invalid YAML in " + path.generic_string() + ", " + root.error().message()};
     }
+    if (root.value().kind != detail::YamlNode::Kind::Null &&
+        root.value().kind != detail::YamlNode::Kind::Map) {
+        return Error{ErrorCode::ParseError,
+                     "Configuration file must contain a map: " + path.generic_string()};
+    }
+    flatten(root.value(), {}, values);
     return {};
 }
 

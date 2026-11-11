@@ -25,6 +25,31 @@ cppboot:
     - two           # cppboot.hosts.1
 ```
 
+### What a settings file can contain
+
+CppBoot reads the part of YAML that settings need, with its own reader:
+
+| Form | Example |
+|---|---|
+| Nested keys, indented with spaces | `server:` then `  port: 8080` |
+| Lists, one item per line | `- 10.0.0.1` |
+| Lists on one line | `trusted_proxies: [10.0.0.1, "::1"]` |
+| Lists of maps | `- path: /a` then `  limit: 5` |
+| Quoted values | `"x: y"`, `'it''s'`, with `\n`, `\t`, `é` and other escapes in double quotes |
+| Text over several lines | `\|` keeps line breaks, `>` joins lines, and `-` or `+` after either drops or keeps the final breaks |
+| Comments | `port: 8080  # the default` |
+| No value | `key:`, `~` or `null`, which leave the setting unset |
+
+A file that uses anything else stops the application with the line number and what's wrong, rather than being read differently from what you meant:
+
+- anchors and aliases (`&` and `*`), tags (`!!str`), `{a: 1}` maps and `?` keys
+- a plain value over several lines, which needs `|` or `>`
+- a key written twice in the same map
+- tabs for indentation
+- more than one document in a file
+
+A value containing `: ` or starting with a character YAML reserves, such as `@`, needs quotes.
+
 ## Your own settings
 
 You can use any key name for your application's settings:

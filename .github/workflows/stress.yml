@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install dependencies
         if: inputs.only == '' || inputs.only == matrix.name
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - name: Build
         if: inputs.only == '' || inputs.only == matrix.name
         env:
