@@ -11,12 +11,19 @@ namespace cppboot::config::detail {
 
 struct YamlNode {
     enum class Kind { Null, Scalar, Map, Sequence };
+    /// Defined below, where YamlNode is complete, which Clang needs for the vector.
+    struct Entry;
 
     Kind kind{Kind::Null};
     std::string scalar;
     /// A map's keys and values, in the order written.
-    std::vector<std::pair<std::string, YamlNode>> entries;
+    std::vector<Entry> entries;
     std::vector<YamlNode> items;
+};
+
+struct YamlNode::Entry {
+    std::string key;
+    YamlNode value;
 };
 
 /// Reads the part of YAML that settings files use: nested keys, lists written with - or [a, b],

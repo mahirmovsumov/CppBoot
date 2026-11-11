@@ -43,12 +43,13 @@ public:
     using Array = std::vector<Json>;
     using Object = std::vector<JsonMember>;
 
-    Json() = default;
-    Json(std::nullptr_t) {}
-    Json(bool value) : value_(value) {}
-    Json(const char* text) : value_(std::string{text}) {}
-    Json(std::string text) : value_(std::move(text)) {}
-    Json(std::string_view text) : value_(std::string{text}) {}
+    // Defined after JsonMember, because building the variant needs Object's element type complete.
+    Json();
+    Json(std::nullptr_t);
+    Json(bool value);
+    Json(const char* text);
+    Json(std::string text);
+    Json(std::string_view text);
 
     /// Any type with a JsonConvert, such as numbers, containers and CPPBOOT_JSON structs.
     template <typename T>
@@ -154,6 +155,12 @@ struct JsonMember {
     Json value;
 };
 
+inline Json::Json() = default;
+inline Json::Json(std::nullptr_t) {}
+inline Json::Json(bool value) : value_(value) {}
+inline Json::Json(const char* text) : value_(std::string{text}) {}
+inline Json::Json(std::string text) : value_(std::move(text)) {}
+inline Json::Json(std::string_view text) : value_(std::string{text}) {}
 inline Json::Json(const Json& other) = default;
 inline Json::Json(Json&& other) noexcept = default;
 inline Json& Json::operator=(const Json& other) = default;

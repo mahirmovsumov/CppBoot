@@ -452,13 +452,13 @@ private:
             }
             const bool duplicate = std::any_of(
                 node.entries.begin(), node.entries.end(),
-                [&](const auto& entry) { return entry.first == split->key; });
+                [&](const YamlNode::Entry& entry) { return entry.key == split->key; });
             if (duplicate) {
                 fail(line.number, "the key '" + split->key + "' appears twice");
             }
             ++next_;
             YamlNode value = valueAfter(split->rest, line, indent, depth, true);
-            node.entries.emplace_back(std::move(split->key), std::move(value));
+            node.entries.push_back(YamlNode::Entry{std::move(split->key), std::move(value)});
         }
         return node;
     }
