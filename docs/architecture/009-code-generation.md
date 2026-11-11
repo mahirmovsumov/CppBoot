@@ -35,7 +35,7 @@ The generator also rejects missing dependencies, two providers of the same type 
 
 ## JSON and controllers
 
-`CPPBOOT_JSON` generates a specialization of `nlohmann::adl_serializer` for each marked struct, which also handles nested structs. These are defined in the generated header, so user headers can't convert marked structs themselves. `WithStatus<T>` exists for this reason: a controller can choose a status while generated code does the conversion.
+`CPPBOOT_JSON` generates a specialization of `cppboot::JsonConvert` for each marked struct. Its functions are templates, so a struct can hold another whose conversion comes later in the file. Reading a field goes through `detail::readJsonField`, which puts the field's name in any error, so a client is told which field was wrong. These are defined in the generated header, so user headers can't convert marked structs themselves. `WithStatus<T>` exists for this reason: a controller can choose a status while generated code does the conversion.
 
 `CPPBOOT_CONTROLLER` makes a class a component and generates its routes. All route code is in the generated header, in a factory that registers `Router`, and `ServerModule` is registered with it. An application with no controllers doesn't need `cppboot-web`, because the generated header only includes web headers when it uses them.
 

@@ -34,6 +34,21 @@ Error errnoError(const std::string& action, int error_number) {
                  action + " failed: " + std::strerror(error_number)};
 }
 
+/// In a forked child: gives it empty input unless it shares this process's. Returns false if that
+/// failed.
+bool setUpInput(const ProcessOptions& options) {
+    if (options.share_input) {
+        return true;
+    }
+    const int empty = open("/dev/null", O_RDONLY);
+    if (empty < 0) {
+        return false;
+    }
+    const bool replaced = dup2(empty, STDIN_FILENO) >= 0;
+    close(empty);
+    return replaced;
+}
+
 /// Restores the previous signal handlers when the wait is over.
 class ForwardedSignals {
 public:
@@ -95,7 +110,7 @@ Result<int> runProcess(const ProcessOptions& options) {
         close(exec_status[0]);
         const bool changed = options.working_directory.empty() ||
                              chdir(options.working_directory.c_str()) == 0;
-        if (changed) {
+        if (changed && setUpInput(options)) {
             execvp(arguments[0], arguments.data());
         }
         const int error_number = errno;
@@ -257,7 +272,7 @@ Result<ChildProcess> ChildProcess::start(const ProcessOptions& options) {
         close(exec_status[0]);
         const bool changed = options.working_directory.empty() ||
                              chdir(options.working_directory.c_str()) == 0;
-        if (changed) {
+        if (changed && setUpInput(options)) {
             execvp(arguments[0], arguments.data());
         }
         const int error_number = errno;

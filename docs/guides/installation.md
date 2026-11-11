@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/mahirmovsumov/CppBoot/main/scripts/
 | `--skip-packages` | Doesn't install packages with `apt` |
 | `--no-path` | Doesn't change your shell's startup files |
 
-**Downloaded SDKs are built on Ubuntu 24.04,** because the SDK's libraries have to match the system's. On any other Linux, use `--from-source`. Without `apt`, install these yourself first, then add `--skip-packages`: a C++20 compiler, CMake 3.25 or newer, Ninja, libclang, Boost, nlohmann/json, libpq, SQLite, OpenSSL and GoogleTest.
+**Downloaded SDKs are built on Ubuntu 24.04,** because the SDK's libraries have to match the system's. On any other Linux, use `--from-source`. Without `apt`, install these yourself first, then add `--skip-packages`: a C++20 compiler, CMake 3.25 or newer, Ninja, libclang, Boost, libpq, SQLite, OpenSSL and GoogleTest.
 
 ## Check an installation
 

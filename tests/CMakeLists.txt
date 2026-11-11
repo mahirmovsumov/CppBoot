@@ -11,6 +11,7 @@ add_executable(cppboot-unit-tests
     unit/cli_test.cpp
     unit/config_test.cpp
     unit/di_test.cpp
+    unit/json_test.cpp
     unit/lifecycle_test.cpp
     unit/logger_test.cpp
     unit/module_manager_test.cpp
@@ -66,7 +67,6 @@ set_tests_properties(cppboot-web-tests-many-io-threads PROPERTIES
 add_executable(cppboot-security-tests security/security_test.cpp)
 target_link_libraries(cppboot-security-tests PRIVATE
     cppboot::security
-    nlohmann_json::nlohmann_json
     OpenSSL::Crypto
     GTest::gtest_main
 )
@@ -76,7 +76,6 @@ add_test(NAME cppboot-security-tests COMMAND cppboot-security-tests)
 add_executable(cppboot-actuator-tests actuator/actuator_test.cpp)
 target_link_libraries(cppboot-actuator-tests PRIVATE
     cppboot::actuator
-    nlohmann_json::nlohmann_json
     GTest::gtest_main
 )
 cppboot_apply_compiler_options(cppboot-actuator-tests)

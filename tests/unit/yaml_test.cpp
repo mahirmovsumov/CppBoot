@@ -228,8 +228,9 @@ TEST(YamlTest, ReadsEveryExampleInTheRepository) {
                 ++checked;
             } else if (path.extension() == ".md") {
                 std::size_t start = 0;
-                while ((start = text.find("```yaml\n", start)) != std::string::npos) {
-                    start += 8;
+                // A Windows checkout can have \r\n line endings, which the reader accepts too.
+                while ((start = text.find("```yaml", start)) != std::string::npos) {
+                    start = text.find('\n', start) + 1;
                     const std::size_t end = text.find("```", start);
                     const auto node = parseYaml(text.substr(start, end - start));
                     EXPECT_TRUE(node) << path.generic_string() << ": " << node.error().message()

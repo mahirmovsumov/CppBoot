@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libboost-dev libpq-dev libsqlite3-dev libssl-dev
       - name: Build
         run: |
           cmake -S . -B build/bench -G Ninja -DCMAKE_BUILD_TYPE=Release \

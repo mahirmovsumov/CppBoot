@@ -10,7 +10,7 @@
 #include <cppboot/security/password.hpp>
 #include <cppboot/security/token.hpp>
 #include <filesystem>
-#include <nlohmann/json.hpp>
+#include <cppboot/base/json.hpp>
 #include <map>
 #include <string>
 #include <utility>
@@ -92,16 +92,16 @@ TEST(TokenStandardTest, MatchesTheFormatOfOtherLibraries) {
     TokenService tokens{makeOptions(), [] { return at(1000); }};
     const Parts parts = split(tokens.issue("ada", {"admin"}));
 
-    const auto header = nlohmann::json::parse(*base64UrlDecode(parts.header));
+    const auto header = cppboot::Json::parse(*base64UrlDecode(parts.header));
     EXPECT_EQ(header["alg"], "HS256");
     EXPECT_EQ(header["typ"], "JWT");
 
-    const auto payload = nlohmann::json::parse(*base64UrlDecode(parts.payload));
+    const auto payload = cppboot::Json::parse(*base64UrlDecode(parts.payload));
     EXPECT_EQ(payload["sub"], "ada");
     EXPECT_EQ(payload["iss"], "test-issuer");
     EXPECT_EQ(payload["iat"], 1000);
     EXPECT_EQ(payload["exp"], 1100);
-    EXPECT_EQ(payload["roles"], nlohmann::json::array({"admin"}));
+    EXPECT_EQ(payload["roles"], cppboot::Json{std::vector<std::string>{"admin"}});
 
     // HMAC-SHA256 gives 32 bytes.
     EXPECT_EQ(base64UrlDecode(parts.signature)->size(), 32U);
@@ -136,9 +136,9 @@ TEST_F(TokenTest, ExpiresAfterItsLifetimeAndTheLeeway) {
 
 TEST_F(TokenTest, RejectsAlteredPayload) {
     Parts parts = split(tokens_.issue("user", {}));
-    auto payload = nlohmann::json::parse(*base64UrlDecode(parts.payload));
+    auto payload = cppboot::Json::parse(*base64UrlDecode(parts.payload));
     payload["sub"] = "admin";
-    payload["roles"] = nlohmann::json::array({"admin"});
+    payload["roles"] = cppboot::Json{std::vector<std::string>{"admin"}};
 
     const std::string forged =
         parts.header + "." + base64UrlEncode(payload.dump()) + "." + parts.signature;
@@ -279,7 +279,7 @@ TEST(TokenSettingsTest, ReadsSettings) {
                     {"cppboot.security.jwt.lifetime_seconds", "60"}}));
 
     const Parts parts = split(tokens->issue("ada"));
-    const auto payload = nlohmann::json::parse(*base64UrlDecode(parts.payload));
+    const auto payload = cppboot::Json::parse(*base64UrlDecode(parts.payload));
     EXPECT_EQ(payload["iss"], "shop");
     EXPECT_EQ(payload["exp"].get<std::int64_t>() - payload["iat"].get<std::int64_t>(), 60);
 }

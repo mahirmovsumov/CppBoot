@@ -15,12 +15,16 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - New projects have Visual Studio Code settings in `.vscode/`: tasks for build, dev, run and test, with compiler errors in the Problems panel, debugging with F5, and code completion from `build/compile_commands.json`. See [Editors](docs/guides/editors.md).
 - `cppboot doctor` warns if GoogleTest or gdb is missing, and the Linux installer installs gdb.
 - After creating a project with `--security`, `cppboot create` shows the environment variables to set before running it.
+- **Fix:** on Windows, `cppboot dev` could wait minutes to start a build when its input was a pipe, because programs started while another thread reads a pipe they share have to wait for that read. The programs it starts now get empty input, through `ProcessOptions::share_input`.
+- The CLI's code is split into one file per command.
 
 ### Fewer dependencies
 
 - Settings files no longer use yaml-cpp. CppBoot's own reader handles the YAML that settings use, and names the line of anything else. See [what a settings file can contain](docs/guides/configuration.md#what-a-settings-file-can-contain).
 - **Change:** a key written twice in the same map is now an error. Before, the last one silently won.
-- A fuzz job in CI feeds random input to the settings reader for two minutes on every push.
+- JSON no longer uses nlohmann/json. **Change:** `cppboot::web::Json` is now `cppboot::Json`, CppBoot's own type, with a smaller API: `parse`, `tryParse`, `dump`, `at`, `find`, `[]`, `push`, `get<T>()`, and `as...` and `is...` functions. See [working with JSON directly](docs/guides/web.md#working-with-json-directly). `CPPBOOT_JSON` structs work as before.
+- **Change:** request bodies are read strictly. A repeated key, invalid UTF-8, nesting deeper than 128 and numbers that don't fit their field are rejected with a 400. Errors name the field, such as `field 'name': expected a string, but found a number`.
+- A fuzz job in CI feeds random input to the settings and JSON readers for two minutes each on every push.
 - Logging no longer uses spdlog and {fmt}. CppBoot's own logger writes the same lines, with the level in color on a terminal, and turns color off for `NO_COLOR`, pipes and files. Nothing changes for applications.
 
 ### Health and metrics

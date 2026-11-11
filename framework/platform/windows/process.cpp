@@ -50,6 +50,41 @@ BOOL WINAPI keepWaitingForChild(DWORD) {
     return TRUE;
 }
 
+/// The standard handles for a child. Without shared input, it reads from NUL, so that neither it nor
+/// the programs it starts touch a pipe that a thread here is reading, which would make them wait.
+class ChildInput {
+public:
+    explicit ChildInput(bool share_input) {
+        if (!share_input) {
+            SECURITY_ATTRIBUTES inheritable{};
+            inheritable.nLength = sizeof(inheritable);
+            inheritable.bInheritHandle = TRUE;
+            empty_ = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 &inheritable, OPEN_EXISTING, 0, nullptr);
+        }
+    }
+    ~ChildInput() {
+        if (empty_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(empty_);
+        }
+    }
+    ChildInput(const ChildInput&) = delete;
+    ChildInput& operator=(const ChildInput&) = delete;
+
+    void applyTo(STARTUPINFOW& startup) const {
+        if (empty_ == INVALID_HANDLE_VALUE) {
+            return;
+        }
+        startup.dwFlags |= STARTF_USESTDHANDLES;
+        startup.hStdInput = empty_;
+        startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    }
+
+private:
+    HANDLE empty_{INVALID_HANDLE_VALUE};
+};
+
 }  // namespace
 
 Result<int> runProcess(const ProcessOptions& options) {
@@ -69,6 +104,8 @@ Result<int> runProcess(const ProcessOptions& options) {
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
+    const ChildInput input{options.share_input};
+    input.applyTo(startup);
     PROCESS_INFORMATION process{};
 
     SetConsoleCtrlHandler(keepWaitingForChild, TRUE);
@@ -191,6 +228,8 @@ Result<ChildProcess> ChildProcess::start(const ProcessOptions& options) {
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
+    const ChildInput input{options.share_input};
+    input.applyTo(startup);
     PROCESS_INFORMATION process{};
     // Its own process group, so Ctrl+C reaches only this process, which then decides when to stop
     // the child. Ctrl+Break still reaches it, and that's what stop() sends.

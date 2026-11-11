@@ -28,7 +28,7 @@ Code that compiled with one 1.x release will compile with a later one, apart fro
 - **The text of messages:** logs, errors and warnings can change, so don't read them from code. Use `ErrorCode`, `DatabaseError::Kind` and exit codes instead.
 - **New generator warnings:** a new release can warn about code that was quiet before. A warning never stops a build, but a new build error can be added when a mark would do nothing, or when the code can't be safe.
 - **Performance:** the [benchmarks](benchmarks.md) describe what was measured, and don't promise it.
-- **Third-party libraries:** their versions can change. `cppboot::web::Json` stays `nlohmann::ordered_json`, but its version can change in a minor release.
+- **Third-party libraries:** their versions can change. None of their types are part of CppBoot's public API.
 
 ## Changing something stable
 

@@ -6,7 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
-#include <nlohmann/json.hpp>
+#include <cppboot/base/json.hpp>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -63,7 +63,8 @@ int main(int argc, char* argv[]) {
     router->get("/plaintext", [](const Request&) { return Response::text("Hello, World!"); });
 
     router->get("/json", [](const Request&) {
-        const nlohmann::json body = {{"message", "Hello, World!"}};
+        cppboot::Json body = cppboot::Json::object();
+        body["message"] = "Hello, World!";
         return Response::json(body.dump());
     });
 

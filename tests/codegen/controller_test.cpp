@@ -89,10 +89,14 @@ TEST_F(ControllerTest, RejectsABadBody) {
 
 TEST_F(ControllerTest, BadBodyMessageNamesTheProblemWithoutLibraryDetails) {
     const Response response = send(Method::Post, "/api/users", R"({"nickname":"A"})");
-    EXPECT_NE(response.body().find("Invalid request body: key 'name' not found"),
-              std::string::npos)
+    EXPECT_NE(response.body().find("Invalid request body: missing field 'name'"), std::string::npos)
         << response.body();
-    EXPECT_EQ(response.body().find("json.exception"), std::string::npos);
+
+    // A field of the wrong type is named, so the client knows which one to fix.
+    const Response wrong_type = send(Method::Post, "/api/users", R"({"name":5})");
+    EXPECT_NE(wrong_type.body().find("field 'name': expected a string, but found a number"),
+              std::string::npos)
+        << wrong_type.body();
 }
 
 TEST_F(ControllerTest, WithStatusSendsJsonWithThatStatus) {

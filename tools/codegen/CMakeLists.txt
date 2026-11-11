@@ -49,7 +49,6 @@ target_link_libraries(cppboot-codegen-lib
     PUBLIC cppboot::base
     PRIVATE
         cppboot::platform
-        nlohmann_json::nlohmann_json
         ${CPPBOOT_LIBCLANG_LIBRARY}
 )
 cppboot_apply_compiler_options(cppboot-codegen-lib)

@@ -122,7 +122,8 @@ Result<int> developProject(const fs::path& directory, const std::vector<std::str
             }
             // Taken before the build, so that a change made during it starts another one.
             seen = watchedFiles(directory);
-            auto built = buildProject(directory);
+            // Input goes to the thread that reads r and q, so the programs started here get none.
+            auto built = buildProject(directory, Sanitizer::None, {}, Input::None);
             if (stopping()) {
                 break;
             }
@@ -130,7 +131,8 @@ Result<int> developProject(const fs::path& directory, const std::vector<std::str
                 say(built.error().message());
             } else if (built.value() != 0) {
                 say("the build failed. Fix it and save, and it builds again.");
-            } else if (auto started = platform::ChildProcess::start({command, directory}); !started) {
+            } else if (auto started = platform::ChildProcess::start({command, directory, false});
+                       !started) {
                 say(started.error().message());
             } else {
                 application = std::move(started).value();

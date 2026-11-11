@@ -1,90 +1,98 @@
 #include "cppboot/codegen/scan.hpp"
 
-#include <nlohmann/json.hpp>
-
 #include <array>
-#include <exception>
+#include <cstdint>
+#include <initializer_list>
 #include <utility>
+
+#include "cppboot/base/json.hpp"
 
 namespace cppboot::codegen {
 
 namespace {
 
-using nlohmann::json;
+Json makeObject(std::initializer_list<std::pair<std::string_view, Json>> members) {
+    Json object = Json::object();
+    for (const auto& [key, value] : members) {
+        object[key] = value;
+    }
+    return object;
+}
 
-json fieldsToJson(const std::vector<StructField>& fields) {
-    json result = json::array();
+Json fieldsToJson(const std::vector<StructField>& fields) {
+    Json result = Json::array();
     for (const StructField& field : fields) {
-        result.push_back({{"name", field.name}, {"is_optional", field.is_optional}});
+        result.push(makeObject({{"name", field.name}, {"is_optional", field.is_optional}}));
     }
     return result;
 }
 
-json structsToJson(const std::vector<MappedStruct>& structs) {
-    json result = json::array();
+Json structsToJson(const std::vector<MappedStruct>& structs) {
+    Json result = Json::array();
     for (const MappedStruct& mapped : structs) {
-        result.push_back(
-            {{"type", mapped.type}, {"location", mapped.location}, {"fields", fieldsToJson(mapped.fields)}});
+        result.push(makeObject({{"type", mapped.type},
+                                {"location", mapped.location},
+                                {"fields", fieldsToJson(mapped.fields)}}));
     }
     return result;
 }
 
-json routeToJson(const Route& route) {
-    json parameters = json::array();
+Json routeToJson(const Route& route) {
+    Json parameters = Json::array();
     for (const RouteParameter& parameter : route.parameters) {
-        parameters.push_back({{"source", static_cast<int>(parameter.source)},
-                              {"name", parameter.name},
-                              {"type", parameter.type}});
+        parameters.push(makeObject({{"source", static_cast<int>(parameter.source)},
+                                    {"name", parameter.name},
+                                    {"type", parameter.type}}));
     }
-    json result = {{"method", route.method},
-                   {"path", route.path},
-                   {"function", route.function},
-                   {"location", route.location},
-                   {"parameters", std::move(parameters)},
-                   {"return_kind", static_cast<int>(route.return_kind)},
-                   {"is_public", route.is_public},
-                   {"roles", route.roles}};
+    Json result = makeObject({{"method", route.method},
+                              {"path", route.path},
+                              {"function", route.function},
+                              {"location", route.location},
+                              {"parameters", std::move(parameters)},
+                              {"return_kind", static_cast<int>(route.return_kind)},
+                              {"is_public", route.is_public},
+                              {"roles", route.roles}});
     if (route.rate_limit) {
-        result["rate_limit"] = {{"requests", route.rate_limit->requests},
-                                {"window_seconds", route.rate_limit->window_seconds}};
+        result["rate_limit"] = makeObject({{"requests", route.rate_limit->requests},
+                                           {"window_seconds", route.rate_limit->window_seconds}});
     }
     return result;
 }
 
-std::vector<StructField> fieldsFromJson(const json& value) {
+std::vector<StructField> fieldsFromJson(const Json& value) {
     std::vector<StructField> fields;
-    for (const json& field : value) {
-        fields.push_back(StructField{field.at("name"), field.at("is_optional")});
+    for (const Json& field : value.items()) {
+        fields.push_back(StructField{field.at("name").asString(), field.at("is_optional").asBool()});
     }
     return fields;
 }
 
-std::vector<MappedStruct> structsFromJson(const json& value) {
+std::vector<MappedStruct> structsFromJson(const Json& value) {
     std::vector<MappedStruct> structs;
-    for (const json& mapped : value) {
-        structs.push_back(
-            MappedStruct{mapped.at("type"), mapped.at("location"), fieldsFromJson(mapped.at("fields"))});
+    for (const Json& mapped : value.items()) {
+        structs.push_back(MappedStruct{mapped.at("type").asString(), mapped.at("location").asString(),
+                                       fieldsFromJson(mapped.at("fields"))});
     }
     return structs;
 }
 
-Route routeFromJson(const json& value) {
+Route routeFromJson(const Json& value) {
     Route route;
-    route.method = value.at("method");
-    route.path = value.at("path");
-    route.function = value.at("function");
-    route.location = value.at("location");
-    for (const json& parameter : value.at("parameters")) {
+    route.method = value.at("method").asString();
+    route.path = value.at("path").asString();
+    route.function = value.at("function").asString();
+    route.location = value.at("location").asString();
+    for (const Json& parameter : value.at("parameters").items()) {
         route.parameters.push_back(RouteParameter{
-            static_cast<ParameterSource>(parameter.at("source").get<int>()), parameter.at("name"),
-            parameter.at("type")});
+            static_cast<ParameterSource>(parameter.at("source").get<int>()),
+            parameter.at("name").asString(), parameter.at("type").asString()});
     }
     route.return_kind = static_cast<ReturnKind>(value.at("return_kind").get<int>());
-    route.is_public = value.at("is_public");
+    route.is_public = value.at("is_public").asBool();
     route.roles = value.at("roles").get<std::vector<std::string>>();
-    if (value.contains("rate_limit")) {
-        route.rate_limit = RouteRateLimit{value.at("rate_limit").at("requests"),
-                                          value.at("rate_limit").at("window_seconds")};
+    if (const Json* const limit = value.find("rate_limit")) {
+        route.rate_limit = RouteRateLimit{limit->at("requests").get<std::uint32_t>(),
+                                          limit->at("window_seconds").get<std::uint32_t>()};
     }
     return route;
 }
@@ -112,71 +120,73 @@ std::string escapeForDepfile(const std::filesystem::path& path) {
 std::string toJson(const ScannedHeader& scanned) {
     const Declarations& declarations = scanned.declarations;
 
-    json components = json::array();
+    Json components = Json::array();
     for (const Component& component : declarations.components) {
-        components.push_back({{"type", component.type},
-                              {"location", component.location},
-                              {"interfaces", component.interfaces},
-                              {"dependencies", component.dependencies}});
+        components.push(makeObject({{"type", component.type},
+                                    {"location", component.location},
+                                    {"interfaces", component.interfaces},
+                                    {"dependencies", component.dependencies}}));
     }
 
-    json controllers = json::array();
+    Json controllers = Json::array();
     for (const Controller& controller : declarations.controllers) {
-        json routes = json::array();
+        Json routes = Json::array();
         for (const Route& route : controller.routes) {
-            routes.push_back(routeToJson(route));
+            routes.push(routeToJson(route));
         }
-        controllers.push_back({{"type", controller.type}, {"routes", std::move(routes)}});
+        controllers.push(makeObject({{"type", controller.type}, {"routes", std::move(routes)}}));
     }
 
-    json middleware = json::array();
+    Json middleware = Json::array();
     for (const Middleware& entry : declarations.middleware) {
-        middleware.push_back({{"type", entry.type}, {"location", entry.location}, {"order", entry.order}});
+        middleware.push(
+            makeObject({{"type", entry.type}, {"location", entry.location}, {"order", entry.order}}));
     }
 
-    const json document = {{"header", scanned.header},
-                           {"components", std::move(components)},
-                           {"json_types", structsToJson(declarations.json_types)},
-                           {"row_types", structsToJson(declarations.row_types)},
-                           {"controllers", std::move(controllers)},
-                           {"middleware", std::move(middleware)},
-                           {"warnings", declarations.warnings}};
-    return document.dump(2);
+    const Json document = makeObject({{"header", scanned.header},
+                                      {"components", std::move(components)},
+                                      {"json_types", structsToJson(declarations.json_types)},
+                                      {"row_types", structsToJson(declarations.row_types)},
+                                      {"controllers", std::move(controllers)},
+                                      {"middleware", std::move(middleware)},
+                                      {"warnings", declarations.warnings}});
+    return document.dump();
 }
 
 Result<ScannedHeader> scannedHeaderFromJson(std::string_view text) {
     try {
-        const json document = json::parse(text);
+        const Json document = Json::parse(text);
         ScannedHeader scanned;
-        scanned.header = document.at("header");
+        scanned.header = document.at("header").asString();
 
         Declarations& declarations = scanned.declarations;
-        for (const json& component : document.at("components")) {
+        for (const Json& component : document.at("components").items()) {
             declarations.components.push_back(Component{
-                component.at("type"), component.at("location"),
+                component.at("type").asString(), component.at("location").asString(),
                 component.at("interfaces").get<std::vector<std::string>>(),
                 component.at("dependencies").get<std::vector<std::string>>()});
         }
         declarations.json_types = structsFromJson(document.at("json_types"));
         declarations.row_types = structsFromJson(document.at("row_types"));
-        for (const json& controller : document.at("controllers")) {
-            Controller read{controller.at("type"), {}};
-            for (const json& route : controller.at("routes")) {
+        for (const Json& controller : document.at("controllers").items()) {
+            Controller read{controller.at("type").asString(), {}};
+            for (const Json& route : controller.at("routes").items()) {
                 read.routes.push_back(routeFromJson(route));
             }
             declarations.controllers.push_back(std::move(read));
         }
-        for (const json& entry : document.at("middleware")) {
-            declarations.middleware.push_back(
-                Middleware{entry.at("type"), entry.at("location"), entry.at("order")});
+        for (const Json& entry : document.at("middleware").items()) {
+            declarations.middleware.push_back(Middleware{entry.at("type").asString(),
+                                                         entry.at("location").asString(),
+                                                         entry.at("order").get<int>()});
         }
         declarations.warnings = document.at("warnings").get<std::vector<std::string>>();
         return scanned;
-    } catch (const std::exception& exception) {
+    } catch (const JsonError& error) {
         // These are only written by this tool, so this means a damaged or outdated file.
         return Error{ErrorCode::ParseError, std::string{"A saved scan can't be read, so delete the "
                                                         "build folder and build again: "} +
-                                                exception.what()};
+                                                error.what()};
     }
 }
 

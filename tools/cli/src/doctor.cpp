@@ -45,8 +45,8 @@ constexpr std::string_view kFixCmake = "Install it: sudo apt-get install cmake";
 constexpr std::string_view kFixNinja = "Install it: sudo apt-get install ninja-build";
 constexpr std::string_view kFixLibclang = "Install it: sudo apt-get install libclang-dev";
 constexpr std::string_view kFixLibraries =
-    "Install them: sudo apt-get install g++ libboost-dev "
-    "nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev libgtest-dev";
+    "Install them: sudo apt-get install g++ libboost-dev libpq-dev libsqlite3-dev libssl-dev "
+    "libgtest-dev";
 constexpr std::string_view kFromSource = "install.sh --from-source";
 constexpr std::string_view kFixGoogleTest = "Install it: sudo apt-get install libgtest-dev";
 constexpr std::string_view kFixDebugger = "Install it: sudo apt-get install gdb";

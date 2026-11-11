@@ -19,10 +19,15 @@ std::string_view buildFolder(Sanitizer sanitizer);
 /// Removes a leading --sanitize=... from the arguments. Returns nothing if its value is unknown.
 std::optional<Sanitizer> takeSanitizer(std::vector<std::string>& arguments);
 
+/// Whether the programs a build starts share this process's input. cppboot dev reads its own input
+/// while it builds, so it gives them none.
+enum class Input { Shared, None };
+
 /// Builds the application, or the target given instead, configuring the build folder first if
 /// needed. Returns CMake's exit code.
 Result<int> buildProject(const std::filesystem::path& directory,
-                         Sanitizer sanitizer = Sanitizer::None, const std::string& target = {});
+                         Sanitizer sanitizer = Sanitizer::None, const std::string& target = {},
+                         Input input = Input::Shared);
 
 /// Builds the project, then runs it from the project folder. Returns the application's exit code.
 Result<int> runProject(const std::filesystem::path& directory, std::vector<std::string> arguments,

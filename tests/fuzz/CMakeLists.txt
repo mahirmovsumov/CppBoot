@@ -22,3 +22,5 @@ endfunction()
 
 cppboot_add_fuzzer(cppboot-yaml-fuzz yaml_fuzz.cpp cppboot::config)
 target_include_directories(cppboot-yaml-fuzz PRIVATE ${PROJECT_SOURCE_DIR}/framework/config/src)
+
+cppboot_add_fuzzer(cppboot-json-fuzz json_fuzz.cpp cppboot::base)

@@ -17,6 +17,10 @@ struct ProcessOptions {
     std::vector<std::string> command;
     /// Leave empty to use the current working directory.
     std::filesystem::path working_directory{};
+    /// False gives the program empty input instead of this process's. Use it while a thread here
+    /// reads that input: on Windows, starting a program that shares a pipe another thread is reading
+    /// waits until that read ends.
+    bool share_input{true};
 };
 
 /// Runs a process sharing this console, waits for it and returns its exit code.

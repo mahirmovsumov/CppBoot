@@ -1,7 +1,6 @@
 #pragma once
 
 #include <charconv>
-#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -9,37 +8,13 @@
 #include <type_traits>
 #include <utility>
 
+#include "cppboot/base/json.hpp"
 #include "cppboot/web/http.hpp"
-
-// std::optional becomes null when empty, and reads null as empty.
-namespace nlohmann {
-template <typename T>
-struct adl_serializer<std::optional<T>> {
-    template <typename BasicJson>
-    static void to_json(BasicJson& json, const std::optional<T>& value) {
-        if (value) {
-            json = *value;
-        } else {
-            json = nullptr;
-        }
-    }
-
-    template <typename BasicJson>
-    static void from_json(const BasicJson& json, std::optional<T>& value) {
-        if (json.is_null()) {
-            value.reset();
-        } else {
-            value = json.template get<T>();
-        }
-    }
-};
-}  // namespace nlohmann
 
 namespace cppboot::web {
 
-/// The JSON type. It's nlohmann::json, keeping fields in the order they were added. This is the
-/// one third-party type in CppBoot's public API, because applications work with it directly.
-using Json = nlohmann::ordered_json;
+/// The JSON type, which keeps fields in the order they were added. See cppboot::Json.
+using Json = cppboot::Json;
 
 namespace detail {
 
@@ -110,13 +85,8 @@ template <typename T>
 T bodyAs(const Request& request) {
     try {
         return Json::parse(request.body()).template get<T>();
-    } catch (const nlohmann::json::exception& exception) {
-        // Removes the library's own prefix, such as "[json.exception.out_of_range.403] ".
-        std::string_view reason = exception.what();
-        if (const auto prefix_end = reason.find("] "); prefix_end != std::string_view::npos) {
-            reason.remove_prefix(prefix_end + 2);
-        }
-        throw HttpError(400, "Invalid request body: " + std::string{reason});
+    } catch (const JsonError& error) {
+        throw HttpError(400, std::string{"Invalid request body: "} + error.what());
     }
 }
 
@@ -131,8 +101,7 @@ struct WithStatus {
 /// Returns a response with a value converted to JSON.
 template <typename T>
 Response toJsonResponse(const T& value, int status = 200) {
-    const Json json = value;
-    return Response::json(json.dump(-1, ' ', false, Json::error_handler_t::replace), status);
+    return Response::json(Json{value}.dump(), status);
 }
 
 template <typename T>

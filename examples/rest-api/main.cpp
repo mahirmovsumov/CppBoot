@@ -1,8 +1,8 @@
-#include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cppboot/cppboot.hpp>
+#include <cppboot/web/binding.hpp>
 #include <cppboot/web/server_module.hpp>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -24,12 +24,14 @@ int main(int argc, char* argv[]) {
     });
 
     router->get("/api/users/{id}", [](const Request& request) {
-        const std::string id = *request.param("id");
-        if (!std::all_of(id.begin(), id.end(),
-                         [](unsigned char c) { return std::isdigit(c) != 0; })) {
-            throw HttpError(400, "The user ID must be a number");
-        }
-        return Response::json("{\"id\":" + id + ",\"name\":\"user-" + id + "\"}");
+        // Anything but a whole number is answered with a 400 that says so.
+        const auto id = pathParam<std::int64_t>(request, "id");
+
+        // Building JSON as a value, rather than joining text, keeps it valid whatever goes in.
+        cppboot::Json user = cppboot::Json::object();
+        user["id"] = id;
+        user["name"] = "user-" + std::to_string(id);
+        return Response::json(user.dump());
     });
 
     router->post("/api/echo",

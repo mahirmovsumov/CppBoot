@@ -152,10 +152,11 @@ TEST(RenderRegistrationTest, WritesJsonConversions) {
     const std::string text = renderRegistration(declarations, {});
 
     EXPECT_NE(text.find("cppboot/web/binding.hpp"), std::string::npos);
-    EXPECT_NE(text.find("struct nlohmann::adl_serializer<ns::User>"), std::string::npos);
-    EXPECT_NE(text.find("json[\"id\"] = value.id;"), std::string::npos);
-    EXPECT_NE(text.find("json.at(\"id\").get_to(value.id);"), std::string::npos);
-    EXPECT_NE(text.find("if (json.contains(\"nickname\"))"), std::string::npos);
+    EXPECT_NE(text.find("struct cppboot::JsonConvert<ns::User>"), std::string::npos);
+    EXPECT_NE(text.find("json[\"id\"] = JsonType{value.id};"), std::string::npos);
+    EXPECT_NE(text.find("cppboot::detail::readJsonField(json, \"id\", value.id);"), std::string::npos);
+    EXPECT_NE(text.find("cppboot::detail::readOptionalJsonField(json, \"nickname\", value.nickname);"),
+              std::string::npos);
     EXPECT_EQ(text.find("Router"), std::string::npos);
 }
 

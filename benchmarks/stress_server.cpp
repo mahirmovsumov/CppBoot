@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <nlohmann/json.hpp>
+#include <cppboot/base/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -115,9 +115,10 @@ int main(int argc, char* argv[]) {
     router->get("/plaintext", [](const Request&) { return Response::text("Hello, World!"); });
 
     router->get("/json", [](const Request& request) {
-        const nlohmann::json body = {{"message", "Hello, World!"},
-                                     {"client", request.clientAddress()},
-                                     {"page", request.query("page").value_or("none")}};
+        cppboot::Json body = cppboot::Json::object();
+        body["message"] = "Hello, World!";
+        body["client"] = request.clientAddress();
+        body["page"] = request.query("page").value_or("none");
         return Response::json(body.dump());
     });
 

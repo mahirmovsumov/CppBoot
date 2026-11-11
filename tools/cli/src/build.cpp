@@ -69,8 +69,9 @@ std::optional<Sanitizer> takeSanitizer(std::vector<std::string>& arguments) {
     return sanitizer;
 }
 
-Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer,
-                         const std::string& target) {
+Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer, const std::string& target,
+                         Input input) {
+    const bool share_input = input == Input::Shared;
     if (auto available = checkSanitizerAvailable(sanitizer); !available) {
         return available.error();
     }
@@ -93,7 +94,7 @@ Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer,
             command.push_back("-DCMAKE_CXX_FLAGS=" + std::string{sanitizerFlags(sanitizer)});
         }
 
-        auto configured = runTool(std::move(command), directory);
+        auto configured = runTool(std::move(command), directory, share_input);
         if (!configured || configured.value() != 0) {
             return configured;
         }
@@ -103,7 +104,7 @@ Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer,
     if (!target.empty()) {
         command.insert(command.end(), {"--target", target});
     }
-    return runTool(std::move(command), directory);
+    return runTool(std::move(command), directory, share_input);
 }
 
 Result<int> testProject(const fs::path& directory, const std::vector<std::string>& arguments,

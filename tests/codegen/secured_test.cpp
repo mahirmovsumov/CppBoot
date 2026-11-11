@@ -135,7 +135,7 @@ TEST_F(SecuredTest, LoginGivesATokenThatWorks) {
     const Response response = login(R"({"name":"ada","password":"correct horse"})");
     ASSERT_EQ(response.status(), 200) << response.body();
 
-    const std::string token = Json::parse(response.body())["token"];
+    const std::string token = Json::parse(response.body())["token"].asString();
     EXPECT_EQ(get("/app/admin", token).status(), 200);
     EXPECT_EQ(Json::parse(get("/app/me", token).body())["name"], "ada");
 }

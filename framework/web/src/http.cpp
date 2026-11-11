@@ -2,7 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <nlohmann/json.hpp>
+
+#include "cppboot/base/json.hpp"
 
 namespace cppboot::web {
 
@@ -234,10 +235,12 @@ std::string_view statusReason(int status) noexcept {
 }
 
 Response errorResponse(int status, std::string_view message) {
-    const nlohmann::json body = {{"status", status}, {"error", message}};
-    // Replaces invalid UTF-8, since a message may echo what a client sent.
-    return Response::json(body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace),
-                          status);
+    Json body = Json::object();
+    // The order that clients have always seen.
+    body["error"] = message;
+    body["status"] = status;
+    // dump() replaces invalid UTF-8, since a message may echo what a client sent.
+    return Response::json(body.dump(), status);
 }
 
 }  // namespace cppboot::web

@@ -65,7 +65,38 @@ struct CPPBOOT_JSON User {
 - Fields can be other marked structs, and standard containers of supported types.
 - The struct needs a default constructor and public fields, and can't have base classes.
 
-`cppboot::web::Json` is `nlohmann::ordered_json`, for working with JSON directly. See the [nlohmann/json documentation](https://json.nlohmann.me).
+A request body that doesn't fit gets a 400 that names the field, such as `Invalid request body: field 'name': expected a string, but found a number`. Bodies are read strictly: they have to be valid JSON and UTF-8, nested at most 128 deep, and an object can't have the same key twice, because two programs could disagree about which one counts.
+
+### Working with JSON directly
+
+`cppboot::Json`, also available as `cppboot::web::Json`, holds any JSON value, and keeps an object's keys in the order they were added:
+
+```cpp
+cppboot::Json body = cppboot::Json::object();
+body["name"] = "ada";
+body["scores"] = std::vector<int>{3, 5};
+return Response::json(body.dump());    // {"name":"ada","scores":[3,5]}
+
+const cppboot::Json order = cppboot::Json::parse(request.body());   // throws cppboot::JsonError
+const std::string& name = order.at("name").asString();
+const auto items = order.at("items").get<std::vector<Item>>();     // Item is a CPPBOOT_JSON struct
+if (const cppboot::Json* note = order.find("note")) { /* optional */ }
+```
+
+| Function | What it does |
+|---|---|
+| `Json::parse(text)` | Reads JSON, and throws `cppboot::JsonError` if it isn't valid |
+| `Json::tryParse(text)` | The same, returning a `Result` |
+| `dump()` | Writes compact JSON, replacing invalid UTF-8 with U+FFFD |
+| `at(key)`, `at(index)` | A member or item, throwing `JsonError` if it's missing |
+| `find(key)` | A member, or `nullptr` |
+| `json[key] = value` | Adds or replaces a member |
+| `push(value)` | Adds an item to an array |
+| `get<T>()` | Converts to `T`, such as a number, `std::string`, `std::vector`, `std::map<std::string, T>`, `std::optional` or a `CPPBOOT_JSON` struct |
+| `asString()`, `asBool()`, `asInt64()`, `asDouble()` | Reads a value of that type, throwing `JsonError` for another |
+| `isObject()`, `isArray()`, `isString()`, `isNumber()`, `isNull()` | Checks the type |
+
+Numbers convert only if they fit: `get<int>()` rejects `1.5` and numbers out of range.
 
 Generated conversions are only visible to generated code, so functions in your headers can't convert a marked struct themselves. To send one, return it from a controller function.
 

@@ -40,9 +40,10 @@ Result<fs::path> findInstallation() {
 }
 
 /// Reports a missing cmake clearly, since that's the most common setup problem.
-Result<int> runTool(std::vector<std::string> command, const fs::path& directory) {
+Result<int> runTool(std::vector<std::string> command, const fs::path& directory,
+                    bool share_input) {
     const std::string program = command.front();
-    auto exit_code = platform::runProcess({std::move(command), directory});
+    auto exit_code = platform::runProcess({std::move(command), directory, share_input});
     if (!exit_code && exit_code.error().code() == ErrorCode::NotFound) {
         return Error{ErrorCode::NotFound, "Cannot find " + program + ". Check that it's on PATH."};
     }

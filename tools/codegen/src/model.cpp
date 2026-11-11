@@ -163,28 +163,29 @@ void renderDatabase(const std::vector<MappedStruct>& row_types, std::string& tex
 }
 
 void renderJsonType(const MappedStruct& json_type, std::string& text) {
-    text += "template <>\nstruct nlohmann::adl_serializer<" + json_type.type + "> {\n";
+    text += "template <>\nstruct cppboot::JsonConvert<" + json_type.type + "> {\n";
     text += "    static_assert(std::is_default_constructible_v<" + json_type.type + ">, " +
             quoted(json_type.type + " must be default constructible for JSON conversion") + ");\n\n";
 
-    text += "    template <typename BasicJson>\n";
-    text += "    static void to_json(BasicJson& json, const " + json_type.type + "& value) {\n";
-    text += "        json = BasicJson::object();\n";
+    // Templates, so that a field whose type is converted further down the file still works: they're
+    // only compiled where they're used.
+    text += "    template <typename JsonType>\n";
+    text += "    static void toJson(JsonType& json, const " + json_type.type + "& value) {\n";
+    text += "        json = JsonType::object();\n";
     for (const StructField& field : json_type.fields) {
-        text += "        json[" + quoted(field.name) + "] = value." + field.name + ";\n";
+        text += "        json[" + quoted(field.name) + "] = JsonType{value." + field.name + "};\n";
     }
     text += "    }\n\n";
 
-    text += "    template <typename BasicJson>\n";
-    text += "    static void from_json(const BasicJson& json, " + json_type.type + "& value) {\n";
+    // The helpers name the field in any error, so a client learns which one was wrong.
+    text += "    template <typename JsonType>\n";
+    text += "    static void fromJson(const JsonType& json, " + json_type.type + "& value) {\n";
+    text += "        if (!json.isObject()) {\n";
+    text += "            throw cppboot::JsonError(\"expected an object\");\n        }\n";
     for (const StructField& field : json_type.fields) {
-        if (field.is_optional) {
-            text += "        if (json.contains(" + quoted(field.name) + ")) {\n";
-            text += "            json.at(" + quoted(field.name) + ").get_to(value." + field.name +
-                    ");\n        }\n";
-        } else {
-            text += "        json.at(" + quoted(field.name) + ").get_to(value." + field.name + ");\n";
-        }
+        text += std::string{"        cppboot::detail::"} +
+                (field.is_optional ? "readOptionalJsonField" : "readJsonField") + "(json, " +
+                quoted(field.name) + ", value." + field.name + ");\n";
     }
     text += "    }\n};\n\n";
 }

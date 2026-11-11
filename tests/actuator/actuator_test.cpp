@@ -7,7 +7,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
-#include <nlohmann/json.hpp>
+#include <cppboot/base/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -323,7 +323,7 @@ TEST_F(ActuatorTest, InProgressReturnsToZero) {
 
 TEST_F(ActuatorTest, InfoReportsTheApplication) {
     build({{"cppboot.application.name", "shop"}});
-    const auto body = nlohmann::json::parse(send("/actuator/info").body());
+    const auto body = cppboot::Json::parse(send("/actuator/info").body());
     EXPECT_EQ(body["application"], "shop");
     EXPECT_TRUE(body.contains("cppboot_version"));
     EXPECT_TRUE(body.contains("uptime_seconds"));

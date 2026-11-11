@@ -36,7 +36,7 @@ $PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true
 
 $repository = 'mahirmovsumov/CppBoot'
 $packages = 'gcc', 'clang', 'cmake', 'ninja', 'gdb', 'gtest', 'boost',
-    'nlohmann-json', 'postgresql', 'sqlite3', 'openssl' | ForEach-Object { "mingw-w64-ucrt-x86_64-$_" }
+    'postgresql', 'sqlite3', 'openssl' | ForEach-Object { "mingw-w64-ucrt-x86_64-$_" }
 
 function Step([string]$text) { Write-Host "`n==> $text" -ForegroundColor Cyan }
 

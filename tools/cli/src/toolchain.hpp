@@ -13,7 +13,8 @@ namespace cppboot::cli {
 Result<std::filesystem::path> findInstallation();
 
 /// Runs a tool such as cmake in a folder, and says clearly when it isn't on PATH.
-Result<int> runTool(std::vector<std::string> command, const std::filesystem::path& directory);
+Result<int> runTool(std::vector<std::string> command, const std::filesystem::path& directory,
+                    bool share_input = true);
 
 /// Puts the folder in CPPBOOT_TOOLCHAIN first on PATH, for the programs this process starts.
 void applyToolchain();

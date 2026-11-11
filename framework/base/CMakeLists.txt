@@ -4,7 +4,7 @@ configure_file(
     @ONLY
 )
 
-add_library(cppboot-base src/error.cpp)
+add_library(cppboot-base src/error.cpp src/json.cpp)
 add_library(cppboot::base ALIAS cppboot-base)
 
 target_include_directories(cppboot-base PUBLIC

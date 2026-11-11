@@ -7,11 +7,11 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <nlohmann/json.hpp>
 #include <utility>
 
 #include "base64url.hpp"
 #include "cppboot/base/exceptions.hpp"
+#include "cppboot/base/json.hpp"
 
 namespace cppboot::security {
 
@@ -95,13 +95,12 @@ std::string TokenService::issue(std::string_view subject,
                                 const std::vector<std::string>& roles) const {
     const std::int64_t now = toSeconds(clock_());
 
-    const nlohmann::json payload = {
-        {"iss", options_.issuer},
-        {"sub", subject},
-        {"iat", now},
-        {"exp", now + options_.lifetime.count()},
-        {"roles", roles},
-    };
+    Json payload = Json::object();
+    payload["iss"] = options_.issuer;
+    payload["sub"] = subject;
+    payload["iat"] = now;
+    payload["exp"] = now + options_.lifetime.count();
+    payload["roles"] = roles;
 
     const std::string message =
         detail::base64UrlEncode(kHeader) + "." + detail::base64UrlEncode(payload.dump());
@@ -130,21 +129,24 @@ std::optional<Principal> TokenService::verify(std::string_view token) const {
     }
 
     // Nothing is parsed before the signature passes, so an attacker's JSON never gets read.
-    const auto header = nlohmann::json::parse(*header_text, nullptr, false);
-    const auto payload = nlohmann::json::parse(*payload_text, nullptr, false);
-    if (!header.is_object() || !payload.is_object()) {
+    const auto header_json = Json::tryParse(*header_text);
+    const auto payload_json = Json::tryParse(*payload_text);
+    if (!header_json || !payload_json || !header_json.value().isObject() ||
+        !payload_json.value().isObject()) {
         return std::nullopt;
     }
+    const Json& header = header_json.value();
+    const Json& payload = payload_json.value();
 
     // Only HS256 is accepted, whatever the token asks for. This rules out "none", and attacks that
     // switch algorithms.
-    const auto algorithm = header.find("alg");
-    if (algorithm == header.end() || !algorithm->is_string() || *algorithm != "HS256") {
+    const Json* const algorithm = header.find("alg");
+    if (algorithm == nullptr || !algorithm->isString() || algorithm->asString() != "HS256") {
         return std::nullopt;
     }
 
-    const auto issuer = payload.find("iss");
-    if (issuer == payload.end() || !issuer->is_string() || *issuer != options_.issuer) {
+    const Json* const issuer = payload.find("iss");
+    if (issuer == nullptr || !issuer->isString() || issuer->asString() != options_.issuer) {
         return std::nullopt;
     }
 
@@ -152,36 +154,35 @@ std::optional<Principal> TokenService::verify(std::string_view token) const {
     const auto now = static_cast<double>(toSeconds(clock_()));
 
     // A token with no expiry would be valid forever, so it isn't accepted.
-    const auto expiry = payload.find("exp");
-    if (expiry == payload.end() || !expiry->is_number() ||
-        now >= expiry->get<double>() + kClockLeewaySeconds) {
+    const Json* const expiry = payload.find("exp");
+    if (expiry == nullptr || !expiry->isNumber() ||
+        now >= expiry->asDouble() + kClockLeewaySeconds) {
         return std::nullopt;
     }
 
-    const auto not_before = payload.find("nbf");
-    if (not_before != payload.end() &&
-        (!not_before->is_number() || now + kClockLeewaySeconds < not_before->get<double>())) {
+    const Json* const not_before = payload.find("nbf");
+    if (not_before != nullptr &&
+        (!not_before->isNumber() || now + kClockLeewaySeconds < not_before->asDouble())) {
         return std::nullopt;
     }
 
-    const auto subject = payload.find("sub");
-    if (subject == payload.end() || !subject->is_string() ||
-        subject->get_ref<const std::string&>().empty()) {
+    const Json* const subject = payload.find("sub");
+    if (subject == nullptr || !subject->isString() || subject->asString().empty()) {
         return std::nullopt;
     }
 
     Principal principal;
-    principal.subject = subject->get<std::string>();
+    principal.subject = subject->asString();
 
-    if (const auto roles = payload.find("roles"); roles != payload.end()) {
-        if (!roles->is_array()) {
+    if (const Json* const roles = payload.find("roles"); roles != nullptr) {
+        if (!roles->isArray()) {
             return std::nullopt;
         }
-        for (const auto& role : *roles) {
-            if (!role.is_string()) {
+        for (const Json& role : roles->items()) {
+            if (!role.isString()) {
                 return std::nullopt;
             }
-            principal.roles.push_back(role.get<std::string>());
+            principal.roles.push_back(role.asString());
         }
     }
     return principal;

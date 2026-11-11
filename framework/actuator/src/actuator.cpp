@@ -4,11 +4,11 @@
 #include <cctype>
 #include <cstddef>
 #include <exception>
-#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <utility>
 
+#include "cppboot/base/json.hpp"
 #include "cppboot/base/version.hpp"
 #include "cppboot/platform/system_info.hpp"
 
@@ -44,15 +44,14 @@ web::Response unauthorizedResponse() {
 }
 
 web::Response healthResponse(const HealthReport& report) {
-    nlohmann::ordered_json checks = nlohmann::ordered_json::object();
+    Json checks = Json::object();
     for (const HealthCheckResult& result : report.checks) {
         checks[result.name] = result.healthy ? "UP" : "DOWN";
     }
 
-    const nlohmann::ordered_json body = {
-        {"status", report.healthy ? "UP" : "DOWN"},
-        {"checks", std::move(checks)},
-    };
+    Json body = Json::object();
+    body["status"] = report.healthy ? "UP" : "DOWN";
+    body["checks"] = std::move(checks);
     // A 503 tells load balancers to stop sending traffic here.
     return web::Response::json(body.dump(), report.healthy ? 200 : 503);
 }
@@ -211,11 +210,10 @@ void mount(web::Router& router, std::shared_ptr<Actuator> actuator, bool require
         if (!allowed(request)) {
             return unauthorizedResponse();
         }
-        const nlohmann::ordered_json body = {
-            {"application", actuator->applicationName()},
-            {"cppboot_version", std::string{kVersionString}},
-            {"uptime_seconds", actuator->uptime().count()},
-        };
+        Json body = Json::object();
+        body["application"] = actuator->applicationName();
+        body["cppboot_version"] = kVersionString;
+        body["uptime_seconds"] = actuator->uptime().count();
         return web::Response::json(body.dump());
     });
 }
