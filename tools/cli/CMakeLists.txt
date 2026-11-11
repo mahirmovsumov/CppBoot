@@ -1,4 +1,16 @@
-add_library(cppboot-cli-lib STATIC src/cli.cpp src/generators.cpp src/package_files.cpp)
+add_library(cppboot-cli-lib STATIC
+    src/build.cpp
+    src/cli.cpp
+    src/dev.cpp
+    src/doctor.cpp
+    src/generators.cpp
+    src/package.cpp
+    src/package_files.cpp
+    src/project.cpp
+    src/project_template.cpp
+    src/prompts.cpp
+    src/toolchain.cpp
+)
 target_include_directories(cppboot-cli-lib PUBLIC include src)
 target_link_libraries(cppboot-cli-lib PUBLIC
     cppboot::base
