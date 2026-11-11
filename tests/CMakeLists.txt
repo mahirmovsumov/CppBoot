@@ -12,6 +12,7 @@ add_executable(cppboot-unit-tests
     unit/config_test.cpp
     unit/di_test.cpp
     unit/lifecycle_test.cpp
+    unit/logger_test.cpp
     unit/module_manager_test.cpp
     unit/process_test.cpp
     unit/result_test.cpp

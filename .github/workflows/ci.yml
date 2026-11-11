@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - run: cmake --preset ${{ matrix.preset }}
       - run: cmake --build --preset ${{ matrix.preset }}
       - run: ctest --preset ${{ matrix.preset }}
@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libgtest-dev libclang-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - run: cmake --preset release
       - run: cmake --build --preset release
       - run: cmake --install build/release --prefix "$RUNNER_TEMP/sdk"
@@ -77,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libspdlog-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libyaml-cpp-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - name: Build
         env:
           FLAGS: ${{ matrix.flags }}
@@ -100,7 +100,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          pacboy: gcc:p clang:p cmake:p ninja:p yaml-cpp:p spdlog:p gtest:p boost:p nlohmann-json:p postgresql:p sqlite3:p openssl:p
+          pacboy: gcc:p clang:p cmake:p ninja:p yaml-cpp:p gtest:p boost:p nlohmann-json:p postgresql:p sqlite3:p openssl:p
       - run: cmake --preset dev
       - run: cmake --build --preset dev
       - run: ctest --preset dev

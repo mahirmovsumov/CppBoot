@@ -44,7 +44,7 @@ This replaces the original diagram, which had configuration and logging dependin
 
 1. Core never depends on web, data or security modules.
 2. Optional features stay optional.
-3. Public headers don't expose third-party types. yaml-cpp, spdlog, Boost, OpenSSL, libpq and SQLite are private dependencies. The one exception is `cppboot::web::Json`, which is `nlohmann::ordered_json`, because applications work with JSON directly and a wrapper would add a large API for no benefit.
+3. Public headers don't expose third-party types. yaml-cpp, Boost, OpenSSL, libpq and SQLite are private dependencies. The one exception is `cppboot::web::Json`, which is `nlohmann::ordered_json`, because applications work with JSON directly and a wrapper would add a large API for no benefit.
 4. Module dependency cycles are rejected at startup.
 5. Modules start as folders with a few CMake targets. A module gets its own target only when something needs to use it separately.
 

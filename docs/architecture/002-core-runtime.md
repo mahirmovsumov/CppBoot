@@ -51,4 +51,4 @@ Setting `cppboot.runtime.shutdown_after_start` to `true` makes the application s
 
 ## Global state
 
-The framework has none, with one exception: operating system signal handlers receive no user data pointer, so the platform layer keeps the minimum needed. Loggers aren't added to spdlog's global registry.
+The framework has none, with one exception: operating system signal handlers receive no user data pointer, so the platform layer keeps the minimum needed. Loggers keep their own state, and share nothing.

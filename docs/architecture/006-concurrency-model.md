@@ -42,7 +42,7 @@ Per-request components were considered and left out, because they add work to ev
 | Object | How |
 |---|---|
 | `Config` | Doesn't change after loading |
-| `Logger` | spdlog's thread-safe sinks |
+| `Logger` | A mutex around each line it writes |
 | `Container` | A recursive mutex around registration and resolution |
 | `Database` | Each statement borrows its own connection from the pool |
 | `Metrics` and `Actuator` | Atomics for values, and a mutex for looking up and adding metrics |

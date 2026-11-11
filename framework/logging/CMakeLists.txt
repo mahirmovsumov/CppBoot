@@ -7,7 +7,7 @@ target_include_directories(cppboot-logging PUBLIC
 )
 target_link_libraries(cppboot-logging
     PUBLIC cppboot::base
-    PRIVATE spdlog::spdlog
+    PRIVATE cppboot::platform
 )
 
 cppboot_apply_compiler_options(cppboot-logging)

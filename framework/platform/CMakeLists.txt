@@ -3,6 +3,7 @@ add_library(cppboot::platform ALIAS cppboot-platform)
 
 if(WIN32)
     target_sources(cppboot-platform PRIVATE
+        windows/console.cpp
         windows/environment.cpp
         windows/process.cpp
         windows/service_manager.cpp
@@ -14,6 +15,7 @@ if(WIN32)
     target_link_libraries(cppboot-platform PRIVATE psapi ws2_32)
 elseif(UNIX)
     target_sources(cppboot-platform PRIVATE
+        linux/console.cpp
         linux/environment.cpp
         linux/process.cpp
         linux/service_manager.cpp

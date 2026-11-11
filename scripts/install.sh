@@ -62,7 +62,7 @@ if [ "$install_packages" = yes ]; then
     as_root apt-get update -q
     as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
         g++ gdb cmake ninja-build curl ca-certificates tar gzip \
-        libclang-dev libyaml-cpp-dev libspdlog-dev libboost-dev nlohmann-json3-dev \
+        libclang-dev libyaml-cpp-dev libboost-dev nlohmann-json3-dev \
         libpq-dev libsqlite3-dev libssl-dev libgtest-dev
 fi
 

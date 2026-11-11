@@ -20,7 +20,7 @@ jobs:
         run: |
           apt-get update -q
           DEBIAN_FRONTEND=noninteractive apt-get install -y -q git g++ cmake ninja-build libclang-dev \
-            libyaml-cpp-dev libspdlog-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
+            libyaml-cpp-dev libboost-dev nlohmann-json3-dev libpq-dev libsqlite3-dev libssl-dev
       - uses: actions/checkout@v4
       - name: Build and pack
         run: |
@@ -45,7 +45,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          pacboy: gcc:p clang:p cmake:p ninja:p yaml-cpp:p spdlog:p gtest:p boost:p nlohmann-json:p postgresql:p sqlite3:p openssl:p
+          pacboy: gcc:p clang:p cmake:p ninja:p yaml-cpp:p gtest:p boost:p nlohmann-json:p postgresql:p sqlite3:p openssl:p
       - name: Build and pack
         run: |
           version="$(sed -nE 's/^project\(CppBoot VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)"
