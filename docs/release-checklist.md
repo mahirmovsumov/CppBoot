@@ -13,7 +13,7 @@ These block 1.0:
 
 ## Before each release
 
-- [ ] All CI jobs pass on the commit being released, including `linux-service` and `linux-stress`.
+- [ ] All CI jobs pass on the commit being released, including `linux-service` and both `linux-stress` jobs.
 - [ ] The Stress workflow has passed on that commit, or a very close one, with at least 30 minutes for each run.
 - [ ] `scripts/check-docs.py` finds no problems.
 - [ ] A person has followed the [getting started tutorial](tutorials/getting-started.md) on a clean machine.

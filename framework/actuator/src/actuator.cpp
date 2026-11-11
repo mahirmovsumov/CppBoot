@@ -19,6 +19,12 @@ namespace {
 // Requests with no route share this, so that clients can't create new series by inventing paths.
 constexpr std::string_view kUnmatchedRoute = "unmatched";
 
+/// The server gives IPv4-mapped IPv6 addresses in their IPv4 form, so these are all the spellings.
+/// An empty address means the request didn't come from the network, which isn't trusted either.
+bool isLoopback(std::string_view address) {
+    return address.starts_with("127.") || address == "::1";
+}
+
 std::optional<std::string_view> bearerToken(const std::string& header) {
     constexpr std::string_view kScheme = "bearer ";
     const std::string_view value = header;
@@ -177,7 +183,12 @@ void mount(web::Router& router, std::shared_ptr<Actuator> actuator, bool require
 
     const auto allowed = [actuator, require_token](const web::Request& request) {
         if (!actuator->hasMetricsToken()) {
-            return !require_token;
+            // With no token to check, only this machine can see them, so a server that listens on
+            // other addresses doesn't show them to the network by mistake.
+            // A proxy on this machine also connects from a local address, so a request it passed
+            // on, which carries one of these headers, isn't counted as local.
+            return !require_token && isLoopback(request.clientAddress()) &&
+                   !request.header("X-Forwarded-For") && !request.header("Forwarded");
         }
         const auto header = request.header("Authorization");
         if (!header) {

@@ -187,8 +187,11 @@ protected:
         mount(*router_, actuator_, require_token);
     }
 
-    Response send(std::string_view target, Headers headers = {}, Method method = Method::Get) const {
-        return router_->handle(Request::create(method, target, std::move(headers)).value());
+    Response send(std::string_view target, Headers headers = {}, Method method = Method::Get,
+                  std::string client = "127.0.0.1") const {
+        Request request = Request::create(method, target, std::move(headers)).value();
+        request.setClientAddress(std::move(client));
+        return router_->handle(request);
     }
 
     Response withToken(std::string_view target, const std::string& token) const {
@@ -348,6 +351,38 @@ TEST_F(ActuatorTest, ConfiguredTokenOpensMetrics) {
     EXPECT_EQ(withToken("/actuator/metrics", "scrape-toke").status(), 401);
     EXPECT_EQ(withToken("/actuator/metrics", "scrape-token").status(), 200);
     EXPECT_EQ(withToken("/actuator/info", "scrape-token").status(), 200);
+}
+
+TEST_F(ActuatorTest, WithNoTokenOnlyThisMachineSeesMetrics) {
+    build();
+    for (const char* local : {"127.0.0.1", "127.0.0.2", "::1"}) {
+        EXPECT_EQ(send("/actuator/metrics", {}, Method::Get, local).status(), 200) << local;
+        EXPECT_EQ(send("/actuator/info", {}, Method::Get, local).status(), 200) << local;
+    }
+    for (const char* remote : {"10.0.0.5", "192.168.1.20", "2001:db8::1", "::ffff:127.0.0.1", ""}) {
+        EXPECT_EQ(send("/actuator/metrics", {}, Method::Get, remote).status(), 401) << remote;
+        EXPECT_EQ(send("/actuator/info", {}, Method::Get, remote).status(), 401) << remote;
+    }
+    // A proxy on this machine connects locally, but passes on requests from anywhere.
+    EXPECT_EQ(send("/actuator/metrics", {{"X-Forwarded-For", "203.0.113.9"}}, Method::Get,
+                   "127.0.0.1")
+                  .status(),
+              401);
+    EXPECT_EQ(send("/actuator/metrics", {{"Forwarded", "for=203.0.113.9"}}, Method::Get, "127.0.0.1")
+                  .status(),
+              401);
+    // Health stays public, because load balancers on other machines call it.
+    EXPECT_EQ(send("/actuator/health", {}, Method::Get, "10.0.0.5").status(), 200);
+}
+
+TEST_F(ActuatorTest, ConfiguredTokenAppliesFromAnywhere) {
+    build({{"cppboot.actuator.metrics_token", "scrape-token"}}, false);
+    EXPECT_EQ(send("/actuator/metrics", {{"Authorization", "Bearer scrape-token"}}, Method::Get,
+                   "10.0.0.5")
+                  .status(),
+              200);
+    // A token replaces the rule for this machine, rather than adding to it.
+    EXPECT_EQ(send("/actuator/metrics", {}, Method::Get, "127.0.0.1").status(), 401);
 }
 
 TEST_F(ActuatorTest, ConfiguredTokenAppliesWithoutSecurityToo) {

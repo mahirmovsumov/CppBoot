@@ -85,6 +85,8 @@ So when a component's destructor runs, no thread can still be using it.
 
 ## Checks
 
-- A ThreadSanitizer build of the framework and its tests runs in CI, on Linux. The stress workflow, started by hand, also runs the server under it with four network threads, over HTTP and HTTPS. Asio's fences are turned off in that build so that it can see them ([010](010-web-server.md#threadsanitizer)).
+- A ThreadSanitizer build of the framework and its tests runs in CI, on Linux.
+- Every CI run also puts the server under 90 seconds of HTTPS stress with ThreadSanitizer and four network threads, so that races between threads under real load fail the build. The stress workflow, started by hand, does longer runs over HTTP and HTTPS.
+- Asio's fences are turned off in that build so that it can see them ([010](010-web-server.md#threadsanitizer)).
 - `cppboot build --sanitize=thread` checks an application.
 - The generator warns about unprotected shared state in components.

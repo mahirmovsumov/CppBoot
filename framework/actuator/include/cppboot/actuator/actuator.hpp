@@ -83,9 +83,9 @@ private:
 /// other middleware, so that it measures them too.
 ///
 /// /actuator/health and /actuator/health/live are always public, and report status only. Metrics and
-/// info need cppboot.actuator.metrics_token if one is set. Without one, they're open unless
-/// require_token is true, in which case they stay locked. Generated code passes true for a project
-/// that uses security.
+/// info need cppboot.actuator.metrics_token if one is set. Without one, they're locked if
+/// require_token is true, and otherwise open only to clients on this machine. Generated code passes
+/// true for a project that uses security.
 void mount(web::Router& router, std::shared_ptr<Actuator> actuator, bool require_token = false);
 
 }  // namespace cppboot::actuator

@@ -113,7 +113,9 @@ Metrics and info reveal details about your application, so they're protected:
 | Uses security | Not set | **Locked for everyone** |
 | Uses security | Set | Needs that token |
 | No security | Set | Needs that token |
-| No security | Not set | Open to anyone who can reach the server |
+| No security | Not set | Only from this machine |
+
+"This machine" means a client at `127.0.0.1` or `::1`, so you can look at them while developing. A request that came through a proxy, with an `X-Forwarded-For` or `Forwarded` header, doesn't count, because a proxy on the same machine connects from a local address on behalf of clients anywhere. To collect metrics from another machine, set a token.
 
 Set the token in the environment. It's separate from user sign-in, because a metrics collector isn't a user, so a user's JWT doesn't work here:
 

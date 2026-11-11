@@ -64,7 +64,7 @@ With TLS, `SSL_MODE_RELEASE_BUFFERS` frees OpenSSL's buffers on idle connections
 ## Checks
 
 - Every CI run includes an AddressSanitizer and UndefinedBehaviorSanitizer build of the whole framework and its tests, on Linux.
-- Every CI run includes a 90-second HTTPS stress test of the server built with the same sanitizers, with well-behaved clients alongside slow, abandoned and oversized requests. The stress workflow, started by hand, does longer runs.
+- Every CI run includes a 90-second HTTPS stress test of the server built with the same sanitizers, with four network threads, and well-behaved clients alongside slow, abandoned and oversized requests. The stress workflow, started by hand, does longer runs.
 - New projects build with `_GLIBCXX_ASSERTIONS`, and `cppboot build --sanitize=address` checks an application (016).
 
 C++ can't guarantee memory safety, so these find bugs rather than proving there are none.

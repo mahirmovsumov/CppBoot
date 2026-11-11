@@ -16,6 +16,14 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot doctor` warns if GoogleTest or gdb is missing, and the Linux installer installs gdb.
 - After creating a project with `--security`, `cppboot create` shows the environment variables to set before running it.
 
+### Health and metrics
+
+- **Change:** with no `cppboot.actuator.metrics_token`, `/actuator/metrics` and `/actuator/info` in a project without security now answer only clients on the same machine, and not requests passed on by a proxy. Before, they were open to anyone who could reach the server. Set a token to collect metrics from another machine.
+
+### Testing
+
+- CI's stress test now also runs under ThreadSanitizer, and both stress runs use four network threads.
+
 ### Documentation
 
 - Architecture records 005, 006 and 008, which were planned from the start but never written: memory management, the concurrency model, and the security architecture as a whole.

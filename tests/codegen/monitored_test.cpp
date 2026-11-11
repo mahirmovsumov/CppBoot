@@ -48,7 +48,9 @@ protected:
     }
 
     Response send(Method method, std::string_view target) const {
-        return router_->handle(Request::create(method, target).value());
+        Request request = Request::create(method, target).value();
+        request.setClientAddress("127.0.0.1");
+        return router_->handle(request);
     }
 
     config::Config config_ = makeConfig();

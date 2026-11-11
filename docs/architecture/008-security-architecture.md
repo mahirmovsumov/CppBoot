@@ -47,7 +47,7 @@ These apply to every part of CppBoot, and each record below follows them.
 - `Config::describe()` hides the values of keys containing `password`, `secret`, `token`, `credential`, `private_key`, `api_key` or `database.url`.
 - When the database can't be reached, the error doesn't show the password from its URL. An end-to-end test checks this.
 - Health check failures go to the log, not to the public health route, because their messages can hold addresses or credentials ([013](013-observability.md)).
-- `/actuator/metrics` and `/actuator/info` need `cppboot.actuator.metrics_token` once it's set, compared in constant time. Without one, they're closed in a project that uses security, and open in one that doesn't.
+- `/actuator/metrics` and `/actuator/info` need `cppboot.actuator.metrics_token` once it's set, compared in constant time. Without one, they're closed in a project that uses security, and in one that doesn't, open only to clients on the same machine whose requests didn't come through a proxy.
 
 ## Running in production
 

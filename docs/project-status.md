@@ -102,7 +102,7 @@ To deploy it, run `cppboot package`. The result runs on another machine with no 
 
 Every push runs on Linux with GCC and Clang, on Linux with memory and thread checkers (AddressSanitizer, UBSan and ThreadSanitizer), and on Windows with GCC. The database tests run against SQLite everywhere, and against a real PostgreSQL server on Linux.
 
-The tests include an end-to-end test that installs the framework, creates a new project with the CLI, adds a marked class, then builds, runs and packages it. Another CI job installs a real application as a systemd service, crashes, upgrades and removes it, and runs its package in a clean container. It also builds the code printed in the tutorials and guides. A short stress run under the memory checker runs on every push, and long ones on request. A real Ctrl+C on Windows can't be sent automatically in CI, so that's checked by hand.
+The tests include an end-to-end test that installs the framework, creates a new project with the CLI, adds a marked class, then builds, runs and packages it. Another CI job installs a real application as a systemd service, crashes, upgrades and removes it, and runs its package in a clean container. It also builds the code printed in the tutorials and guides. Short stress runs under the memory checker and the data race checker run on every push, and long ones on request. A real Ctrl+C on Windows can't be sent automatically in CI, so that's checked by hand.
 
 ## Performance
 
