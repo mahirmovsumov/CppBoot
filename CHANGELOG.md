@@ -16,6 +16,10 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `cppboot doctor` warns if GoogleTest or gdb is missing, and the Linux installer installs gdb.
 - After creating a project with `--security`, `cppboot create` shows the environment variables to set before running it.
 
+### Documentation
+
+- Architecture records 005, 006 and 008, which were planned from the start but never written: memory management, the concurrency model, and the security architecture as a whole.
+
 ## 0.1.0, pre-release, 2026-11-04
 
 The first release, marked as a pre-release because the API can still change, and CppBoot hasn't had an independent security review.
