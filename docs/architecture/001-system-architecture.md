@@ -31,12 +31,16 @@ Feature modules      web, data, security, actuator
       |
 cppboot-core         Application, lifecycle, modules, workers
       |
-cppboot-config  cppboot-logging  cppboot-platform
-      |
-cppboot-base         Result, Error, Exception, version
+cppboot-config  cppboot-logging
+      |                |
+      |          cppboot-platform
+      |                |
+cppboot-base         Result, Error, Exception, Json, validation, macros
 ```
 
-`cppboot-di` depends only on `cppboot-base`, and the core doesn't depend on it. `cppboot-boot` sits above both and connects them. See [004](004-dependency-injection.md). `cppboot-security` and `cppboot-actuator` also use `cppboot-web`, because they work with requests and routes.
+`cppboot-logging` uses `cppboot-platform` for the console and local time, privately. `cppboot-web` and `cppboot-data` both build on `cppboot-core`, and neither depends on the other. `cppboot-di` depends only on `cppboot-base`, and the core doesn't depend on it. `cppboot-boot` sits above both and connects them. See [004](004-dependency-injection.md). `cppboot-security` and `cppboot-actuator` also use `cppboot-web`, because they work with requests and routes, and `cppboot-config` for their settings.
+
+The [architecture guide](README.md#2-libraries) has the full graph, with what each library holds and which third-party libraries it keeps private.
 
 This replaces the original diagram, which had configuration and logging depending on core while `Application` in core needed both to start. The fix is a small base library at the bottom, with `Application` above the services it starts.
 

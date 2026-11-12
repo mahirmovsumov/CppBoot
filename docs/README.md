@@ -39,6 +39,7 @@ Start with the tutorial, then use the guides as a reference.
 
 ## Contributing to CppBoot
 
+- [How CppBoot works](architecture/README.md): the architecture as a whole, with diagrams, and an index of the records below
 - [System architecture](architecture/001-system-architecture.md)
 - [Core runtime](architecture/002-core-runtime.md)
 - [Module system](architecture/003-module-system.md)
@@ -55,4 +56,7 @@ Start with the tutorial, then use the guides as a reference.
 - [Rate limiting](architecture/014-rate-limiting.md)
 - [HTTPS](architecture/015-https.md)
 - [Ownership and lifetimes](architecture/016-ownership.md)
+- [Configuration](architecture/017-configuration.md)
+- [JSON](architecture/018-json.md)
+- [Command-line tool and SDK](architecture/019-cli-and-sdk.md)
 - [C++20 coding standard](standards/cpp20-coding-standard.md)

@@ -51,6 +51,9 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 ### Documentation
 
 - Architecture records 005, 006 and 008, which were planned from the start but never written: memory management, the concurrency model, and the security architecture as a whole.
+- [How CppBoot works](docs/architecture/README.md), a guide to the architecture as a whole: the libraries and how they depend on each other, what happens at build time, at startup, during a request and at shutdown, with diagrams, and where each decision is recorded.
+- Architecture records 017, 018 and 019: configuration, JSON, and the command-line tool and SDK.
+- Record 001 has the current dependency layers.
 
 ## 0.1.0, pre-release, 2026-11-04
 
