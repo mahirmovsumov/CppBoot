@@ -4,6 +4,8 @@ add_library(cppboot-cli-lib STATIC
     src/dev.cpp
     src/doctor.cpp
     src/generators.cpp
+    src/resource.cpp
+    src/source_files.cpp
     src/package.cpp
     src/package_files.cpp
     src/project.cpp

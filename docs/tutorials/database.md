@@ -146,6 +146,25 @@ cppboot run
 
 The environment variable overrides the URL in `cppboot.yaml`, which is how to keep real passwords out of your code.
 
+## Add a resource with one command
+
+What this tutorial built by hand, the CLI can write for you. In the `users-db` folder:
+
+```powershell
+cppboot add resource Product title:string price:double stock:int note:string?
+cppboot test
+cppboot run
+```
+
+This adds `src/product.hpp`, with a repository and a controller for `/api/products`, a migration for the `products` table, and tests that run the repository against a database. `cppboot test` runs them, and `cppboot run` creates the table. Then try it:
+
+```powershell
+curl.exe -s -X POST localhost:8080/api/products --data-binary '{\"title\":\"Tea\",\"price\":2.5,\"stock\":10}'
+curl.exe -s "localhost:8080/api/products?limit=10"
+```
+
+See [`cppboot add resource`](../guides/cli.md#cppboot-add-resource-name-fieldtype) for the field types and everything it writes.
+
 ## Next steps
 
 The [database guide](../guides/database.md) covers transactions, every query function, and all the rules for migrations.

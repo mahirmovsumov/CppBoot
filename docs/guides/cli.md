@@ -88,6 +88,44 @@ It checks the project first, and writes nothing if something's wrong:
 - A controller or middleware needs a project made with `--web`, a repository needs a database, and a health check needs `--actuator`.
 - A repository's migration gets the next number in `db/migrations`, and uses the column types of the project's database. It stops if a migration already creates that table.
 
+### `cppboot add resource <Name> <field:type>...`
+
+Adds everything a REST resource needs, stored in the project's database, ready to build and run:
+
+```powershell
+cppboot add resource OrderItem name:string price:double quantity:int note:string?
+```
+
+| File | What's in it |
+|---|---|
+| `src/order_item.hpp` | `OrderItem`, which is returned as JSON and stored as a row. `OrderItemInput`, what clients send, with checks. `OrderItemRepository`, with `list`, `find`, `add`, `replace` and `remove`. `OrderItemController`, with the routes below |
+| `db/migrations/002_create_order_items.sql` | The `order_items` table, which the next run creates |
+| `tests/order_item_test.cpp` | Tests of the repository against a real database, and of the checks |
+
+| Route | What it does |
+|---|---|
+| `GET /api/order-items?limit=20&offset=0` | Lists them in pages, in the order they were added. `limit` is 1 to 100 |
+| `GET /api/order-items/{id}` | Returns one, or 404 |
+| `POST /api/order-items` | Adds one, and answers 201 with it |
+| `PUT /api/order-items/{id}` | Replaces one, or 404 |
+| `DELETE /api/order-items/{id}` | Removes one, and answers 204, or 404 |
+
+Each field is `name:type`, and a `?` after the type lets it be missing, which is `NULL` in the table and `null` in JSON:
+
+| Type | C++ | SQLite | PostgreSQL |
+|---|---|---|---|
+| `string` | `std::string` | `TEXT` | `TEXT` |
+| `int` | `int` | `INTEGER` | `INTEGER` |
+| `long` | `std::int64_t` | `BIGINT` | `BIGINT` |
+| `double` | `double` | `REAL` | `DOUBLE PRECISION` |
+| `bool` | `bool` | `BOOLEAN` | `BOOLEAN` |
+
+A text field gets `CPPBOOT_LENGTH(1, 255)`, or `(0, 255)` if it can be missing. Change the checks, add routes, or change the SQL as you like, because the files are yours from then on.
+
+It needs a project made with `--web` and a database. It writes nothing if anything is wrong: a field name that isn't lower-case, `id`, which every resource has, a word that C++ or SQL reserves such as `order`, a type it doesn't know, a file that already exists, or a type with that name already in `src`.
+
+In a PostgreSQL project, the repository tests need `CPPBOOT_TEST_DATABASE_URL` to name a database they may change, and are skipped without it.
+
 ### `cppboot test [arguments]`
 
 Builds the tests in `tests/` and runs them with [GoogleTest](https://google.github.io/googletest/). They're built with the application's code, except `src/main.cpp`, so they can create its classes and call them. A normal build leaves them out.

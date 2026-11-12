@@ -247,6 +247,26 @@ expect_exit_code("${code}" 1 "test with a failing test" "${output}")
 expect_contains("${output}" "FailingTest.Fails" "test with a failing test")
 file(REMOVE ${WORK_DIR}/demo-api/tests/failing_test.cpp)
 
+# A resource has to build, create its table on the first run, and pass the tests it comes with,
+# which run its repository against a real database.
+run_cli(code output ${WORK_DIR} create demo-resource --web --sqlite)
+expect_exit_code("${code}" 0 "create for a resource" "${output}")
+run_cli(code output ${WORK_DIR}/demo-resource add resource OrderItem
+    name:string price:double quantity:int stock:long active:bool note:string?)
+expect_exit_code("${code}" 0 "add resource" "${output}")
+expect_contains("${output}" "Created tests/order_item_test.cpp" "add resource")
+run_cli(code output ${WORK_DIR}/demo-resource add resource Bad price:money)
+expect_exit_code("${code}" 1 "add resource with a bad type" "${output}")
+expect_contains("${output}" "isn't a type" "add resource with a bad type")
+run_cli(code output ${WORK_DIR}/demo-resource run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 0 "run with a resource" "${output}")
+expect_contains("${output}" "Applied 2 new database migrations" "run with a resource")
+run_cli(code output ${WORK_DIR}/demo-resource test)
+expect_exit_code("${code}" 0 "test a resource" "${output}")
+expect_contains("${output}" "OrderItemRepositoryTest.AddsFindsReplacesAndRemoves" "test a resource")
+expect_contains("${output}" "OrderItemInputTest.ChecksWhatClientsSend" "test a resource")
+
 # cppboot dev has to build and run, then build and run again after a change, and quit when asked.
 run_cli(code output ${WORK_DIR} create demo-dev)
 expect_exit_code("${code}" 0 "create for cppboot dev" "${output}")

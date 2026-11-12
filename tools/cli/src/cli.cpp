@@ -16,6 +16,7 @@
 #include "generators.hpp"
 #include "package.hpp"
 #include "prompts.hpp"
+#include "resource.hpp"
 #include "toolchain.hpp"
 
 namespace cppboot::cli {
@@ -35,6 +36,11 @@ Commands:
   add <kind> <Name> Add a class to the project's src folder, where kind is one of: service,
                     controller, repository, middleware, module, health, config
                     A repository also gets a migration that creates its table
+  add resource <Name> <field:type>...
+                    Add a struct, a repository, a controller with GET, POST, PUT and DELETE,
+                    a migration and a test, such as: add resource Product name:string
+                    price:double note:string?  Types are string, int, long, double and bool,
+                    and ? lets a field be missing
   build             Build the project in the current folder
   run [arguments]   Build and run the project, passing arguments to the application
   dev [arguments]   Build and run the project, and do it again whenever you save a change
@@ -142,17 +148,22 @@ int create(const std::vector<std::string>& arguments, std::istream& in, std::ost
 }
 
 int add(const std::vector<std::string>& arguments, std::ostream& out, std::ostream& err) {
-    if (arguments.size() != 2) {
+    const bool is_resource = !arguments.empty() && arguments[0] == "resource";
+    if (is_resource ? arguments.size() < 2 : arguments.size() != 2) {
         return usage(err);
     }
-    auto added = addComponent(fs::current_path(), arguments[0], arguments[1]);
+    auto added = is_resource
+                     ? addResource(fs::current_path(), arguments[1],
+                                   std::vector<std::string>(arguments.begin() + 2, arguments.end()))
+                     : addComponent(fs::current_path(), arguments[0], arguments[1]);
     if (!added) {
         return finish(added.error(), err);
     }
     for (const fs::path& file : added.value()) {
         out << "Created " << file.generic_string() << '\n';
     }
-    out << "The next build finds it, with no registration needed.\n";
+    out << (is_resource ? "The next build finds it, and the next run creates its table.\n"
+                        : "The next build finds it, with no registration needed.\n");
     return 0;
 }
 

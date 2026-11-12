@@ -24,6 +24,7 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - A missing `CPPBOOT_REQUIRED` setting, a value of the wrong type, a failed check, or a setting under the prefix that no field reads stops startup with exit code 78, listing every problem at once and suggesting the closest name for a misspelled key.
 - Checks, like Bean Validation: `CPPBOOT_NOT_EMPTY`, `CPPBOOT_LENGTH`, `CPPBOOT_MIN`, `CPPBOOT_MAX` and `CPPBOOT_RANGE` on fields of `CPPBOOT_JSON` and `CPPBOOT_CONFIG` structs, and on path and query parameters. A failed check on a request is a 400 that names the field. A check that can't apply to its field fails the build. See [checking what clients send](docs/guides/web.md#checking-what-clients-send).
 - `cppboot add config <Name>` writes a settings struct.
+- `cppboot add resource <Name> name:string price:double note:string?` writes a whole REST resource: a struct for JSON and rows, an input struct with checks, a repository, a controller with paged `GET`, `GET` by ID, `POST`, `PUT` and `DELETE`, a migration for the project's database, and tests that run the repository against a real database. See [the command-line guide](docs/guides/cli.md#cppboot-add-resource-name-fieldtype).
 - `ErrorCode::InvalidConfiguration`, which `runApplication` turns into exit code 78 when it's thrown while components are registered.
 - The test that new projects come with now reads environment variables too, so a required setting given that way doesn't fail it.
 

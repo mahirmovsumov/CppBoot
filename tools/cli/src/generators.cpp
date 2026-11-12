@@ -2,12 +2,9 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
-#include <charconv>
-#include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <system_error>
+
+#include "source_files.hpp"
 
 namespace cppboot::cli {
 
@@ -189,86 +186,6 @@ constexpr std::array<Kind, 7> kKinds = {{
     {"config", "Settings", "", "", kConfig},
 }};
 
-std::string readFile(const fs::path& path) {
-    std::ifstream input{path, std::ios::binary};
-    std::stringstream text;
-    text << input.rdbuf();
-    return text.str();
-}
-
-std::string replaceAll(std::string text, std::string_view placeholder, std::string_view value) {
-    std::size_t position = 0;
-    while ((position = text.find(placeholder, position)) != std::string::npos) {
-        text.replace(position, placeholder.size(), value);
-        position += value.size();
-    }
-    return text;
-}
-
-/// OrderItem becomes order_item.
-std::string snakeCase(std::string_view name) {
-    std::string result;
-    for (std::size_t i = 0; i < name.size(); ++i) {
-        const char c = name[i];
-        if (std::isupper(static_cast<unsigned char>(c)) != 0) {
-            if (i > 0) {
-                result += '_';
-            }
-            result += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        } else {
-            result += c;
-        }
-    }
-    return result;
-}
-
-std::string plural(const std::string& word) {
-    return word.ends_with('s') ? word : word + "s";
-}
-
-/// The next migration number, after the highest one already in the folder.
-int nextMigrationNumber(const fs::path& folder) {
-    int highest = 0;
-    std::error_code error;
-    for (const fs::directory_entry& entry : fs::directory_iterator{folder, error}) {
-        const std::string file = entry.path().filename().string();
-        int number = 0;
-        const auto [end, parse_error] = std::from_chars(file.data(), file.data() + file.size(), number);
-        if (parse_error == std::errc{} && end != file.data()) {
-            highest = std::max(highest, number);
-        }
-    }
-    return highest + 1;
-}
-
-/// Whether a migration in the folder already creates the table.
-bool createsTable(const fs::path& folder, const std::string& table) {
-    std::error_code error;
-    for (const fs::directory_entry& entry : fs::directory_iterator{folder, error}) {
-        std::string text = readFile(entry.path());
-        std::transform(text.begin(), text.end(), text.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (text.find("create table " + table + " ") != std::string::npos ||
-            text.find("create table " + table + "(") != std::string::npos ||
-            text.find("create table if not exists " + table + " ") != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
-}
-
-Result<void> writeNew(const fs::path& path, const std::string& content) {
-    std::error_code error;
-    fs::create_directories(path.parent_path(), error);
-    std::ofstream output{path, std::ios::binary};
-    output << content;
-    output.close();
-    if (!output) {
-        return Error{ErrorCode::IoError, "Cannot write " + path.generic_string()};
-    }
-    return {};
-}
-
 }  // namespace
 
 std::vector<std::string_view> componentKinds() {
@@ -290,23 +207,17 @@ Result<std::vector<fs::path>> addComponent(const fs::path& project, std::string_
             known += candidate.name;
         }
         return Error{ErrorCode::InvalidArgument,
-                     "Unknown kind '" + std::string{kind_name} + "'. Use one of: " + known};
+                     "Unknown kind '" + std::string{kind_name} + "'. Use one of: " + known +
+                         ", resource"};
     }
 
-    const bool valid_name =
-        !name.empty() && std::isupper(static_cast<unsigned char>(name.front())) != 0 &&
-        std::all_of(name.begin(), name.end(),
-                    [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0; });
-    if (!valid_name) {
+    if (!isClassName(name)) {
         return Error{ErrorCode::InvalidArgument,
                      "'" + std::string{name} + "' isn't a class name. Use letters and digits, "
                                                "starting with a capital, such as Order"};
     }
-
-    std::error_code error;
-    if (!fs::exists(project / "CMakeLists.txt", error) || !fs::exists(project / "src", error)) {
-        return Error{ErrorCode::NotFound,
-                     "No CppBoot project here. Run this from a folder made by 'cppboot create'."};
+    if (auto found = checkProject(project); !found) {
+        return found.error();
     }
     if (!kind->needs.empty() && readFile(project / "CMakeLists.txt").find(kind->needs) == std::string::npos) {
         return Error{ErrorCode::InvalidArgument, "A " + std::string{kind->name} + " needs " +
@@ -321,6 +232,7 @@ Result<std::vector<fs::path>> addComponent(const fs::path& project, std::string_
     }
     const std::string snake = snakeCase(base);
     const fs::path header = fs::path{"src"} / (snakeCase(class_name) + ".hpp");
+    std::error_code error;
     if (fs::exists(project / header, error)) {
         return Error{ErrorCode::InvalidState, header.generic_string() + " already exists"};
     }
@@ -330,34 +242,24 @@ Result<std::vector<fs::path>> addComponent(const fs::path& project, std::string_
     content = replaceAll(content, "@CLASS@", class_name);
     content = replaceAll(content, "@BASE@", base);
     content = replaceAll(content, "@SNAKE@", snake);
-    std::string upper = snake;
-    std::transform(upper.begin(), upper.end(), upper.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    content = replaceAll(content, "@UPPER@", upper);
+    content = replaceAll(content, "@UPPER@", upperCase(snake));
     content = replaceAll(content, "@PATH@", "/api/" + plural(snake));
 
-    fs::path migration;
     if (kind->name == "repository") {
         const std::string table = plural(snake);
-        const fs::path folder = project / "db" / "migrations";
-        if (createsTable(folder, table)) {
-            return Error{ErrorCode::InvalidState,
-                         "A migration in db/migrations already creates the " + table + " table"};
+        auto migration = newTableMigration(project, table);
+        if (!migration) {
+            return migration.error();
         }
-        char number[8];
-        std::snprintf(number, sizeof(number), "%03d", nextMigrationNumber(folder));
-        migration = fs::path{"db"} / "migrations" / (std::string{number} + "_create_" + table + ".sql");
-
-        const bool postgresql = readFile(project / "cppboot.yaml").find("postgresql:") != std::string::npos;
         const std::string sql = "CREATE TABLE " + table + " (\n    id " +
-                                (postgresql ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY") +
+                                (usesPostgresql(project) ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY") +
                                 ",\n    name TEXT NOT NULL\n);\n";
         content = replaceAll(content, "@TABLE@", table);
-        content = replaceAll(content, "@MIGRATION@", migration.generic_string());
-        if (auto saved = writeNew(project / migration, sql); !saved) {
+        content = replaceAll(content, "@MIGRATION@", migration.value().generic_string());
+        if (auto saved = writeNew(project / migration.value(), sql); !saved) {
             return saved.error();
         }
-        written.push_back(migration);
+        written.push_back(migration.value());
     }
 
     if (auto saved = writeNew(project / header, content); !saved) {

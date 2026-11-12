@@ -52,7 +52,7 @@ cd hello-world
 cppboot run
 ```
 
-`cppboot create` with no name asks what you want. Inside a project, `cppboot dev` restarts the application whenever you save a change, `cppboot add controller Invoice` adds a class that's ready to use, and `cppboot test` runs the project's tests.
+`cppboot create` with no name asks what you want. Inside a project, `cppboot dev` restarts the application whenever you save a change, `cppboot add controller Invoice` adds a class that's ready to use, `cppboot add resource Product name:string price:double` adds a whole REST resource with its table and tests, and `cppboot test` runs the project's tests.
 
 The installers set up the compiler and libraries too, and end with `cppboot doctor`, which checks everything and says how to fix what isn't right. See the [installation guide](docs/guides/installation.md).
 

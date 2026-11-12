@@ -8,6 +8,7 @@
 #include <string>
 
 #include "generators.hpp"
+#include "resource.hpp"
 #include "package_files.hpp"
 
 using cppboot::ErrorCode;
@@ -442,4 +443,113 @@ TEST_F(CliTest, AddConfigWritesASettingsStructNamedForItsPrefix) {
         << header;
     EXPECT_NE(header.find("CPPBOOT_ORDER_MAIL_HOST"), std::string::npos);
     EXPECT_EQ(header.find('@'), std::string::npos);
+}
+
+TEST_F(CliTest, AddResourceWritesEverythingItNeeds) {
+    ASSERT_TRUE(createProject("shop", directory_, {.web = true, .database = cppboot::cli::ProjectDatabase::Sqlite}));
+    const auto root = directory_ / "shop";
+
+    const auto added = cppboot::cli::addResource(
+        root, "OrderItem", {"name:string", "price:double", "count:int", "stock:long", "active:bool",
+                            "note:string?"});
+    ASSERT_TRUE(added) << added.error().describe();
+    ASSERT_EQ(added.value().size(), 3U);
+    EXPECT_EQ(added.value()[0].generic_string(), "src/order_item.hpp");
+    EXPECT_EQ(added.value()[1].generic_string(), "db/migrations/002_create_order_items.sql");
+    EXPECT_EQ(added.value()[2].generic_string(), "tests/order_item_test.cpp");
+
+    const std::string header = readFile(root / "src" / "order_item.hpp");
+    for (const char* expected :
+         {"struct CPPBOOT_JSON CPPBOOT_ROW OrderItem {", "std::int64_t id{0};",
+          "std::string name;", "double price{0};", "int count{0};", "std::int64_t stock{0};",
+          "bool active{false};", "std::optional<std::string> note;",
+          "struct CPPBOOT_JSON OrderItemInput {", "CPPBOOT_LENGTH(1, 255) std::string name;",
+          "CPPBOOT_LENGTH(0, 255) std::optional<std::string> note;",
+          "class CPPBOOT_SERVICE OrderItemRepository {",
+          "class CPPBOOT_CONTROLLER(\"/api/order-items\") OrderItemController {",
+          "INSERT INTO order_items (name, price, count, stock, active, note) VALUES ($1, $2, $3, "
+          "$4, $5, $6)",
+          "UPDATE order_items SET name = $2, price = $3, count = $4, stock = $5, active = $6, note "
+          "= $7 WHERE id = $1",
+          "ORDER BY id LIMIT $1 OFFSET $2", "\"No order item has that ID\"",
+          "CPPBOOT_RANGE(1, 100) std::optional<std::int64_t> limit"}) {
+        EXPECT_NE(header.find(expected), std::string::npos) << expected;
+    }
+
+    const std::string migration = readFile(root / "db" / "migrations" / "002_create_order_items.sql");
+    EXPECT_NE(migration.find("id INTEGER PRIMARY KEY"), std::string::npos);
+    EXPECT_NE(migration.find("price REAL NOT NULL"), std::string::npos);
+    EXPECT_NE(migration.find("note TEXT\n"), std::string::npos);
+
+    const std::string test = readFile(root / "tests" / "order_item_test.cpp");
+    EXPECT_NE(test.find("TEST_F(OrderItemRepositoryTest, AddsFindsReplacesAndRemoves)"),
+              std::string::npos);
+    EXPECT_NE(test.find("TEST(OrderItemInputTest, ChecksWhatClientsSend)"), std::string::npos);
+    EXPECT_EQ(test.find("GTEST_SKIP"), std::string::npos);
+}
+
+TEST_F(CliTest, AddResourceUsesTheProjectsDatabase) {
+    ASSERT_TRUE(createProject("shop", directory_, {.web = true, .database = cppboot::cli::ProjectDatabase::Postgresql}));
+    const auto root = directory_ / "shop";
+    ASSERT_TRUE(cppboot::cli::addResource(root, "Product", {"price:double", "note:string?"}));
+
+    const std::string migration = readFile(root / "db" / "migrations" / "002_create_products.sql");
+    EXPECT_NE(migration.find("id BIGSERIAL PRIMARY KEY"), std::string::npos);
+    EXPECT_NE(migration.find("price DOUBLE PRECISION NOT NULL"), std::string::npos);
+    // The tests need a PostgreSQL database to change, so they're skipped without one.
+    EXPECT_NE(readFile(root / "tests" / "product_test.cpp").find("CPPBOOT_TEST_DATABASE_URL"),
+              std::string::npos);
+    // No required text field means nothing for a check test to leave empty.
+    EXPECT_EQ(readFile(root / "tests" / "product_test.cpp").find("ChecksWhatClientsSend"),
+              std::string::npos);
+}
+
+TEST_F(CliTest, AddResourceRejectsBadFields) {
+    const auto rejected = [](std::vector<std::string> fields, std::string_view expected) {
+        const auto result = cppboot::cli::parseResourceFields(fields);
+        ASSERT_FALSE(result) << expected;
+        EXPECT_NE(result.error().message().find(expected), std::string::npos)
+            << result.error().message();
+    };
+    rejected({}, "at least one field");
+    rejected({"name"}, "needs a type, such as name:string");
+    rejected({"name:text", "name:int"}, "listed twice");
+    rejected({"price:money"}, "isn't a type");
+    rejected({"Price:double"}, "isn't a field name");
+    rejected({"2fast:int"}, "isn't a field name");
+    rejected({"unit-price:double"}, "isn't a field name");
+    rejected({"id:long"}, "has an id already");
+    rejected({"class:string"}, "reserves");
+    rejected({"order:int"}, "reserves");
+    rejected({"name:string??"}, "isn't a type");
+
+    const auto fine = cppboot::cli::parseResourceFields({"unit_price:double?", "title:text"});
+    ASSERT_TRUE(fine) << fine.error().message();
+    EXPECT_TRUE(fine.value()[0].optional);
+    EXPECT_EQ(fine.value()[1].type, cppboot::cli::FieldType::Text);
+}
+
+TEST_F(CliTest, AddResourceChecksTheProjectAndWritesNothingOnAMistake) {
+    ASSERT_TRUE(createProject("plain", directory_, {.web = true}));
+    const auto plain = cppboot::cli::addResource(directory_ / "plain", "Product", {"title:string"});
+    ASSERT_FALSE(plain);
+    EXPECT_NE(plain.error().message().find("needs a web project with a database"), std::string::npos);
+
+    ASSERT_TRUE(createProject("shop", directory_, {.web = true, .database = cppboot::cli::ProjectDatabase::Sqlite}));
+    const auto root = directory_ / "shop";
+    // The sample already has a User struct and a users table.
+    const auto user = cppboot::cli::addResource(root, "User", {"title:string"});
+    ASSERT_FALSE(user);
+    EXPECT_NE(user.error().message().find("already declares User"), std::string::npos)
+        << user.error().message();
+    EXPECT_FALSE(cppboot::cli::addResource(root, "product", {"title:string"}));
+    EXPECT_FALSE(cppboot::cli::addResource(root, "Product", {"title"}));
+
+    ASSERT_TRUE(cppboot::cli::addResource(root, "Product", {"title:string"}));
+    const auto again = cppboot::cli::addResource(root, "Product", {"title:string"});
+    ASSERT_FALSE(again);
+    EXPECT_NE(again.error().message().find("already exists"), std::string::npos);
+
+    EXPECT_FALSE(std::filesystem::exists(root / "db" / "migrations" / "003_create_products.sql"));
+    EXPECT_FALSE(std::filesystem::exists(root / "src" / "user.hpp"));
 }
