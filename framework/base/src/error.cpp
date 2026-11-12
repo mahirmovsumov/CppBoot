@@ -24,6 +24,8 @@ std::string_view toString(ErrorCode code) noexcept {
             return "StartupError";
         case ErrorCode::PlatformError:
             return "PlatformError";
+        case ErrorCode::InvalidConfiguration:
+            return "InvalidConfiguration";
     }
     return "Unknown";
 }

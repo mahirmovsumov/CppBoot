@@ -1,4 +1,4 @@
-add_library(cppboot-config src/config.cpp src/yaml.cpp)
+add_library(cppboot-config src/binding.cpp src/config.cpp src/yaml.cpp)
 add_library(cppboot::config ALIAS cppboot-config)
 
 target_include_directories(cppboot-config PUBLIC

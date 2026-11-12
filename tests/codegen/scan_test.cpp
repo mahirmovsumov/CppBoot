@@ -99,3 +99,47 @@ TEST(ScanTest, DepfilesEscapeWhatMakeAndNinjaTreatSpecially) {
     const std::string text = makeDepfile("C:/out/a.json", {"C:/my project/a.hpp", "/x/#odd$.hpp"});
     EXPECT_EQ(text, "C:/out/a.json: \\\n  C:/my\\ project/a.hpp \\\n  /x/\\#odd$$.hpp\n");
 }
+
+TEST(ScanTest, ChecksAndSettingsStructsReadBackTheSame) {
+    ScannedHeader scanned;
+    scanned.header = "shop.hpp";
+    Declarations& declarations = scanned.declarations;
+    declarations.json_types.push_back(MappedStruct{
+        "Order",
+        "shop.hpp:3",
+        {{"product",
+          false,
+          {{CheckKind::NotEmpty, ValueShape::Text, "", ""},
+           {CheckKind::Length, ValueShape::Text, "1", "50"}}},
+         {"quantity", false, {{CheckKind::Range, ValueShape::Number, "1", "100"}}}}});
+    declarations.config_types.push_back(ConfigStruct{
+        "Shop",
+        "shop.hpp:9",
+        "shop",
+        {{"name", true, {{CheckKind::NotEmpty, ValueShape::Text, "", ""}}},
+         {"retry.attempts", false, {{CheckKind::Max, ValueShape::Number, "", "10"}}}}});
+    declarations.components.push_back(Component{"Api", "shop.hpp:20", {}, {"Shop"}});
+
+    Route route;
+    route.method = "Get";
+    route.path = "/orders";
+    route.function = "list";
+    route.parameters.push_back(RouteParameter{
+        ParameterSource::Query, "size", "int", {{CheckKind::Min, ValueShape::Number, "1", ""}}});
+    declarations.controllers.push_back(Controller{"Api", {route}});
+
+    const auto read = scannedHeaderFromJson(toJson(scanned));
+    ASSERT_TRUE(read) << read.error().message();
+    const Declarations& back = read.value().declarations;
+
+    ASSERT_EQ(back.config_types.size(), 1U);
+    EXPECT_EQ(back.config_types[0].prefix, "shop");
+    EXPECT_TRUE(back.config_types[0].fields.at(0).required);
+    EXPECT_EQ(back.config_types[0].fields.at(1).path, "retry.attempts");
+    EXPECT_EQ(back.config_types[0].fields.at(1).checks.at(0).max, "10");
+    EXPECT_EQ(back.json_types.at(0).fields.at(0).checks.size(), 2U);
+    EXPECT_EQ(back.json_types.at(0).fields.at(0).checks.at(1).shape, ValueShape::Text);
+    EXPECT_EQ(back.controllers.at(0).routes.at(0).parameters.at(0).checks.at(0).kind, CheckKind::Min);
+
+    EXPECT_EQ(renderRegistration(back, {"shop.hpp"}), renderRegistration(declarations, {"shop.hpp"}));
+}

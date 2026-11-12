@@ -33,7 +33,7 @@ Commands:
                     Add --security with --web for sign-in and protected routes
                     Add --actuator for health and metrics routes
   add <kind> <Name> Add a class to the project's src folder, where kind is one of: service,
-                    controller, repository, middleware, module, health
+                    controller, repository, middleware, module, health, config
                     A repository also gets a migration that creates its table
   build             Build the project in the current folder
   run [arguments]   Build and run the project, passing arguments to the application

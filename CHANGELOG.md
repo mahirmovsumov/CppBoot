@@ -18,6 +18,15 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - **Fix:** on Windows, `cppboot dev` could wait minutes to start a build when its input was a pipe, because programs started while another thread reads a pipe they share have to wait for that read. The programs it starts now get empty input, through `ProcessOptions::share_input`.
 - The CLI's code is split into one file per command.
 
+### Settings structs and checks
+
+- `CPPBOOT_CONFIG("prefix")` fills a struct from the settings under a prefix when the application starts, like Spring's `@ConfigurationProperties`. Fields can be bool, numbers, text, `std::chrono` durations such as `30s`, and `std::optional` or `std::vector` of those, and nested structs. The struct is a component that others take as `const T&`. See [settings as a struct](docs/guides/configuration.md#settings-as-a-struct).
+- A missing `CPPBOOT_REQUIRED` setting, a value of the wrong type, a failed check, or a setting under the prefix that no field reads stops startup with exit code 78, listing every problem at once and suggesting the closest name for a misspelled key.
+- Checks, like Bean Validation: `CPPBOOT_NOT_EMPTY`, `CPPBOOT_LENGTH`, `CPPBOOT_MIN`, `CPPBOOT_MAX` and `CPPBOOT_RANGE` on fields of `CPPBOOT_JSON` and `CPPBOOT_CONFIG` structs, and on path and query parameters. A failed check on a request is a 400 that names the field. A check that can't apply to its field fails the build. See [checking what clients send](docs/guides/web.md#checking-what-clients-send).
+- `cppboot add config <Name>` writes a settings struct.
+- `ErrorCode::InvalidConfiguration`, which `runApplication` turns into exit code 78 when it's thrown while components are registered.
+- The test that new projects come with now reads environment variables too, so a required setting given that way doesn't fail it.
+
 ### Fewer dependencies
 
 - Settings files no longer use yaml-cpp. CppBoot's own reader handles the YAML that settings use, and names the line of anything else. See [what a settings file can contain](docs/guides/configuration.md#what-a-settings-file-can-contain).

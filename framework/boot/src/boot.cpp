@@ -47,7 +47,13 @@ int runApplication(int argc, char* argv[], const ComponentRegistrar& register_co
                                   -> Result<std::vector<std::unique_ptr<Module>>> {
             container.registerInstance(borrow(config));
             container.registerInstance(borrow(logger));
-            register_components(container);
+            try {
+                register_components(container);
+            } catch (const Exception& exception) {
+                // Such as settings that don't fit a CPPBOOT_CONFIG struct. Returning the error
+                // keeps its code, so the application exits as for any other configuration error.
+                return exception.error();
+            }
 
             if (auto valid = container.validate(); !valid) {
                 return valid.error();

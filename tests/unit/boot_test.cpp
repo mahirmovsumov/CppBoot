@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cppboot/boot.hpp>
+#include <cppboot/config/binding.hpp>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
@@ -167,6 +168,32 @@ TEST_F(BootTest, ConstructorExceptionIsContained) {
         [](di::Container& container) {
             container.registerSingleton<Unbuildable>();
             container.bindAll<Module, Unbuildable>();
+        },
+        options_);
+    EXPECT_EQ(exit_code, kExitFailure);
+}
+
+TEST_F(BootTest, InvalidSettingsFoundWhileRegisteringExitAsAConfigurationError) {
+    options_.default_settings["mail.port"] = "not-a-number";
+    const int exit_code = runApplication(
+        0, nullptr,
+        [](di::Container& container) {
+            // What generated code does for a CPPBOOT_CONFIG struct.
+            const auto config = container.resolve<config::Config>();
+            config::SettingsBinder binder{*config, "mail", "MailSettings"};
+            int port = 25;
+            binder.bind("port", port);
+            binder.finish();
+        },
+        options_);
+    EXPECT_EQ(exit_code, kExitConfigurationError);
+}
+
+TEST_F(BootTest, OtherFailuresWhileRegisteringStayOrdinaryFailures) {
+    const int exit_code = runApplication(
+        0, nullptr,
+        [](di::Container&) {
+            throw Exception(Error{ErrorCode::InvalidState, "something else"});
         },
         options_);
     EXPECT_EQ(exit_code, kExitFailure);

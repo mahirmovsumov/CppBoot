@@ -39,6 +39,11 @@ public:
     Result<std::int64_t> getInt(std::string_view key, std::int64_t fallback) const;
     Result<bool> getBool(std::string_view key, bool fallback) const;
 
+    /// The keys that start with a prefix, in order, from settings files, defaults and arguments.
+    /// A key that only an environment variable sets isn't listed, because a variable's name can't
+    /// say where the dots of its key go.
+    std::vector<std::string> keysStartingWith(std::string_view prefix) const;
+
     /// The active profile, or an empty string when no profile is selected.
     const std::string& profile() const noexcept { return profile_; }
 
@@ -56,5 +61,12 @@ private:
     Values environment_;
     std::string profile_;
 };
+
+/// The environment variable that sets a key: cppboot.server.port and myapp.timeout are set by
+/// CPPBOOT_SERVER_PORT and CPPBOOT_MYAPP_TIMEOUT.
+std::string environmentVariableFor(std::string_view key);
+
+/// Whether a key's value has to stay out of logs and messages, such as a password or a token.
+bool isSensitiveKey(std::string_view key);
 
 }  // namespace cppboot::config

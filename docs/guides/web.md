@@ -32,7 +32,7 @@ CppBoot decides where each parameter comes from:
 | `const cppboot::web::Request&` | The whole request | |
 | Any other type | The request body, parsed from JSON | 400 |
 
-A function can have one body parameter. A path parameter with no matching function parameter fails the build, as does a mistake such as a private route function.
+A function can have one body parameter. A path parameter with no matching function parameter fails the build, as does a mistake such as a private route function. Path and query parameters can also have [checks](#checking-what-clients-send).
 
 ### Return values
 
@@ -99,6 +99,53 @@ if (const cppboot::Json* note = order.find("note")) { /* optional */ }
 Numbers convert only if they fit: `get<int>()` rejects `1.5` and numbers out of range.
 
 Generated conversions are only visible to generated code, so functions in your headers can't convert a marked struct themselves. To send one, return it from a controller function.
+
+## Checking what clients send
+
+Put a check on a field of a `CPPBOOT_JSON` struct, or on a path or query parameter, and CppBoot runs it before your function is called:
+
+```cpp
+struct CPPBOOT_JSON NewOrder {
+    CPPBOOT_NOT_EMPTY CPPBOOT_LENGTH(1, 50) std::string product;
+    CPPBOOT_RANGE(1, 100) int quantity{1};
+    CPPBOOT_MIN(0) std::optional<double> discount;
+    CPPBOOT_LENGTH(1, 5) std::vector<std::string> tags;
+};
+
+class CPPBOOT_CONTROLLER("/api/orders") OrderController {
+public:
+    CPPBOOT_POST("/") NewOrder create(const NewOrder& order);
+
+    // GET /api/orders?size=20&page=2
+    CPPBOOT_GET("/") std::vector<NewOrder> list(CPPBOOT_RANGE(1, 100) int size,
+                                                 CPPBOOT_MIN(1) std::optional<int> page);
+};
+```
+
+| Check | Works on | Passes when |
+|---|---|---|
+| `CPPBOOT_NOT_EMPTY` | Text and containers | It isn't empty |
+| `CPPBOOT_LENGTH(min, max)` | Text and containers | Text has that many characters, or a container that many items |
+| `CPPBOOT_MIN(min)` | Numbers | It's at least `min` |
+| `CPPBOOT_MAX(max)` | Numbers | It's at most `max` |
+| `CPPBOOT_RANGE(min, max)` | Numbers | It's from `min` to `max` |
+
+A request that fails a check gets a 400 that names what was wrong, and the function doesn't run:
+
+```json
+{"error":"Invalid request body: field 'quantity': must be from 1 to 100","status":400}
+{"error":"Query parameter 'size' must be from 1 to 100","status":400}
+```
+
+- **Limits are numbers written out**, such as `CPPBOOT_RANGE(1, 100)` or `CPPBOOT_MAX(0.5)`, and both ends are included.
+- **A `std::optional` is checked only when it has a value.** A field that has to be there is one that isn't a `std::optional`.
+- **Text is counted in characters**, not bytes, so `ə` counts as one.
+- **A struct inside a struct is checked too**, and the error names both fields: `field 'address': field 'city': must not be empty`.
+- **A check that can't apply fails the build**, such as `CPPBOOT_RANGE` on a `std::string`, or any check on a struct that's only marked `CPPBOOT_ROW`. A check that quietly did nothing would look like protection that isn't there.
+
+The checks run wherever the struct is read from JSON, including `Json::get<NewOrder>()` in your own code, where a failed one throws `cppboot::JsonError`. They don't run when you create the struct yourself, or when it's read from a database row.
+
+For a rule about more than one field, such as a start date before an end date, check it in the function and throw `HttpError(400, ...)`. The same checks also work on [settings structs](configuration.md#settings-as-a-struct), and `cppboot::validation` has them as ordinary functions.
 
 ## Defining routes by hand
 

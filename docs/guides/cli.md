@@ -77,6 +77,7 @@ cppboot add repository Order       # src/order_repository.hpp and db/migrations/
 cppboot add middleware Audit       # src/audit_middleware.hpp, runs around every request
 cppboot add module Report          # src/report_module.hpp, starts and stops with the application
 cppboot add health Queue           # src/queue_health.hpp, a check for /actuator/health
+cppboot add config Mail            # src/mail_settings.hpp, filled from the settings under mail
 ```
 
 The name starts with a capital and has only letters and digits. The kind is added to it unless it's already there, so `Order` and `OrderRepository` both make `OrderRepository`.

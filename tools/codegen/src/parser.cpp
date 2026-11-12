@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <cstdlib>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -29,7 +30,17 @@ constexpr std::string_view kPublicAnnotation = "cppboot:public";
 constexpr std::string_view kRolePrefix = "cppboot:role:";
 constexpr std::string_view kRateLimitPrefix = "cppboot:rate_limit:";
 constexpr std::string_view kUncheckedPrefix = "cppboot:unchecked:";
+constexpr std::string_view kConfigPrefix = "cppboot:config:";
+constexpr std::string_view kRequiredAnnotation = "cppboot:required";
+constexpr std::string_view kNotEmptyAnnotation = "cppboot:not_empty";
+constexpr std::string_view kLengthPrefix = "cppboot:length:";
+constexpr std::string_view kMinPrefix = "cppboot:min:";
+constexpr std::string_view kMaxPrefix = "cppboot:max:";
+constexpr std::string_view kRangePrefix = "cppboot:range:";
 constexpr std::string_view kAnyPrefix = "cppboot:";
+
+/// Nested settings structs deeper than this are almost certainly a mistake.
+constexpr int kMaxConfigDepth = 8;
 
 std::string toString(CXString text) {
     const char* const characters = clang_getCString(text);
@@ -349,6 +360,209 @@ bool isUrlValue(CXType type) {
     return isStandardType(type, "basic_string");
 }
 
+bool isWholeNumber(CXType type) {
+    switch (type.kind) {
+        // Plain char is left out, because it's a character. signed char and unsigned char are
+        // what int8_t and uint8_t are.
+        case CXType_SChar:
+        case CXType_UChar:
+        case CXType_Short:
+        case CXType_UShort:
+        case CXType_Int:
+        case CXType_UInt:
+        case CXType_Long:
+        case CXType_ULong:
+        case CXType_LongLong:
+        case CXType_ULongLong:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool isNumber(CXType type) {
+    return isWholeNumber(type) || type.kind == CXType_Float || type.kind == CXType_Double;
+}
+
+/// The value inside a std::optional, or the type itself.
+CXType withoutOptional(CXType type) {
+    if (isOptionalType(type) && clang_Type_getNumTemplateArguments(type) >= 1) {
+        return clang_getCanonicalType(clang_Type_getTemplateArgumentAsType(type, 0));
+    }
+    return type;
+}
+
+/// What kind of value the checks would apply to, or nothing if the type can't be checked.
+std::optional<ValueShape> shapeOf(CXType type) {
+    const CXType value = withoutOptional(type);
+    if (isNumber(value)) {
+        return ValueShape::Number;
+    }
+    if (isStandardType(value, "basic_string")) {
+        return ValueShape::Text;
+    }
+    if (isAnyStandardType(value, {"vector", "list", "deque", "array", "set", "unordered_set",
+                                  "multiset", "unordered_multiset", "map", "unordered_map",
+                                  "multimap", "unordered_multimap"})) {
+        return ValueShape::Items;
+    }
+    return std::nullopt;
+}
+
+bool hasValidationMark(const std::vector<std::string>& marks) {
+    return hasAnnotation(marks, kNotEmptyAnnotation) || findWithPrefix(marks, kLengthPrefix) ||
+           findWithPrefix(marks, kMinPrefix) || findWithPrefix(marks, kMaxPrefix) ||
+           findWithPrefix(marks, kRangePrefix);
+}
+
+/// A number as it can be written in a mark: -12, 0.5 or 1e3.
+bool isNumberLiteral(std::string_view text) {
+    std::size_t position = 0;
+    const auto digits = [&] {
+        const std::size_t start = position;
+        while (position < text.size() && text[position] >= '0' && text[position] <= '9') {
+            ++position;
+        }
+        return position > start;
+    };
+
+    if (position < text.size() && text[position] == '-') {
+        ++position;
+    }
+    if (!digits()) {
+        return false;
+    }
+    if (position < text.size() && text[position] == '.') {
+        ++position;
+        if (!digits()) {
+            return false;
+        }
+    }
+    if (position < text.size() && (text[position] == 'e' || text[position] == 'E')) {
+        ++position;
+        if (position < text.size() && (text[position] == '+' || text[position] == '-')) {
+            ++position;
+        }
+        if (!digits()) {
+            return false;
+        }
+    }
+    return position == text.size();
+}
+
+/// A limit that generated code can use as written. A whole number has to fit in 64 bits, because
+/// a larger one isn't a valid literal.
+bool isUsableLimit(std::string_view text, bool whole_only) {
+    if (!isNumberLiteral(text)) {
+        return false;
+    }
+    if (text.find_first_of(".eE") != std::string_view::npos) {
+        return !whole_only;
+    }
+    std::int64_t value = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} && end == text.data() + text.size() && (!whole_only || value >= 0);
+}
+
+long double limitValue(const std::string& text) {
+    return std::strtold(text.c_str(), nullptr);
+}
+
+/// Splits "1:100" from CPPBOOT_RANGE(1, 100) or CPPBOOT_LENGTH(1, 100).
+std::pair<std::string, std::string> splitLimits(const std::string& text) {
+    const auto colon = text.find(':');
+    return {text.substr(0, colon), colon == std::string::npos ? "" : text.substr(colon + 1)};
+}
+
+/// Reads the checks marked on a field or a parameter. `what` names it for messages, such as
+/// "Field 'age' of User". A check that can't apply to the type fails the build, because one that
+/// did nothing would look like protection that isn't there.
+Result<std::vector<Check>> readChecks(CXCursor cursor, const std::vector<std::string>& marks,
+                                      CXType type, const std::string& what) {
+    std::vector<Check> checks;
+    if (!hasValidationMark(marks)) {
+        return checks;
+    }
+
+    const std::optional<ValueShape> shape = shapeOf(clang_getCanonicalType(type));
+    if (!shape) {
+        return errorAt(cursor, what + " can't be checked. Checks work on numbers, text and "
+                                      "containers, and on a std::optional of those");
+    }
+    const bool is_number = *shape == ValueShape::Number;
+
+    const std::vector<std::string> lengths = allWithPrefix(marks, kLengthPrefix);
+    const std::vector<std::string> minimums = allWithPrefix(marks, kMinPrefix);
+    const std::vector<std::string> maximums = allWithPrefix(marks, kMaxPrefix);
+    const std::vector<std::string> ranges = allWithPrefix(marks, kRangePrefix);
+    if (lengths.size() > 1 || minimums.size() > 1 || maximums.size() > 1 || ranges.size() > 1) {
+        return errorAt(cursor, what + " has the same check more than once");
+    }
+    if (!ranges.empty() && (!minimums.empty() || !maximums.empty())) {
+        return errorAt(cursor, what + " has CPPBOOT_RANGE as well as CPPBOOT_MIN or CPPBOOT_MAX. "
+                                      "Use one or the other");
+    }
+
+    if (hasAnnotation(marks, kNotEmptyAnnotation)) {
+        if (is_number) {
+            return errorAt(cursor, what + " is a number, so CPPBOOT_NOT_EMPTY doesn't apply. Use "
+                                          "CPPBOOT_MIN or CPPBOOT_RANGE");
+        }
+        checks.push_back(Check{CheckKind::NotEmpty, *shape, "", ""});
+    }
+
+    if (!lengths.empty()) {
+        if (is_number) {
+            return errorAt(cursor, what + " is a number, so CPPBOOT_LENGTH doesn't apply. Use "
+                                          "CPPBOOT_RANGE");
+        }
+        auto [min, max] = splitLimits(lengths.front());
+        if (!isUsableLimit(min, true) || !isUsableLimit(max, true) ||
+            limitValue(min) > limitValue(max)) {
+            return errorAt(cursor, "CPPBOOT_LENGTH on " + what + " needs two whole numbers written "
+                                   "out, the smaller first, such as CPPBOOT_LENGTH(1, 50)");
+        }
+        checks.push_back(Check{CheckKind::Length, *shape, std::move(min), std::move(max)});
+    }
+
+    const auto number_check = [&](const char* macro, CheckKind kind, std::string min,
+                                  std::string max) -> std::optional<Error> {
+        if (!is_number) {
+            return errorAt(cursor, what + " isn't a number, so " + macro + " doesn't apply. Use "
+                                          "CPPBOOT_LENGTH or CPPBOOT_NOT_EMPTY");
+        }
+        const bool min_ok = kind == CheckKind::Max || isUsableLimit(min, false);
+        const bool max_ok = kind == CheckKind::Min || isUsableLimit(max, false);
+        if (!min_ok || !max_ok ||
+            (kind == CheckKind::Range && limitValue(min) > limitValue(max))) {
+            return errorAt(cursor, std::string{macro} + " on " + what +
+                                       " needs numbers written out, the smaller first, such as "
+                                       "CPPBOOT_RANGE(1, 100)");
+        }
+        checks.push_back(Check{kind, ValueShape::Number, std::move(min), std::move(max)});
+        return std::nullopt;
+    };
+
+    if (!minimums.empty()) {
+        if (auto error = number_check("CPPBOOT_MIN", CheckKind::Min, minimums.front(), "")) {
+            return *std::move(error);
+        }
+    }
+    if (!maximums.empty()) {
+        if (auto error = number_check("CPPBOOT_MAX", CheckKind::Max, "", maximums.front())) {
+            return *std::move(error);
+        }
+    }
+    if (!ranges.empty()) {
+        auto [min, max] = splitLimits(ranges.front());
+        if (auto error = number_check("CPPBOOT_RANGE", CheckKind::Range, std::move(min),
+                                      std::move(max))) {
+            return *std::move(error);
+        }
+    }
+    return checks;
+}
+
 std::vector<std::string> pathParameterNames(std::string_view path) {
     std::vector<std::string> names;
     std::size_t position = 0;
@@ -441,7 +655,9 @@ Result<Component> readComponent(CXCursor cursor) {
     return component;
 }
 
-Result<MappedStruct> readMappedStruct(CXCursor cursor, std::string_view macro) {
+/// With `checked`, the checks marked on fields are read. Otherwise they're an error, because nothing
+/// would run them.
+Result<MappedStruct> readMappedStruct(CXCursor cursor, std::string_view macro, bool checked) {
     const std::string macro_name{macro};
 
     MappedStruct mapped;
@@ -464,10 +680,25 @@ Result<MappedStruct> readMappedStruct(CXCursor cursor, std::string_view macro) {
                 error = errorAt(child, "Field '" + spelling(child) + "' of " + mapped.type +
                                            " must be public for " + macro_name);
             } else {
-                mapped.fields.push_back(StructField{
-                    spelling(child),
-                    isOptionalType(clang_getCanonicalType(clang_getCursorType(child))),
-                });
+                const std::string field = "Field '" + spelling(child) + "' of " + mapped.type;
+                const std::vector<std::string> marks = annotationsOf(child);
+                const CXType type = clang_getCanonicalType(clang_getCursorType(child));
+
+                if (hasAnnotation(marks, kRequiredAnnotation)) {
+                    error = errorAt(child, field + " has CPPBOOT_REQUIRED, which is for settings. "
+                                                   "A field read from JSON is already required "
+                                                   "unless it's a std::optional");
+                } else if (!checked && hasValidationMark(marks)) {
+                    error = errorAt(child, field + " has a check, but checks only run when a "
+                                                   "struct is read from JSON or from settings. "
+                                                   "Mark the struct with CPPBOOT_JSON too, or "
+                                                   "remove the check");
+                } else if (auto checks = readChecks(child, marks, type, field); !checks) {
+                    error = checks.error();
+                } else {
+                    mapped.fields.push_back(StructField{spelling(child), isOptionalType(type),
+                                                        std::move(checks).value()});
+                }
             }
         }
         return error ? CXChildVisit_Break : CXChildVisit_Continue;
@@ -477,6 +708,167 @@ Result<MappedStruct> readMappedStruct(CXCursor cursor, std::string_view macro) {
         return *std::move(error);
     }
     return mapped;
+}
+
+bool isChronoDuration(CXType type) {
+    const CXCursor declaration = clang_getTypeDeclaration(type);
+    if (spelling(declaration) != "duration") {
+        return false;
+    }
+    CXCursor parent = clang_getCursorSemanticParent(declaration);
+    while (clang_getCursorKind(parent) == CXCursor_Namespace &&
+           clang_Cursor_isInlineNamespace(parent) != 0) {
+        parent = clang_getCursorSemanticParent(parent);
+    }
+    if (clang_getCursorKind(parent) != CXCursor_Namespace || spelling(parent) != "chrono") {
+        return false;
+    }
+    parent = clang_getCursorSemanticParent(parent);
+    while (clang_getCursorKind(parent) == CXCursor_Namespace &&
+           clang_Cursor_isInlineNamespace(parent) != 0) {
+        parent = clang_getCursorSemanticParent(parent);
+    }
+    return clang_getCursorKind(parent) == CXCursor_Namespace && spelling(parent) == "std";
+}
+
+/// Whether a declaration is somewhere inside namespace std.
+bool isInStandardLibrary(CXCursor declaration) {
+    for (CXCursor parent = clang_getCursorSemanticParent(declaration);
+         clang_getCursorKind(parent) != CXCursor_TranslationUnit &&
+         clang_isInvalid(clang_getCursorKind(parent)) == 0;
+         parent = clang_getCursorSemanticParent(parent)) {
+        if (clang_getCursorKind(parent) == CXCursor_Namespace && spelling(parent) == "std" &&
+            clang_getCursorKind(clang_getCursorSemanticParent(parent)) ==
+                CXCursor_TranslationUnit) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// One value that a setting's text can be read as.
+bool isSettingScalar(CXType type) {
+    return type.kind == CXType_Bool || isNumber(type) || isStandardType(type, "basic_string") ||
+           isChronoDuration(type);
+}
+
+/// A scalar, or a std::optional or std::vector of one.
+bool isSettingValue(CXType type) {
+    if (isSettingScalar(type)) {
+        return true;
+    }
+    if ((isOptionalType(type) || isStandardType(type, "vector")) &&
+        clang_Type_getNumTemplateArguments(type) >= 1) {
+        return isSettingScalar(
+            clang_getCanonicalType(clang_Type_getTemplateArgumentAsType(type, 0)));
+    }
+    return false;
+}
+
+/// Reads the fields of a settings struct, going into fields that are structs themselves, whose
+/// fields get keys such as "retry.attempts".
+std::optional<Error> readConfigFields(CXCursor cursor, const std::string& struct_type,
+                                      const std::string& path_prefix, int depth,
+                                      std::vector<ConfigField>& fields) {
+    std::optional<Error> error;
+    visitChildren(cursor, [&](CXCursor child) {
+        const CXCursorKind kind = clang_getCursorKind(child);
+        if (kind == CXCursor_CXXBaseSpecifier) {
+            error = errorAt(child, struct_type + " can't have base classes, because CPPBOOT_CONFIG "
+                                                 "only reads its own fields");
+            return CXChildVisit_Break;
+        }
+        if (kind != CXCursor_FieldDecl) {
+            return CXChildVisit_Continue;
+        }
+
+        const std::string name = spelling(child);
+        const std::string field = "Field '" + name + "' of " + struct_type;
+        const std::string path = path_prefix + name;
+        const std::vector<std::string> marks = annotationsOf(child);
+        const CXType type = clang_getCanonicalType(clang_getCursorType(child));
+        const bool required = hasAnnotation(marks, kRequiredAnnotation);
+
+        if (clang_getCXXAccessSpecifier(child) != CX_CXXPublic) {
+            error = errorAt(child, field + " must be public for CPPBOOT_CONFIG");
+        } else if (clang_isConstQualifiedType(type) != 0) {
+            error = errorAt(child, field + " can't be const, because it's set when the "
+                                           "application starts");
+        } else if (isSettingValue(type)) {
+            if (required && isOptionalType(type)) {
+                error = errorAt(child, field + " is a std::optional, which says it may be "
+                                               "missing, so it can't also be CPPBOOT_REQUIRED");
+            } else if (auto checks = readChecks(child, marks, type, field); !checks) {
+                error = checks.error();
+            } else {
+                fields.push_back(ConfigField{path, required, std::move(checks).value()});
+            }
+        } else if (const CXCursor nested = clang_getTypeDeclaration(type);
+                   type.kind == CXType_Record && !isInStandardLibrary(nested) &&
+                   clang_isCursorDefinition(nested) != 0) {
+            const std::string nested_type = qualifiedName(type);
+            if (required || hasValidationMark(marks)) {
+                error = errorAt(child, field + " is a struct, so put the marks on the fields of " +
+                                           nested_type + " instead");
+            } else if (depth >= kMaxConfigDepth) {
+                error = errorAt(child, field + " is nested too deeply for settings");
+            } else {
+                error = readConfigFields(nested, nested_type, path + ".", depth + 1, fields);
+            }
+        } else {
+            error = errorAt(child, field + " can't be read from settings. Use a bool, a number, a "
+                                           "std::string, a std::chrono duration, a std::optional "
+                                           "or std::vector of those, or a struct of them");
+        }
+        return error ? CXChildVisit_Break : CXChildVisit_Continue;
+    });
+    return error;
+}
+
+/// A prefix is one or more names with dots between them, such as "mail" or "shop.mail".
+bool isValidConfigPrefix(std::string_view prefix) {
+    bool segment_started = false;
+    for (const char c : prefix) {
+        if (c == '.') {
+            if (!segment_started) {
+                return false;
+            }
+            segment_started = false;
+        } else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+            segment_started = true;
+        } else {
+            return false;
+        }
+    }
+    return segment_started;
+}
+
+Result<ConfigStruct> readConfigStruct(CXCursor cursor, std::string_view prefix) {
+    ConfigStruct settings;
+    settings.type = qualifiedName(clang_getCursorType(cursor));
+    settings.location = locationOf(cursor);
+    settings.prefix = std::string{prefix};
+
+    if (settings.type.find("(anonymous") != std::string::npos) {
+        return errorAt(cursor, settings.type + " can't be marked with CPPBOOT_CONFIG because "
+                                               "generated code can't name it");
+    }
+    if (!isValidConfigPrefix(prefix)) {
+        return errorAt(cursor, "The prefix of " + settings.type + " must be lower-case names with "
+                                   "dots between them, such as \"mail\" or \"shop.mail\"");
+    }
+    if (prefix == "cppboot" || prefix.starts_with("cppboot.")) {
+        return errorAt(cursor, "The prefix of " + settings.type + " can't start with \"cppboot\", "
+                                   "which is for CppBoot's own settings");
+    }
+
+    if (auto error = readConfigFields(cursor, settings.type, "", 0, settings.fields)) {
+        return *std::move(error);
+    }
+    if (settings.fields.empty()) {
+        return errorAt(cursor, settings.type + " has no fields to read settings into");
+    }
+    return settings;
 }
 
 Result<std::vector<RouteParameter>> readRouteParameters(CXCursor method, const std::string& path) {
@@ -499,6 +891,20 @@ Result<std::vector<RouteParameter>> readRouteParameters(CXCursor method, const s
                                           "' can't be a non-const reference");
         }
 
+        const std::vector<std::string> marks = annotationsOf(parameter);
+        if (hasAnnotation(marks, kRequiredAnnotation)) {
+            return errorAt(parameter, "Route parameter '" + name + "' has CPPBOOT_REQUIRED, which "
+                                      "is for settings. A parameter is required unless it's a "
+                                      "std::optional");
+        }
+        const bool is_url_value = isUrlValue(type);
+        if (hasValidationMark(marks) && (!is_url_value || name.empty())) {
+            // A check here would never run, and would look as if it did.
+            return errorAt(parameter, "Route parameter '" + name + "' has a check, but only path "
+                                      "and query parameters can have one. For a request body, put "
+                                      "checks on the fields of its struct");
+        }
+
         if (type_name == "cppboot::web::Request") {
             parameters.push_back(RouteParameter{ParameterSource::Request, name, type_name});
             continue;
@@ -512,15 +918,24 @@ Result<std::vector<RouteParameter>> readRouteParameters(CXCursor method, const s
         }
 
         const auto path_name = std::find(unbound.begin(), unbound.end(), name);
-        if (path_name != unbound.end()) {
-            if (!isUrlValue(type) || isOptionalType(type)) {
-                return errorAt(parameter, "Path parameter '" + name +
-                                              "' must be text, a number or a bool");
+        const bool is_path = path_name != unbound.end();
+        if (is_path && (!is_url_value || isOptionalType(type))) {
+            return errorAt(parameter,
+                           "Path parameter '" + name + "' must be text, a number or a bool");
+        }
+        if (is_path || is_url_value) {
+            auto checks = readChecks(parameter, marks, type,
+                                     std::string{is_path ? "Path" : "Query"} + " parameter '" +
+                                         name + "'");
+            if (!checks) {
+                return checks.error();
             }
-            unbound.erase(path_name);
-            parameters.push_back(RouteParameter{ParameterSource::Path, name, type_name});
-        } else if (isUrlValue(type)) {
-            parameters.push_back(RouteParameter{ParameterSource::Query, name, type_name});
+            if (is_path) {
+                unbound.erase(path_name);
+            }
+            parameters.push_back(
+                RouteParameter{is_path ? ParameterSource::Path : ParameterSource::Query, name,
+                               type_name, std::move(checks).value()});
         } else {
             if (has_body) {
                 return errorAt(parameter, "A route can only read one parameter from the request "
@@ -835,8 +1250,23 @@ void readClass(CXCursor cursor, Walk& walk) {
         return;
     }
 
-    if (hasAnnotation(annotations, kJsonAnnotation)) {
-        auto json_type = readMappedStruct(cursor, "CPPBOOT_JSON");
+    if (const auto config_prefix = findWithPrefix(annotations, kConfigPrefix)) {
+        if (is_service || controller_path || middleware_order) {
+            walk.error = errorAt(cursor, spelling(cursor) + " can't be both CPPBOOT_CONFIG and "
+                                                            "another kind of component");
+            return;
+        }
+        auto settings = readConfigStruct(cursor, *config_prefix);
+        if (!settings) {
+            walk.error = settings.error();
+            return;
+        }
+        walk.declarations.config_types.push_back(std::move(settings).value());
+    }
+
+    const bool is_json = hasAnnotation(annotations, kJsonAnnotation);
+    if (is_json) {
+        auto json_type = readMappedStruct(cursor, "CPPBOOT_JSON", true);
         if (!json_type) {
             walk.error = json_type.error();
             return;
@@ -845,7 +1275,8 @@ void readClass(CXCursor cursor, Walk& walk) {
     }
 
     if (hasAnnotation(annotations, kRowAnnotation)) {
-        auto row_type = readMappedStruct(cursor, "CPPBOOT_ROW");
+        // Checks on a struct that's also read from JSON are fine here, and reading a row skips them.
+        auto row_type = readMappedStruct(cursor, "CPPBOOT_ROW", is_json);
         if (!row_type) {
             walk.error = row_type.error();
             return;

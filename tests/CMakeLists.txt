@@ -7,6 +7,7 @@ cppboot_apply_compiler_options(cppboot-test-child)
 
 add_executable(cppboot-unit-tests
     unit/application_test.cpp
+    unit/binding_test.cpp
     unit/boot_test.cpp
     unit/cli_test.cpp
     unit/config_test.cpp
@@ -18,6 +19,7 @@ add_executable(cppboot-unit-tests
     unit/process_test.cpp
     unit/result_test.cpp
     unit/signals_test.cpp
+    unit/validation_test.cpp
     unit/worker_group_test.cpp
     unit/yaml_test.cpp
 )
@@ -187,6 +189,18 @@ if(CPPBOOT_BUILD_CODEGEN)
     )
     cppboot_apply_compiler_options(cppboot-generated-monitored-tests)
     add_test(NAME cppboot-generated-monitored-tests COMMAND cppboot-generated-monitored-tests)
+
+    add_executable(cppboot-generated-settings-tests codegen/settings_test.cpp)
+    target_link_libraries(cppboot-generated-settings-tests PRIVATE
+        cppboot::boot
+        cppboot::web
+        GTest::gtest_main
+    )
+    cppboot_generate_components(cppboot-generated-settings-tests
+        HEADERS codegen/sample_settings.hpp
+    )
+    cppboot_apply_compiler_options(cppboot-generated-settings-tests)
+    add_test(NAME cppboot-generated-settings-tests COMMAND cppboot-generated-settings-tests)
 
     # Installs the framework, then creates, builds and runs a project using the installed CLI.
     add_test(NAME cppboot-cli-end-to-end

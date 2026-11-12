@@ -319,15 +319,20 @@ private:
 
 #include <cppboot/cppboot.hpp>
 #include <cppboot/di/container.hpp>
+#include <cppboot/platform/environment.hpp>
 #include <memory>
 #include <utility>
 
 #include "cppboot_components.generated.hpp"
 
 // Checks that every component can get what its constructor asks for, without creating any of them.
-// It fails if, for example, a constructor takes a class that isn't marked as a component.
+// It fails if, for example, a constructor takes a class that isn't marked as a component. It also
+// fills each CPPBOOT_CONFIG struct from cppboot.yaml and the environment, as the application does,
+// so it fails if a setting doesn't fit.
 TEST(ComponentsTest, FitTogether) {
-    auto config = cppboot::config::Config::load({});
+    cppboot::config::ConfigSources sources;
+    sources.environment = cppboot::platform::environmentVariables();
+    auto config = cppboot::config::Config::load(sources);
     ASSERT_TRUE(config) << config.error().message();
     auto logger = cppboot::logging::Logger::create({});
     ASSERT_TRUE(logger) << logger.error().message();
@@ -335,7 +340,11 @@ TEST(ComponentsTest, FitTogether) {
     cppboot::di::Container container;
     container.registerInstance(std::make_shared<cppboot::config::Config>(std::move(config).value()));
     container.registerInstance(std::make_shared<cppboot::logging::Logger>(std::move(logger).value()));
-    cppboot::generated::registerComponents(container);
+    try {
+        cppboot::generated::registerComponents(container);
+    } catch (const cppboot::Exception& exception) {
+        FAIL() << exception.error().message();
+    }
 
     const auto valid = container.validate();
     EXPECT_TRUE(valid) << valid.error().message();

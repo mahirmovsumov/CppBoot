@@ -114,8 +114,8 @@ void applyKnownArguments(const std::vector<std::string>& arguments, Config::Valu
     }
 }
 
-/// Returns the variable that sets a key: cppboot.server.max_connections and myapp.timeout are set by
-/// CPPBOOT_SERVER_MAX_CONNECTIONS and CPPBOOT_MYAPP_TIMEOUT.
+}  // namespace
+
 std::string environmentVariableFor(std::string_view key) {
     std::string variable{key};
     std::transform(variable.begin(), variable.end(), variable.begin(), [](char c) {
@@ -126,6 +126,15 @@ std::string environmentVariableFor(std::string_view key) {
     }
     return variable;
 }
+
+bool isSensitiveKey(std::string_view key) {
+    const std::string lowered = lowercase(key);
+    return std::any_of(kSensitiveWords.begin(), kSensitiveWords.end(), [&](std::string_view word) {
+        return lowered.find(word) != std::string::npos;
+    });
+}
+
+namespace {
 
 /// Applies each variable to the key it matches. A variable matching no key yet is also stored with
 /// each underscore as a dot, for code that lists settings, and Config::lookup() finds any other
@@ -299,18 +308,21 @@ Result<bool> Config::getBool(std::string_view key, bool fallback) const {
 std::string Config::describe() const {
     std::string text;
     for (const auto& [key, value] : values_) {
-        const std::string lowered = lowercase(key);
-        const bool sensitive =
-            std::any_of(kSensitiveWords.begin(), kSensitiveWords.end(), [&](std::string_view word) {
-                return lowered.find(word) != std::string::npos;
-            });
-
         text += key;
         text += '=';
-        text += sensitive ? std::string{"******"} : value;
+        text += isSensitiveKey(key) ? std::string{"******"} : value;
         text += '\n';
     }
     return text;
+}
+
+std::vector<std::string> Config::keysStartingWith(std::string_view prefix) const {
+    std::vector<std::string> keys;
+    for (auto entry = values_.lower_bound(prefix);
+         entry != values_.end() && entry->first.starts_with(prefix); ++entry) {
+        keys.push_back(entry->first);
+    }
+    return keys;
 }
 
 }  // namespace cppboot::config

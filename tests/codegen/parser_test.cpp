@@ -28,6 +28,13 @@ constexpr const char* kPreamble = R"(
 #define MIDDLEWARE(order) [[clang::annotate("cppboot:middleware:" #order)]]
 #define RATE_LIMIT(limit) [[clang::annotate("cppboot:rate_limit:" limit)]]
 #define UNCHECKED(reason) [[clang::annotate("cppboot:unchecked:" reason)]]
+#define CONFIG(prefix) [[clang::annotate("cppboot:config:" prefix)]]
+#define REQUIRED [[clang::annotate("cppboot:required")]]
+#define NOT_EMPTY [[clang::annotate("cppboot:not_empty")]]
+#define LENGTH(min, max) [[clang::annotate("cppboot:length:" #min ":" #max)]]
+#define MIN(min) [[clang::annotate("cppboot:min:" #min)]]
+#define MAX(max) [[clang::annotate("cppboot:max:" #max)]]
+#define RANGE(min, max) [[clang::annotate("cppboot:range:" #min ":" #max)]]
 #include <atomic>
 #include <map>
 #include <mutex>
@@ -685,4 +692,201 @@ TEST_F(ParserTest, RejectsARoutePathWithoutASlash) {
 
 TEST_F(ParserTest, RejectsABasePathWithoutASlash) {
     expectError(R"(class CONTROLLER("a") C { public: GET("/") int f(); };)", "must start with '/'");
+}
+
+TEST_F(ParserTest, ReadsChecksOnJsonFields) {
+    const auto result = parse(R"(
+        struct JSON Order {
+            NOT_EMPTY LENGTH(1, 50) std::string product;
+            RANGE(1, 100) int quantity;
+            MIN(0) std::optional<double> discount;
+            MAX(-0.5) float change;
+            LENGTH(0, 3) std::vector<int> tags;
+            std::string note;
+        };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    const std::vector<StructField>& fields = result.value().json_types.at(0).fields;
+
+    ASSERT_EQ(fields[0].checks.size(), 2U);
+    EXPECT_EQ(fields[0].checks[0].kind, CheckKind::NotEmpty);
+    EXPECT_EQ(fields[0].checks[1].kind, CheckKind::Length);
+    EXPECT_EQ(fields[0].checks[1].shape, ValueShape::Text);
+    EXPECT_EQ(fields[0].checks[1].min, "1");
+    EXPECT_EQ(fields[0].checks[1].max, "50");
+
+    ASSERT_EQ(fields[1].checks.size(), 1U);
+    EXPECT_EQ(fields[1].checks[0].kind, CheckKind::Range);
+    EXPECT_EQ(fields[1].checks[0].shape, ValueShape::Number);
+
+    // A std::optional is checked as the value inside it.
+    EXPECT_EQ(fields[2].checks.at(0).kind, CheckKind::Min);
+    EXPECT_EQ(fields[2].checks.at(0).min, "0");
+    EXPECT_EQ(fields[3].checks.at(0).max, "-0.5");
+    EXPECT_EQ(fields[4].checks.at(0).shape, ValueShape::Items);
+    EXPECT_TRUE(fields[5].checks.empty());
+}
+
+TEST_F(ParserTest, RejectsChecksThatDoNotFitTheField) {
+    expectError("struct JSON A { RANGE(1, 5) std::string name; };",
+                "Field 'name' of A isn't a number, so CPPBOOT_RANGE doesn't apply");
+    expectError("struct JSON A { MIN(1) std::vector<int> items; };", "isn't a number");
+    expectError("struct JSON A { NOT_EMPTY int count; };",
+                "is a number, so CPPBOOT_NOT_EMPTY doesn't apply");
+    expectError("struct JSON A { LENGTH(1, 5) double rate; };",
+                "is a number, so CPPBOOT_LENGTH doesn't apply");
+    expectError("struct JSON A { NOT_EMPTY bool flag; };", "can't be checked");
+    expectError("struct B { int x; }; struct JSON A { NOT_EMPTY B inner; };", "can't be checked");
+}
+
+TEST_F(ParserTest, RejectsLimitsThatAreNotNumbersWrittenOut) {
+    expectError("const int kMost = 5; struct JSON A { RANGE(1, kMost) int n; };",
+                "CPPBOOT_RANGE on Field 'n' of A needs numbers written out");
+    expectError("struct JSON A { RANGE(10, 1) int n; };", "the smaller first");
+    expectError("struct JSON A { MIN(1 + 1) int n; };", "needs numbers written out");
+    expectError("struct JSON A { MAX(99999999999999999999) int n; };", "needs numbers written out");
+    expectError("struct JSON A { LENGTH(-1, 5) std::string s; };", "needs two whole numbers");
+    expectError("struct JSON A { LENGTH(1, 2.5) std::string s; };", "needs two whole numbers");
+    expectError("struct JSON A { LENGTH(5, 1) std::string s; };", "the smaller first");
+}
+
+TEST_F(ParserTest, RejectsRepeatedOrOverlappingChecks) {
+    expectError("struct JSON A { MIN(1) MIN(2) int n; };", "the same check more than once");
+    expectError("struct JSON A { RANGE(1, 5) MAX(4) int n; };",
+                "CPPBOOT_RANGE as well as CPPBOOT_MIN or CPPBOOT_MAX");
+}
+
+TEST_F(ParserTest, RejectsChecksThatNothingWouldRun) {
+    expectError("struct ROW Row { RANGE(1, 5) int n; };",
+                "checks only run when a struct is read from JSON or from settings");
+    expectError("struct JSON A { REQUIRED std::string name; };", "already required");
+
+    // On a struct that's also read from JSON, they're fine.
+    const auto both = parse("struct JSON ROW Both { RANGE(1, 5) int n; };");
+    ASSERT_TRUE(both) << both.error().message();
+    EXPECT_EQ(both.value().json_types.at(0).fields.at(0).checks.size(), 1U);
+}
+
+TEST_F(ParserTest, ReadsChecksOnPathAndQueryParameters) {
+    const Route route = parseOneRoute(
+        R"(GET("/{code}") int f(LENGTH(3, 3) std::string code, RANGE(1, 50) int size,
+                                MIN(1) std::optional<int> page, int plain);)");
+    ASSERT_EQ(route.parameters.size(), 4U);
+    EXPECT_EQ(route.parameters[0].source, ParameterSource::Path);
+    EXPECT_EQ(route.parameters[0].checks.at(0).kind, CheckKind::Length);
+    EXPECT_EQ(route.parameters[1].checks.at(0).kind, CheckKind::Range);
+    EXPECT_EQ(route.parameters[2].checks.at(0).kind, CheckKind::Min);
+    EXPECT_TRUE(route.parameters[3].checks.empty());
+}
+
+TEST_F(ParserTest, RejectsChecksOnOtherParameters) {
+    expectError(R"(struct JSON Body { int n; };
+                   class CONTROLLER("/a") C { public: POST("/") int f(NOT_EMPTY const Body& body); };)",
+                "only path and query parameters can have one");
+    expectError(R"(class CONTROLLER("/a") C { public:
+                       GET("/") int f(NOT_EMPTY const cppboot::web::Request& request); };)",
+                "only path and query parameters can have one");
+    expectError(R"(class CONTROLLER("/a") C { public: GET("/") int f(REQUIRED int n); };)",
+                "CPPBOOT_REQUIRED, which is for settings");
+    expectError(R"(class CONTROLLER("/a") C { public: GET("/") int f(NOT_EMPTY int n); };)",
+                "Query parameter 'n' is a number");
+}
+
+TEST_F(ParserTest, ReadsASettingsStructWithNestedStructs) {
+    const auto result = parse(R"(
+        #include <chrono>
+        #include <cstdint>
+        namespace app {
+        struct Retry {
+            RANGE(1, 10) int attempts{3};
+            std::chrono::milliseconds delay{200};
+        };
+        struct Limits { Retry retry; std::uint16_t port{80}; };
+        struct CONFIG("shop.mail") MailSettings {
+            REQUIRED NOT_EMPTY std::string host;
+            bool secure{true};
+            double rate{0.5};
+            std::optional<std::string> user;
+            std::vector<std::string> copies;
+            std::chrono::seconds timeout{30};
+            Limits limits;
+            static constexpr int kVersion = 1;
+        };
+        }
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    ASSERT_EQ(result.value().config_types.size(), 1U);
+
+    const ConfigStruct& settings = result.value().config_types[0];
+    EXPECT_EQ(settings.type, "app::MailSettings");
+    EXPECT_EQ(settings.prefix, "shop.mail");
+
+    std::vector<std::string> paths;
+    for (const ConfigField& field : settings.fields) {
+        paths.push_back(field.path);
+    }
+    EXPECT_EQ(paths, (std::vector<std::string>{"host", "secure", "rate", "user", "copies", "timeout",
+                                               "limits.retry.attempts", "limits.retry.delay",
+                                               "limits.port"}));
+    EXPECT_TRUE(settings.fields[0].required);
+    EXPECT_EQ(settings.fields[0].checks.at(0).kind, CheckKind::NotEmpty);
+    EXPECT_FALSE(settings.fields[1].required);
+    EXPECT_EQ(settings.fields[6].checks.at(0).kind, CheckKind::Range);
+
+    // It has no constructor to read, so it's listed only as settings.
+    EXPECT_TRUE(result.value().components.empty());
+}
+
+TEST_F(ParserTest, RejectsABadSettingsPrefix) {
+    for (const char* prefix : {"", "Mail", "mail.", ".mail", "a..b", "my app", "mail/x"}) {
+        expectError("struct CONFIG(\"" + std::string{prefix} + "\") S { int n; };",
+                    "must be lower-case names with dots between them");
+    }
+    expectError(R"(struct CONFIG("cppboot") S { int n; };)", "can't start with \"cppboot\"");
+    expectError(R"(struct CONFIG("cppboot.server") S { int n; };)", "can't start with \"cppboot\"");
+
+    const auto fine = parse(R"(struct CONFIG("my-app.mail_2") S { int n; };)");
+    EXPECT_TRUE(fine) << fine.error().message();
+}
+
+TEST_F(ParserTest, RejectsSettingsFieldsItCannotFill) {
+    expectError(R"(struct CONFIG("a") S { std::map<std::string, int> names; };)",
+                "Field 'names' of S can't be read from settings");
+    expectError(R"(struct CONFIG("a") S { char letter; };)", "can't be read from settings");
+    expectError(R"(struct CONFIG("a") S { const char* text; };)", "can't be read from settings");
+    expectError(R"(struct CONFIG("a") S { std::vector<std::vector<int>> grid; };)",
+                "can't be read from settings");
+    expectError(R"(struct CONFIG("a") S { std::optional<std::vector<int>> maybe; };)",
+                "can't be read from settings");
+    expectError(R"(struct CONFIG("a") S { const int fixed{1}; };)", "can't be const");
+    expectError(R"(class CONFIG("a") S { int hidden; };)", "must be public for CPPBOOT_CONFIG");
+    expectError(R"(struct Base { int a; }; struct CONFIG("a") S : Base { int b; };)",
+                "can't have base classes");
+    expectError(R"(struct CONFIG("a") S {};)", "has no fields to read settings into");
+    expectError(R"(struct CONFIG("a") S { static constexpr int kOnly = 1; };)", "has no fields");
+}
+
+TEST_F(ParserTest, RejectsSettingsMarksThatContradictOrDoNothing) {
+    expectError(R"(struct CONFIG("a") S { REQUIRED std::optional<int> n; };)",
+                "is a std::optional, which says it may be missing");
+    expectError(R"(struct In { int n; }; struct CONFIG("a") S { REQUIRED In inner; };)",
+                "put the marks on the fields of In instead");
+    expectError(R"(struct In { int n; }; struct CONFIG("a") S { NOT_EMPTY In inner; };)",
+                "put the marks on the fields of In instead");
+    expectError(R"(struct CONFIG("a") S { NOT_EMPTY bool flag; };)", "can't be checked");
+    expectError(R"(#include <chrono>
+                   struct CONFIG("a") S { MIN(1) std::chrono::seconds wait; };)",
+                "can't be checked");
+    expectError(R"(struct CONFIG("a") SERVICE S { int n; };)",
+                "can't be both CPPBOOT_CONFIG and another kind of component");
+}
+
+TEST_F(ParserTest, AComponentCanDependOnASettingsStruct) {
+    const auto result = parse(R"(
+        struct CONFIG("mail") MailSettings { std::string host; };
+        class SERVICE Mailer { public: explicit Mailer(const MailSettings& settings); };
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    EXPECT_EQ(result.value().components.at(0).dependencies,
+              std::vector<std::string>{"MailSettings"});
 }

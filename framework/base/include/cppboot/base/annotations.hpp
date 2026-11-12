@@ -48,6 +48,32 @@
 /// replaces it.
 #define CPPBOOT_RATE_LIMIT(limit) CPPBOOT_ANNOTATE("cppboot:rate_limit:" limit)
 
+/// Fills a struct from the settings under a prefix when the application starts, and makes it a
+/// component that others can take as const Settings&:
+///   struct CPPBOOT_CONFIG("mail") MailSettings { std::string host; int port{25}; };
+/// reads mail.host and mail.port. A field keeps its value if its setting isn't set. A value of the
+/// wrong type, a failed check or a setting under the prefix that matches no field stops startup.
+#define CPPBOOT_CONFIG(prefix) CPPBOOT_ANNOTATE("cppboot:config:" prefix)
+
+/// On a field of a CPPBOOT_CONFIG struct: the setting has to be set, or startup stops.
+#define CPPBOOT_REQUIRED CPPBOOT_ANNOTATE("cppboot:required")
+
+// Checks on a field of a CPPBOOT_JSON or CPPBOOT_CONFIG struct, or on a path or query parameter of
+// a route function. A request that fails one gets a 400 naming the field, and a setting that fails
+// one stops startup. On a std::optional, they apply only when there's a value.
+
+/// Text or a container can't be empty: CPPBOOT_NOT_EMPTY std::string name;
+#define CPPBOOT_NOT_EMPTY CPPBOOT_ANNOTATE("cppboot:not_empty")
+
+/// Text has from min to max characters, or a container that many items:
+///   CPPBOOT_LENGTH(1, 50) std::string name;
+#define CPPBOOT_LENGTH(min, max) CPPBOOT_ANNOTATE("cppboot:length:" #min ":" #max)
+
+/// A number is at least min, at most max, or both: CPPBOOT_RANGE(1, 100) int quantity{1};
+#define CPPBOOT_MIN(min) CPPBOOT_ANNOTATE("cppboot:min:" #min)
+#define CPPBOOT_MAX(max) CPPBOOT_ANNOTATE("cppboot:max:" #max)
+#define CPPBOOT_RANGE(min, max) CPPBOOT_ANNOTATE("cppboot:range:" #min ":" #max)
+
 /// Tells the generator that a risky field of a component is safe, and why. Its reason is required,
 /// so that whoever reads the code later can check it:
 ///   CPPBOOT_UNCHECKED("Only ever points at string literals") std::string_view label_;

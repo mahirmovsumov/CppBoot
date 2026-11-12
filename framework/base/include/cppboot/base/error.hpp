@@ -16,6 +16,9 @@ enum class ErrorCode {
     DependencyError,
     StartupError,
     PlatformError,
+    /// A setting is missing or wrong. An application that fails to start with this exits with
+    /// kExitConfigurationError.
+    InvalidConfiguration,
 };
 
 std::string_view toString(ErrorCode code) noexcept;

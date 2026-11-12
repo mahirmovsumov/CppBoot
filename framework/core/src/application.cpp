@@ -118,7 +118,10 @@ int Application::execute() {
     if (module_provider_) {
         auto provided = module_provider_(*config_, *logger_);
         if (!provided) {
-            return fail(provided.error(), kExitFailure);
+            return fail(provided.error(),
+                        provided.error().code() == ErrorCode::InvalidConfiguration
+                            ? kExitConfigurationError
+                            : kExitFailure);
         }
         for (auto& instance : provided.value()) {
             modules_.add(std::move(instance));

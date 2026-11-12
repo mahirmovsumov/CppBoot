@@ -88,7 +88,105 @@ A key's variable is its name in capitals, with dots and hyphens as underscores, 
 
 This works whether or not the key also appears in YAML. If a variable matches more than one key that's set, such as both `cppboot.a_b` and `cppboot.a.b`, the application exits with code 78.
 
+## Settings as a struct
+
+Mark a struct with `CPPBOOT_CONFIG` and a prefix, and CppBoot fills it from the settings under that prefix when the application starts. Create `src/mail_settings.hpp`:
+
+```cpp
+#pragma once
+
+#include <chrono>
+#include <cppboot/cppboot.hpp>
+#include <optional>
+#include <string>
+#include <vector>
+
+struct RetrySettings {
+    CPPBOOT_RANGE(1, 10) int attempts{3};
+    std::chrono::milliseconds delay{200};
+};
+
+struct CPPBOOT_CONFIG("mail") MailSettings {
+    CPPBOOT_REQUIRED CPPBOOT_NOT_EMPTY std::string host;   // mail.host
+    CPPBOOT_RANGE(1, 65535) int port{25};                  // mail.port
+    bool secure{true};                                     // mail.secure
+    std::chrono::seconds timeout{30};                      // mail.timeout
+    std::optional<std::string> user;                       // mail.user
+    std::vector<std::string> copies;                       // mail.copies
+    RetrySettings retry;                                   // mail.retry.attempts, mail.retry.delay
+};
+
+// A component takes it like any other component.
+class CPPBOOT_SERVICE MailModule : public cppboot::Module {
+public:
+    explicit MailModule(const MailSettings& settings) : settings_(settings) {}
+
+    std::string_view name() const noexcept override { return "mail"; }
+
+    cppboot::Result<void> start(cppboot::ApplicationContext& context) override {
+        context.logger().info("Mail goes to {}:{}, with {} tries", settings_.host, settings_.port,
+                              settings_.retry.attempts);
+        return {};
+    }
+
+private:
+    const MailSettings& settings_;
+};
+```
+
+```yaml
+mail:
+  host: smtp.example.com
+  timeout: 10s
+  copies:
+    - audit@example.com
+  retry:
+    attempts: 5
+```
+
+- **A field keeps its value** if its setting isn't set, so the value in the struct is the default. Mark a field `CPPBOOT_REQUIRED` if there's no sensible default.
+- **Every source works**, as for any setting: `CPPBOOT_MAIL_HOST` and `CPPBOOT_MAIL_RETRY_ATTEMPTS` set `mail.host` and `mail.retry.attempts`.
+- **The struct is a component.** Anything can take it as `const MailSettings&`, and it never changes after startup, so it's safe to read from any thread.
+
+`cppboot add config Mail` writes a struct like this to start from.
+
+### What a field can be
+
+| Type | Setting |
+|---|---|
+| `bool` | `true`, `yes`, `on` or `1`, and `false`, `no`, `off` or `0` |
+| Whole numbers, such as `int` and `std::uint16_t` | A number that fits the type |
+| `float`, `double` | A number |
+| `std::string` | Any text |
+| `std::chrono` durations | A whole number and a unit: `500ms`, `30s`, `5m`, `2h`, `1d`, and also `ns` and `us`. The value has to fit the field's unit exactly, so `1500ms` isn't accepted for `std::chrono::seconds` |
+| `std::optional` of those | Empty unless the setting is set |
+| `std::vector` of those | A YAML list, or one value with commas, which is how an environment variable sets it: `CPPBOOT_MAIL_COPIES=a@example.com,b@example.com` |
+| Another struct of these | Its fields get keys under the field's name, such as `mail.retry.attempts` |
+
+The checks `CPPBOOT_NOT_EMPTY`, `CPPBOOT_LENGTH`, `CPPBOOT_MIN`, `CPPBOOT_MAX` and `CPPBOOT_RANGE` work as they do for [request bodies](web.md#checking-what-clients-send).
+
+### Mistakes stop startup
+
+The application exits with code 78 before it serves anything, and lists everything that's wrong at once:
+
+```text
+[critical] [InvalidConfiguration] Invalid settings for MailSettings:
+  mail.host: must be set, in a settings file or with the environment variable CPPBOOT_MAIL_HOST
+  mail.port: must be from 1 to 65535
+  mail.timeout: must be a time with its unit, such as 500ms, 30s, 5m or 2h, but is '10'
+  mail.retry.atempts: isn't a setting that MailSettings reads. Did you mean mail.retry.attempts? (binding.cpp:253)
+```
+
+- **A setting that no field reads is an error**, because it's nearly always a spelling mistake, which would otherwise leave the real setting at its default without anyone noticing. This covers settings files, defaults and arguments. It can't cover environment variables, since a variable's name doesn't say which key was meant.
+- **Values of sensitive settings aren't shown**, so a mistyped password doesn't reach a log.
+- **Two structs can't share a prefix.** One prefix can be inside another, such as `shop` and `shop.mail`, and then each struct reads its own settings.
+- Prefixes are lower-case names with dots between them, and can't start with `cppboot`.
+
+The test that new projects come with, `tests/components_test.cpp`, fills these structs from `cppboot.yaml` and the environment too, so `cppboot test` catches settings that don't fit them before the application runs.
+
 ## Read settings in code
+
+For a setting that doesn't belong in a struct, read it from `Config`:
 
 ```cpp
 const auto& config = context.config();

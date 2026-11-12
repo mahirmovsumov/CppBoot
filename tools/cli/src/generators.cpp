@@ -157,7 +157,28 @@ public:
 };
 )";
 
-constexpr std::array<Kind, 6> kKinds = {{
+constexpr std::string_view kConfig = R"(#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <string>
+
+// Filled from the settings under "@SNAKE@" when the application starts, so @SNAKE@.host in
+// cppboot.yaml, or the environment variable CPPBOOT_@UPPER@_HOST, sets host. A component takes it
+// in its constructor as const @CLASS@&.
+//
+// A value of the wrong type, a failed check, or a setting under "@SNAKE@" that no field reads
+// stops startup with a message that names it.
+struct CPPBOOT_CONFIG("@SNAKE@") @CLASS@ {
+    // A field keeps its value here unless its setting is set.
+    std::string host{"localhost"};
+
+    CPPBOOT_RANGE(1, 65535) int port{8080};
+
+    // Mark a field CPPBOOT_REQUIRED if the application can't start without its setting.
+};
+)";
+
+constexpr std::array<Kind, 7> kKinds = {{
     {"service", "Service", "", "", kService},
     {"controller", "Controller", "cppboot::web", "a web project, made with --web", kController},
     {"repository", "Repository", "cppboot::data",
@@ -165,6 +186,7 @@ constexpr std::array<Kind, 6> kKinds = {{
     {"middleware", "Middleware", "cppboot::web", "a web project, made with --web", kMiddleware},
     {"module", "Module", "", "", kModule},
     {"health", "Health", "ACTUATOR", "a project with the actuator, made with --actuator", kHealth},
+    {"config", "Settings", "", "", kConfig},
 }};
 
 std::string readFile(const fs::path& path) {
@@ -308,6 +330,10 @@ Result<std::vector<fs::path>> addComponent(const fs::path& project, std::string_
     content = replaceAll(content, "@CLASS@", class_name);
     content = replaceAll(content, "@BASE@", base);
     content = replaceAll(content, "@SNAKE@", snake);
+    std::string upper = snake;
+    std::transform(upper.begin(), upper.end(), upper.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    content = replaceAll(content, "@UPPER@", upper);
     content = replaceAll(content, "@PATH@", "/api/" + plural(snake));
 
     fs::path migration;

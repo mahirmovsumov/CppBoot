@@ -46,10 +46,31 @@ struct Component {
     std::vector<std::string> dependencies;
 };
 
+enum class CheckKind { NotEmpty, Length, Min, Max, Range };
+
+/// What a checked value is, which decides how its checks read in messages.
+enum class ValueShape { Number, Text, Items };
+
+/// A check from CPPBOOT_NOT_EMPTY, CPPBOOT_LENGTH, CPPBOOT_MIN, CPPBOOT_MAX or CPPBOOT_RANGE.
+struct Check {
+    CheckKind kind{CheckKind::NotEmpty};
+    ValueShape shape{ValueShape::Text};
+    /// The limits as written in the source, such as "1" and "100". Unused ones are empty.
+    std::string min;
+    std::string max;
+};
+
+/// A C++ expression that's true when a value passes a check.
+std::string checkExpression(const Check& check, std::string_view value);
+
+/// What a value has to be to pass a check, such as "must be from 1 to 100".
+std::string checkMessage(const Check& check);
+
 struct StructField {
     std::string name;
     /// A std::optional field, which may be missing from JSON.
     bool is_optional{false};
+    std::vector<Check> checks{};
 };
 
 /// A struct marked with CPPBOOT_JSON or CPPBOOT_ROW.
@@ -66,6 +87,8 @@ struct RouteParameter {
     std::string name;
     /// The value type to convert to, without const or a reference.
     std::string type;
+    /// For path and query parameters.
+    std::vector<Check> checks{};
 };
 
 enum class ReturnKind { Nothing, Response, Value };
@@ -104,11 +127,30 @@ struct Middleware {
     int order{0};
 };
 
+struct ConfigField {
+    /// Where the field is from its struct, which is also its key under the prefix. A field of a
+    /// nested struct has a path such as "retry.attempts".
+    std::string path;
+    /// Marked CPPBOOT_REQUIRED, so startup stops if its setting isn't set.
+    bool required{false};
+    std::vector<Check> checks{};
+};
+
+/// A struct marked with CPPBOOT_CONFIG, which is filled from settings and is also a component.
+struct ConfigStruct {
+    std::string type;
+    std::string location;
+    /// The settings it reads start with this and a dot.
+    std::string prefix;
+    std::vector<ConfigField> fields;
+};
+
 /// Everything marked in one or more headers.
 struct Declarations {
     std::vector<Component> components;
     std::vector<MappedStruct> json_types;
     std::vector<MappedStruct> row_types;
+    std::vector<ConfigStruct> config_types;
     std::vector<Controller> controllers;
     std::vector<Middleware> middleware;
     /// Risky patterns that don't stop the build, as "file:line: warning: message".
@@ -123,8 +165,9 @@ struct RenderOptions {
 };
 
 /// Fails if a dependency has no provider, a type has two providers, dependencies form a cycle, two
-/// routes have the same method and path, there's middleware with nothing for it to run around, or
-/// something uses the actuator in a project that hasn't asked for it.
+/// routes have the same method and path, two structs read the same settings, there's middleware
+/// with nothing for it to run around, or something uses the actuator in a project that hasn't asked
+/// for it.
 Result<void> validateDeclarations(const Declarations& declarations, RenderOptions options = {});
 
 /// Returns a header defining JSON conversions and cppboot::generated::registerComponents(), which

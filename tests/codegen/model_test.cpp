@@ -375,3 +375,146 @@ TEST(RenderRegistrationTest, WritesRoutesForEachReturnKindAndSource) {
     EXPECT_NE(text.find("container.bindAll<cppboot::Module, cppboot::web::ServerModule>();"),
               std::string::npos);
 }
+
+TEST(CheckTest, MessagesSayWhatAValueHasToBe) {
+    EXPECT_EQ(checkMessage({CheckKind::NotEmpty, ValueShape::Text, "", ""}), "must not be empty");
+    EXPECT_EQ(checkMessage({CheckKind::Length, ValueShape::Text, "1", "50"}),
+              "must have from 1 to 50 characters");
+    EXPECT_EQ(checkMessage({CheckKind::Length, ValueShape::Items, "0", "3"}),
+              "must have from 0 to 3 items");
+    EXPECT_EQ(checkMessage({CheckKind::Length, ValueShape::Text, "3", "3"}),
+              "must have exactly 3 characters");
+    EXPECT_EQ(checkMessage({CheckKind::Length, ValueShape::Items, "1", "1"}),
+              "must have exactly 1 item");
+    EXPECT_EQ(checkMessage({CheckKind::Length, ValueShape::Text, "0", "1"}),
+              "must have from 0 to 1 character");
+    EXPECT_EQ(checkMessage({CheckKind::Min, ValueShape::Number, "0", ""}), "must be at least 0");
+    EXPECT_EQ(checkMessage({CheckKind::Max, ValueShape::Number, "", "-0.5"}), "must be at most -0.5");
+    EXPECT_EQ(checkMessage({CheckKind::Range, ValueShape::Number, "1", "100"}),
+              "must be from 1 to 100");
+}
+
+TEST(CheckTest, ExpressionsCallTheValidationFunctions) {
+    EXPECT_EQ(checkExpression({CheckKind::NotEmpty, ValueShape::Text, "", ""}, "value.name"),
+              "cppboot::validation::notEmpty(value.name)");
+    EXPECT_EQ(checkExpression({CheckKind::Length, ValueShape::Items, "1", "3"}, "v"),
+              "cppboot::validation::lengthInRange(v, 1, 3)");
+    EXPECT_EQ(checkExpression({CheckKind::Min, ValueShape::Number, "-1", ""}, "v"),
+              "cppboot::validation::atLeast(v, -1)");
+    EXPECT_EQ(checkExpression({CheckKind::Max, ValueShape::Number, "", "9"}, "v"),
+              "cppboot::validation::atMost(v, 9)");
+    EXPECT_EQ(checkExpression({CheckKind::Range, ValueShape::Number, "0", "0.5"}, "v"),
+              "cppboot::validation::inRange(v, 0, 0.5)");
+}
+
+TEST(RenderRegistrationTest, WritesChecksIntoJsonConversions) {
+    Declarations declarations;
+    declarations.json_types = {{"Order",
+                                "a.hpp:1",
+                                {{"quantity", false, {{CheckKind::Range, ValueShape::Number, "1", "9"}}},
+                                 {"note", true, {}}}}};
+    const std::string text = renderRegistration(declarations, {});
+
+    EXPECT_NE(text.find("#include <cppboot/base/validation.hpp>"), std::string::npos);
+    EXPECT_NE(text.find("if (!cppboot::validation::inRange(value.quantity, 1, 9)) {\n"
+                        "            throw cppboot::JsonError(\"field 'quantity': must be from 1 "
+                        "to 9\");"),
+              std::string::npos)
+        << text;
+}
+
+TEST(RenderRegistrationTest, LeavesValidationOutWhenNothingIsChecked) {
+    Declarations declarations;
+    declarations.json_types = {{"Order", "a.hpp:1", {{"quantity", false, {}}}}};
+    const std::string text = renderRegistration(declarations, {});
+    EXPECT_EQ(text.find("validation"), std::string::npos);
+    EXPECT_EQ(text.find("config/binding.hpp"), std::string::npos);
+}
+
+TEST(RenderRegistrationTest, FillsSettingsStructsBeforeAnythingElse) {
+    Declarations declarations;
+    declarations.config_types = {
+        {"app::Shop",
+         "a.hpp:1",
+         "shop",
+         {{"name", true, {{CheckKind::NotEmpty, ValueShape::Text, "", ""}}},
+          {"retry.attempts", false, {{CheckKind::Range, ValueShape::Number, "1", "10"}}}}},
+        {"app::Mail", "a.hpp:9", "shop.mail", {{"host", false, {}}}},
+    };
+    declarations.components = {{"app::Greeter", "a.hpp:20", {}, {"app::Shop"}}};
+    ASSERT_TRUE(validateDeclarations(declarations));
+    const std::string text = renderRegistration(declarations, {});
+
+    EXPECT_NE(text.find("#include <cppboot/config/binding.hpp>"), std::string::npos);
+    EXPECT_NE(text.find("cppboot::config::SettingsBinder binder{*config, \"shop\", \"app::Shop\"};"),
+              std::string::npos)
+        << text;
+    EXPECT_NE(text.find("binder.bind(\"name\", settings->name);\n        binder.require(\"name\");\n"
+                        "        binder.check(\"name\", cppboot::validation::notEmpty(settings->name), "
+                        "\"must not be empty\");"),
+              std::string::npos)
+        << text;
+    EXPECT_NE(text.find("binder.bind(\"retry.attempts\", settings->retry.attempts);"),
+              std::string::npos);
+    // The struct with the longer prefix reads those settings, so the first one leaves them alone.
+    EXPECT_NE(text.find("binder.ignoreGroup(\"mail\");"), std::string::npos);
+    EXPECT_EQ(text.find("binder.ignoreGroup(\"shop"), std::string::npos);
+    EXPECT_NE(text.find("container.registerInstance(std::move(settings));"), std::string::npos);
+
+    EXPECT_LT(text.find("SettingsBinder binder"), text.find("registerSingleton<app::Greeter>"));
+}
+
+TEST(RenderRegistrationTest, ChecksParametersBeforeCallingTheRoute) {
+    Declarations declarations;
+    declarations.components = {{"Api", "a.hpp:1", {}, {}}};
+    Route route;
+    route.method = "Get";
+    route.path = "/items/{code}";
+    route.function = "list";
+    route.parameters = {
+        {ParameterSource::Path, "code", "std::string", {{CheckKind::Length, ValueShape::Text, "3", "3"}}},
+        {ParameterSource::Query, "size", "int", {{CheckKind::Max, ValueShape::Number, "", "50"}}},
+        {ParameterSource::Query, "plain", "int", {}},
+    };
+    declarations.controllers = {{"Api", {route}}};
+    const std::string text = renderRegistration(declarations, {});
+
+    EXPECT_NE(text.find("const auto parameter_0 = cppboot::web::pathParam<std::string>(request, "
+                        "\"code\");"),
+              std::string::npos)
+        << text;
+    EXPECT_NE(text.find("throw cppboot::web::HttpError(400, \"Path parameter 'code' must have "
+                        "exactly 3 characters\");"),
+              std::string::npos);
+    EXPECT_NE(text.find("throw cppboot::web::HttpError(400, \"Query parameter 'size' must be at "
+                        "most 50\");"),
+              std::string::npos);
+    EXPECT_NE(text.find("controller->list(parameter_0, parameter_1, "
+                        "cppboot::web::queryParam<int>(request, \"plain\"))"),
+              std::string::npos)
+        << text;
+}
+
+TEST(ValidateDeclarationsTest, RejectsTwoStructsReadingTheSameSettings) {
+    Declarations declarations;
+    declarations.config_types = {{"A", "a.hpp:1", "mail", {{"host", false, {}}}},
+                                 {"B", "b.hpp:2", "mail", {{"port", false, {}}}}};
+    const auto result = validateDeclarations(declarations);
+    ASSERT_FALSE(result);
+    EXPECT_NE(result.error().message().find(
+                  "A (a.hpp:1) and B (b.hpp:2) both read the settings under \"mail\""),
+              std::string::npos)
+        << result.error().message();
+}
+
+TEST(ValidateDeclarationsTest, SettingsStructsCountAsProvidedButOthersStillDoNot) {
+    Declarations declarations;
+    declarations.config_types = {{"Mail", "a.hpp:1", "mail", {{"host", false, {}}}}};
+    declarations.components = {{"Mailer", "a.hpp:5", {}, {"Mail"}}};
+    EXPECT_TRUE(validateDeclarations(declarations));
+
+    declarations.components = {{"Mailer", "a.hpp:5", {}, {"Mail", "Missing"}}};
+    const auto result = validateDeclarations(declarations);
+    ASSERT_FALSE(result);
+    EXPECT_NE(result.error().message().find("needs Missing"), std::string::npos);
+}

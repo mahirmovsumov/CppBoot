@@ -427,3 +427,19 @@ TEST_F(CliTest, InfoPrintsTheVersion) {
     EXPECT_EQ(cppboot::cli::run({"info"}, out, err), 0);
     EXPECT_NE(out.str().find(std::string{cppboot::kVersionString}), std::string::npos);
 }
+
+TEST_F(CliTest, AddConfigWritesASettingsStructNamedForItsPrefix) {
+    ASSERT_TRUE(createProject("app", directory_));
+    const auto root = directory_ / "app";
+
+    const auto added = cppboot::cli::addComponent(root, "config", "OrderMail");
+    ASSERT_TRUE(added) << added.error().describe();
+    EXPECT_EQ(added.value().front().generic_string(), "src/order_mail_settings.hpp");
+
+    const std::string header = readFile(root / "src" / "order_mail_settings.hpp");
+    EXPECT_NE(header.find("struct CPPBOOT_CONFIG(\"order_mail\") OrderMailSettings {"),
+              std::string::npos)
+        << header;
+    EXPECT_NE(header.find("CPPBOOT_ORDER_MAIL_HOST"), std::string::npos);
+    EXPECT_EQ(header.find('@'), std::string::npos);
+}

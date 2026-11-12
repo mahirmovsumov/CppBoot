@@ -204,7 +204,7 @@ expect_contains("${output}" "Server listening on port" "run with every option")
 
 # Every kind that cppboot add makes has to build, be found and start, with its migration applied.
 foreach(kind_and_name service:Billing controller:Invoice repository:Order middleware:Audit
-                      module:Report health:Queue)
+                      module:Report health:Queue config:Mail)
     string(REPLACE ":" ";" kind_and_name "${kind_and_name}")
     run_cli(code output ${WORK_DIR}/banking-api add ${kind_and_name})
     expect_exit_code("${code}" 0 "add ${kind_and_name}" "${output}")
@@ -217,6 +217,19 @@ run_cli(code output ${WORK_DIR}/banking-api run
 expect_exit_code("${code}" 0 "run with added classes" "${output}")
 expect_contains("${output}" "Applied 1 new database migrations" "run with added classes")
 expect_contains("${output}" "ReportModule started" "run with added classes")
+
+# A settings struct stops startup when a setting doesn't fit it, with the configuration exit code.
+set(ENV{CPPBOOT_MAIL_PORT} "not-a-port")
+run_cli(code output ${WORK_DIR}/banking-api run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 78 "run with a setting of the wrong type" "${output}")
+expect_contains("${output}" "mail.port: must be a whole number" "run with a setting of the wrong type")
+set(ENV{CPPBOOT_MAIL_PORT} "70000")
+run_cli(code output ${WORK_DIR}/banking-api run
+    --cppboot.server.port=0 --cppboot.runtime.shutdown_after_start=true)
+expect_exit_code("${code}" 78 "run with a setting that fails its check" "${output}")
+expect_contains("${output}" "mail.port: must be from 1 to 65535" "run with a setting that fails its check")
+unset(ENV{CPPBOOT_MAIL_PORT})
 
 # The tests that new projects come with have to pass, including the check that everything fits.
 run_cli(code output ${WORK_DIR}/banking-api test)

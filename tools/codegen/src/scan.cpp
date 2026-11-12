@@ -19,12 +19,67 @@ Json makeObject(std::initializer_list<std::pair<std::string_view, Json>> members
     return object;
 }
 
+Json checksToJson(const std::vector<Check>& checks) {
+    Json result = Json::array();
+    for (const Check& check : checks) {
+        result.push(makeObject({{"kind", static_cast<int>(check.kind)},
+                                {"shape", static_cast<int>(check.shape)},
+                                {"min", check.min},
+                                {"max", check.max}}));
+    }
+    return result;
+}
+
+std::vector<Check> checksFromJson(const Json& value) {
+    std::vector<Check> checks;
+    for (const Json& check : value.items()) {
+        checks.push_back(Check{static_cast<CheckKind>(check.at("kind").get<int>()),
+                               static_cast<ValueShape>(check.at("shape").get<int>()),
+                               check.at("min").asString(), check.at("max").asString()});
+    }
+    return checks;
+}
+
 Json fieldsToJson(const std::vector<StructField>& fields) {
     Json result = Json::array();
     for (const StructField& field : fields) {
-        result.push(makeObject({{"name", field.name}, {"is_optional", field.is_optional}}));
+        result.push(makeObject({{"name", field.name},
+                                {"is_optional", field.is_optional},
+                                {"checks", checksToJson(field.checks)}}));
     }
     return result;
+}
+
+Json configTypesToJson(const std::vector<ConfigStruct>& config_types) {
+    Json result = Json::array();
+    for (const ConfigStruct& settings : config_types) {
+        Json fields = Json::array();
+        for (const ConfigField& field : settings.fields) {
+            fields.push(makeObject({{"path", field.path},
+                                    {"required", field.required},
+                                    {"checks", checksToJson(field.checks)}}));
+        }
+        result.push(makeObject({{"type", settings.type},
+                                {"location", settings.location},
+                                {"prefix", settings.prefix},
+                                {"fields", std::move(fields)}}));
+    }
+    return result;
+}
+
+std::vector<ConfigStruct> configTypesFromJson(const Json& value) {
+    std::vector<ConfigStruct> config_types;
+    for (const Json& settings : value.items()) {
+        ConfigStruct read{settings.at("type").asString(), settings.at("location").asString(),
+                          settings.at("prefix").asString(), {}};
+        for (const Json& field : settings.at("fields").items()) {
+            read.fields.push_back(ConfigField{field.at("path").asString(),
+                                              field.at("required").asBool(),
+                                              checksFromJson(field.at("checks"))});
+        }
+        config_types.push_back(std::move(read));
+    }
+    return config_types;
 }
 
 Json structsToJson(const std::vector<MappedStruct>& structs) {
@@ -42,7 +97,8 @@ Json routeToJson(const Route& route) {
     for (const RouteParameter& parameter : route.parameters) {
         parameters.push(makeObject({{"source", static_cast<int>(parameter.source)},
                                     {"name", parameter.name},
-                                    {"type", parameter.type}}));
+                                    {"type", parameter.type},
+                                    {"checks", checksToJson(parameter.checks)}}));
     }
     Json result = makeObject({{"method", route.method},
                               {"path", route.path},
@@ -62,7 +118,8 @@ Json routeToJson(const Route& route) {
 std::vector<StructField> fieldsFromJson(const Json& value) {
     std::vector<StructField> fields;
     for (const Json& field : value.items()) {
-        fields.push_back(StructField{field.at("name").asString(), field.at("is_optional").asBool()});
+        fields.push_back(StructField{field.at("name").asString(), field.at("is_optional").asBool(),
+                                     checksFromJson(field.at("checks"))});
     }
     return fields;
 }
@@ -85,7 +142,8 @@ Route routeFromJson(const Json& value) {
     for (const Json& parameter : value.at("parameters").items()) {
         route.parameters.push_back(RouteParameter{
             static_cast<ParameterSource>(parameter.at("source").get<int>()),
-            parameter.at("name").asString(), parameter.at("type").asString()});
+            parameter.at("name").asString(), parameter.at("type").asString(),
+            checksFromJson(parameter.at("checks"))});
     }
     route.return_kind = static_cast<ReturnKind>(value.at("return_kind").get<int>());
     route.is_public = value.at("is_public").asBool();
@@ -147,6 +205,7 @@ std::string toJson(const ScannedHeader& scanned) {
                                       {"components", std::move(components)},
                                       {"json_types", structsToJson(declarations.json_types)},
                                       {"row_types", structsToJson(declarations.row_types)},
+                                      {"config_types", configTypesToJson(declarations.config_types)},
                                       {"controllers", std::move(controllers)},
                                       {"middleware", std::move(middleware)},
                                       {"warnings", declarations.warnings}});
@@ -168,6 +227,7 @@ Result<ScannedHeader> scannedHeaderFromJson(std::string_view text) {
         }
         declarations.json_types = structsFromJson(document.at("json_types"));
         declarations.row_types = structsFromJson(document.at("row_types"));
+        declarations.config_types = configTypesFromJson(document.at("config_types"));
         for (const Json& controller : document.at("controllers").items()) {
             Controller read{controller.at("type").asString(), {}};
             for (const Json& route : controller.at("routes").items()) {

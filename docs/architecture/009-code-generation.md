@@ -41,6 +41,18 @@ The generator also rejects missing dependencies, two providers of the same type 
 
 The parser decides where each function parameter comes from. Its type decides this rather than extra macros, so controllers read like ordinary functions. The generator rejects a route that can't work, such as a path parameter with no function parameter, or two routes that match the same requests.
 
+## Checks and settings structs
+
+**Checks are marks, and their code is generated.** `CPPBOOT_RANGE(1, 100)` becomes a call to `cppboot::validation::inRange` in the code that reads the field, with the message written out at build time. The limits go into the generated code as they were written, so they have to be numbers, which the generator checks. A check that can't apply to its field's type fails the build, by the same rule as security marks: one that did nothing would look like protection.
+
+Each check stops at the first failure, as reading a field of the wrong type already does. Collecting every failure would need every conversion to carry on after an error, and a client fixes one field and sends again either way.
+
+**A settings struct is filled when components are registered**, not when something first asks for it. A container creates a component the first time it's needed, so a struct that nothing used yet would never be checked, and a wrong setting would only show up later. Generated code reads `Config` from the container, fills the struct with a `SettingsBinder`, and registers the result as an instance. Since a failure there is thrown as a `cppboot::Exception` with `ErrorCode::InvalidConfiguration`, `runApplication` turns it into exit code 78, like every other configuration error.
+
+**Nested structs are read at build time.** The generator follows a field whose type is a struct and lists its fields with paths such as `retry.attempts`, so the generated code is a flat list of `bind` calls and the runtime needs no reflection. The nested struct needs no mark, which is why marks on an unmarked struct can't be reported as doing nothing: the generator can't know from one header whether another header's settings struct holds it.
+
+**Unknown settings are errors**, for the same reason the YAML reader is strict: a setting that's silently ignored is a mistake nobody sees. Each struct knows the prefixes of the others, so that `shop` doesn't report the settings of `shop.mail`.
+
 ## Results
 
 | Finding | Detail |

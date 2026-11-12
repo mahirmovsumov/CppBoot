@@ -53,11 +53,12 @@ Result<void> checkForCycle(const Component& component, const Providers& provider
     states.emplace(&component, VisitState::InProgress);
     path.push_back(&component);
     for (const std::string& dependency : component.dependencies) {
-        if (isFrameworkType(dependency)) {
+        // The framework and settings structs provide the rest, and they depend on no component.
+        const auto provider = providers.find(dependency);
+        if (provider == providers.end()) {
             continue;
         }
-        if (auto checked = checkForCycle(*providers.at(dependency), providers, states, path);
-            !checked) {
+        if (auto checked = checkForCycle(*provider->second, providers, states, path); !checked) {
             return checked;
         }
     }
@@ -92,6 +93,73 @@ std::string quoted(std::string_view text) {
         result += c;
     }
     return result + '"';
+}
+
+bool hasChecks(const Declarations& declarations) {
+    const auto checked_field = [](const StructField& field) { return !field.checks.empty(); };
+    for (const MappedStruct& json_type : declarations.json_types) {
+        if (std::any_of(json_type.fields.begin(), json_type.fields.end(), checked_field)) {
+            return true;
+        }
+    }
+    for (const ConfigStruct& settings : declarations.config_types) {
+        if (std::any_of(settings.fields.begin(), settings.fields.end(),
+                        [](const ConfigField& field) { return !field.checks.empty(); })) {
+            return true;
+        }
+    }
+    for (const Controller& controller : declarations.controllers) {
+        for (const Route& route : controller.routes) {
+            if (std::any_of(route.parameters.begin(), route.parameters.end(),
+                            [](const RouteParameter& parameter) {
+                                return !parameter.checks.empty();
+                            })) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool isConfigType(const Declarations& declarations, std::string_view type) {
+    return std::any_of(declarations.config_types.begin(), declarations.config_types.end(),
+                       [&](const ConfigStruct& settings) { return settings.type == type; });
+}
+
+/// Fills each settings struct when components are registered, rather than when something first
+/// asks for it, so that a wrong setting stops startup even if nothing uses the struct yet.
+void renderConfigType(const ConfigStruct& settings, const std::vector<ConfigStruct>& all,
+                      std::string& text) {
+    text += "    {\n";
+    text += "        static_assert(std::is_default_constructible_v<" + settings.type + ">, " +
+            quoted(settings.type + " must be default constructible to be read from settings") +
+            ");\n";
+    text += "        const auto config = container.resolve<cppboot::config::Config>();\n";
+    text += "        auto settings = std::make_shared<" + settings.type + ">();\n";
+    text += "        cppboot::config::SettingsBinder binder{*config, " + quoted(settings.prefix) +
+            ", " + quoted(settings.type) + "};\n";
+    for (const ConfigField& field : settings.fields) {
+        const std::string key = quoted(field.path);
+        const std::string value = "settings->" + field.path;
+        text += "        binder.bind(" + key + ", " + value + ");\n";
+        if (field.required) {
+            text += "        binder.require(" + key + ");\n";
+        }
+        for (const Check& check : field.checks) {
+            text += "        binder.check(" + key + ", " + checkExpression(check, value) + ", " +
+                    quoted(checkMessage(check)) + ");\n";
+        }
+    }
+    // Settings under a longer prefix belong to the struct that reads them.
+    const std::string group = settings.prefix + ".";
+    for (const ConfigStruct& other : all) {
+        if (other.prefix.starts_with(group)) {
+            text += "        binder.ignoreGroup(" + quoted(other.prefix.substr(group.size())) + ");\n";
+        }
+    }
+    text += "        binder.finish();\n";
+    text += "        container.registerInstance(std::move(settings));\n";
+    text += "    }\n";
 }
 
 bool usesDatabase(const Declarations& declarations) {
@@ -186,6 +254,12 @@ void renderJsonType(const MappedStruct& json_type, std::string& text) {
         text += std::string{"        cppboot::detail::"} +
                 (field.is_optional ? "readOptionalJsonField" : "readJsonField") + "(json, " +
                 quoted(field.name) + ", value." + field.name + ");\n";
+        for (const Check& check : field.checks) {
+            text += "        if (!" + checkExpression(check, "value." + field.name) + ") {\n";
+            text += "            throw cppboot::JsonError(" +
+                    quoted("field '" + field.name + "': " + checkMessage(check)) + ");\n";
+            text += "        }\n";
+        }
     }
     text += "    }\n};\n\n";
 }
@@ -255,10 +329,28 @@ void renderRoute(const Route& route, bool uses_security, std::string& text) {
         renderGuard(route, text);
     }
 
+    // A checked parameter is read into a variable first, so that it can be checked before the call.
     std::string call = "controller->" + route.function + "(";
     for (std::size_t i = 0; i < route.parameters.size(); ++i) {
+        const RouteParameter& parameter = route.parameters[i];
         call += i == 0 ? "" : ", ";
-        call += renderArgument(route.parameters[i]);
+        if (parameter.checks.empty()) {
+            call += renderArgument(parameter);
+            continue;
+        }
+
+        const std::string variable = "parameter_" + std::to_string(i);
+        const std::string name =
+            std::string{parameter.source == ParameterSource::Path ? "Path" : "Query"} +
+            " parameter '" + parameter.name + "' ";
+        text += "                const auto " + variable + " = " + renderArgument(parameter) + ";\n";
+        for (const Check& check : parameter.checks) {
+            text += "                if (!" + checkExpression(check, variable) + ") {\n";
+            text += "                    throw cppboot::web::HttpError(400, " +
+                    quoted(name + checkMessage(check)) + ");\n";
+            text += "                }\n";
+        }
+        call += variable;
     }
     call += ")";
 
@@ -353,6 +445,48 @@ void renderRouter(const Declarations& declarations, bool uses_database, bool use
 
 }  // namespace
 
+std::string checkExpression(const Check& check, std::string_view value) {
+    const std::string argument{value};
+    switch (check.kind) {
+        case CheckKind::NotEmpty:
+            return "cppboot::validation::notEmpty(" + argument + ")";
+        case CheckKind::Length:
+            return "cppboot::validation::lengthInRange(" + argument + ", " + check.min + ", " +
+                   check.max + ")";
+        case CheckKind::Min:
+            return "cppboot::validation::atLeast(" + argument + ", " + check.min + ")";
+        case CheckKind::Max:
+            return "cppboot::validation::atMost(" + argument + ", " + check.max + ")";
+        case CheckKind::Range:
+            return "cppboot::validation::inRange(" + argument + ", " + check.min + ", " +
+                   check.max + ")";
+    }
+    return "true";
+}
+
+std::string checkMessage(const Check& check) {
+    switch (check.kind) {
+        case CheckKind::NotEmpty:
+            return "must not be empty";
+        case CheckKind::Length: {
+            const bool text = check.shape == ValueShape::Text;
+            const std::string unit = check.max == "1" ? (text ? " character" : " item")
+                                                      : (text ? " characters" : " items");
+            if (check.min == check.max) {
+                return "must have exactly " + check.max + unit;
+            }
+            return "must have from " + check.min + " to " + check.max + unit;
+        }
+        case CheckKind::Min:
+            return "must be at least " + check.min;
+        case CheckKind::Max:
+            return "must be at most " + check.max;
+        case CheckKind::Range:
+            return "must be from " + check.min + " to " + check.max;
+    }
+    return "is invalid";
+}
+
 void Declarations::append(Declarations other) {
     components.insert(components.end(), std::make_move_iterator(other.components.begin()),
                       std::make_move_iterator(other.components.end()));
@@ -360,6 +494,8 @@ void Declarations::append(Declarations other) {
                       std::make_move_iterator(other.json_types.end()));
     row_types.insert(row_types.end(), std::make_move_iterator(other.row_types.begin()),
                      std::make_move_iterator(other.row_types.end()));
+    config_types.insert(config_types.end(), std::make_move_iterator(other.config_types.begin()),
+                        std::make_move_iterator(other.config_types.end()));
     controllers.insert(controllers.end(), std::make_move_iterator(other.controllers.begin()),
                        std::make_move_iterator(other.controllers.end()));
     middleware.insert(middleware.end(), std::make_move_iterator(other.middleware.begin()),
@@ -402,9 +538,22 @@ Result<void> validateDeclarations(const Declarations& declarations, RenderOption
         }
     }
 
+    std::map<std::string, const ConfigStruct*> prefixes;
+    for (const ConfigStruct& settings : declarations.config_types) {
+        const auto [entry, inserted] = prefixes.emplace(settings.prefix, &settings);
+        if (!inserted) {
+            return Error{ErrorCode::DependencyError,
+                         entry->second->type + " (" + entry->second->location + ") and " +
+                             settings.type + " (" + settings.location +
+                             ") both read the settings under \"" + settings.prefix +
+                             "\". Use one struct, or give them different prefixes"};
+        }
+    }
+
     for (const Component& component : components) {
         for (const std::string& dependency : component.dependencies) {
-            if (!providers.contains(dependency) && !isFrameworkType(dependency)) {
+            if (!providers.contains(dependency) && !isFrameworkType(dependency) &&
+                !isConfigType(declarations, dependency)) {
                 return Error{ErrorCode::DependencyError,
                              component.type + " (" + component.location + ") needs " + dependency +
                                  ", but no component provides it"};
@@ -465,6 +614,12 @@ std::string renderRegistration(const Declarations& declarations,
     if (has_router || !declarations.json_types.empty()) {
         text += "#include <cppboot/web/binding.hpp>\n";
     }
+    if (!declarations.config_types.empty()) {
+        text += "#include <cppboot/config/binding.hpp>\n";
+    }
+    if (hasChecks(declarations)) {
+        text += "#include <cppboot/base/validation.hpp>\n";
+    }
     if (usesRateLimits(declarations)) {
         text += "#include <chrono>\n#include <cppboot/web/rate_limit.hpp>\n";
     }
@@ -485,6 +640,10 @@ std::string renderRegistration(const Declarations& declarations,
     text +=
         "namespace cppboot::generated {\n\n"
         "inline void registerComponents([[maybe_unused]] cppboot::di::Container& container) {\n";
+
+    for (const ConfigStruct& settings : declarations.config_types) {
+        renderConfigType(settings, declarations.config_types, text);
+    }
 
     // Modules with no ordering constraint start in registration order, so this comes first.
     if (uses_database) {
