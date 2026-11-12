@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <cppboot/config/config.hpp>
 #include <cppboot/di/container.hpp>
 #include <cppboot/web/binding.hpp>
 #include <cppboot/web/router.hpp>
+#include <filesystem>
+#include <map>
 #include <string>
 
 #include "cppboot_components.generated.hpp"
@@ -130,4 +133,59 @@ TEST_F(ControllerTest, JsonConversionWorksBothWays) {
     EXPECT_EQ(copy.address.city, "Baku");
     EXPECT_EQ(copy.nickname, "A");
     EXPECT_EQ(copy.scores, std::vector<int>{3});
+}
+
+namespace {
+
+/// A router whose container has these settings, as an application's would.
+std::shared_ptr<Router> routerWithSettings(Container& container,
+                                           std::map<std::string, std::string> settings) {
+    cppboot::config::ConfigSources sources;
+    sources.defaults = std::move(settings);
+    sources.directory = std::filesystem::temp_directory_path() / "cppboot-openapi-test-none";
+    container.registerInstance(
+        std::make_shared<cppboot::config::Config>(cppboot::config::Config::load(sources).value()));
+    cppboot::generated::registerComponents(container);
+    return container.resolve<Router>();
+}
+
+}  // namespace
+
+TEST(OpenApiRouteTest, IsOffUnlessTurnedOn) {
+    Container container;
+    const auto router = routerWithSettings(container, {});
+    EXPECT_EQ(router->handle(Request::create(Method::Get, "/openapi.json").value()).status(), 404);
+}
+
+TEST(OpenApiRouteTest, ServesTheDocumentWhenTurnedOn) {
+    Container container;
+    const auto router = routerWithSettings(container, {{"cppboot.openapi.enabled", "true"}});
+    const Response response = router->handle(Request::create(Method::Get, "/openapi.json").value());
+    ASSERT_EQ(response.status(), 200);
+    EXPECT_EQ(response.header("Content-Type"), "application/json");
+
+    const Json document = Json::parse(response.body());
+    EXPECT_EQ(document.at("openapi"), "3.0.3");
+    EXPECT_EQ(document.at("info").at("title"), "cppboot-generated-controller-tests");
+    EXPECT_EQ(Json::parse(std::string{cppboot::generated::kOpenApi}), document);
+
+    const Json& get = document.at("paths").at("/api/users/{id}").at("get");
+    EXPECT_EQ(get.at("parameters").at(0).at("in"), "path");
+    EXPECT_EQ(get.at("responses").at("200").at("content").at("application/json").at("schema").at("$ref"),
+              "#/components/schemas/api.User");
+    // A WithStatus return has a status that's only known when it runs.
+    EXPECT_TRUE(document.at("paths").at("/api/users/copies").at("post").at("responses").contains("2XX"));
+    EXPECT_TRUE(document.at("paths").at("/api/users/{id}").at("delete").at("responses").contains("204"));
+
+    const Json& user = document.at("components").at("schemas").at("api.User");
+    const std::vector<std::string> required{"id", "name", "address", "scores"};
+    EXPECT_EQ(user.at("required"), Json{required});
+    EXPECT_EQ(user.at("properties").at("nickname").at("nullable"), true);
+    EXPECT_EQ(user.at("properties").at("scores").at("items").at("type"), "integer");
+}
+
+TEST(OpenApiRouteTest, AWrongSettingStopsStartup) {
+    Container container;
+    EXPECT_THROW(routerWithSettings(container, {{"cppboot.openapi.enabled", "maybe"}}),
+                 cppboot::Exception);
 }

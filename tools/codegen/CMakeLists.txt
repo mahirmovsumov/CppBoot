@@ -37,7 +37,9 @@ endif()
 
 add_library(cppboot-codegen-lib STATIC
     src/model.cpp
+    src/openapi.cpp
     src/parser.cpp
+    src/repository.cpp
     src/scan.cpp
 )
 target_include_directories(cppboot-codegen-lib PUBLIC include)

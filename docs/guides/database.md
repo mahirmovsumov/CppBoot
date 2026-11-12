@@ -117,6 +117,123 @@ A value can be text, a number, a `bool`, `nullptr` or a `std::optional` of those
 - The struct needs a default constructor and public fields, and can't have base classes.
 - One struct can have both marks: `struct CPPBOOT_JSON CPPBOOT_ROW User { ... };`
 
+## Repositories written from their names
+
+Declare what you want as an interface, and the generator writes each function from its name, as Spring Data does:
+
+```cpp
+#include <cppboot/cppboot.hpp>
+#include <cppboot/data/repository.hpp>
+
+struct CPPBOOT_ROW Book {
+    std::int64_t id{0};
+    std::string title;
+    std::string author;
+    double price{0};
+    bool in_print{true};
+    std::optional<std::string> series;
+};
+
+class CPPBOOT_REPOSITORY("books") BookRepository : public cppboot::data::Repository<Book> {
+public:
+    virtual std::vector<Book> findByAuthorOrderByPriceDesc(const std::string& author) = 0;
+    virtual std::vector<Book> findByPriceBetweenAndInPrintTrue(double low, double high) = 0;
+    virtual std::vector<Book> findByTitleContainingIgnoreCase(const std::string& part) = 0;
+    virtual std::vector<Book> findBySeriesIsNull(cppboot::data::Page page) = 0;
+    virtual std::optional<Book> findFirstByAuthorOrderByPriceAsc(const std::string& author) = 0;
+    virtual std::int64_t countByAuthor(const std::string& author) = 0;
+    virtual bool existsByTitle(const std::string& title) = 0;
+    virtual std::int64_t deleteByAuthor(const std::string& author) = 0;
+};
+
+// A component takes the interface.
+class CPPBOOT_SERVICE Shelf {
+public:
+    explicit Shelf(BookRepository& books) : books_(books) {}
+
+private:
+    BookRepository& books_;
+};
+```
+
+`findByAuthorOrderByPriceDesc` becomes `SELECT id, title, author, price, in_print, series FROM books WHERE author = $1 ORDER BY price DESC`, with `author` as `$1`. The generator writes a class that implements the interface and registers it, so there's nothing to implement or register.
+
+A name is a start, then `By`, then conditions joined by `And` or `Or`, then maybe `OrderBy`:
+
+| Start | Returns | Does |
+|---|---|---|
+| `findBy`, `findAllBy` | `std::vector<Row>` | Every match |
+| `findBy` | `std::optional<Row>` | The match, if there is one. Finding two throws `DatabaseError` rather than picking one |
+| `findFirstBy`, `findTopBy` | `std::optional<Row>` | The first match |
+| `findFirst5By`, `findTop5By` | `std::vector<Row>` | Up to 5 matches |
+| `findAll` | `std::vector<Row>` | Every row |
+| `countBy`, `count` | `std::int64_t` | How many match |
+| `existsBy` | `bool` | Whether any match |
+| `deleteBy` | `std::int64_t` or `void` | Deletes the matches, and returns how many |
+
+| Condition | SQL | Parameters |
+|---|---|---|
+| `Title`, `TitleIs`, `TitleEquals` | `title = $1` | 1 |
+| `TitleNot`, `TitleIsNot` | `title <> $1` | 1 |
+| `PriceLessThan`, `PriceLessThanEqual`, `PriceGreaterThan`, `PriceGreaterThanEqual` | `<`, `<=`, `>`, `>=` | 1 |
+| `PriceBefore`, `PriceAfter` | `<`, `>` | 1 |
+| `PriceBetween` | `price BETWEEN $1 AND $2` | 2 |
+| `TitleLike`, `TitleNotLike` | `LIKE`, `NOT LIKE`, with your own `%` and `_` | 1 |
+| `TitleStartingWith`, `TitleEndingWith`, `TitleContaining` | `LIKE`, where `%` and `_` in the value match only themselves | 1 |
+| `SeriesIsNull`, `SeriesIsNotNull` | `IS NULL`, `IS NOT NULL` | 0 |
+| `InPrintTrue`, `InPrintFalse` | `= TRUE`, `= FALSE` | 0 |
+| Any of the text ones, then `IgnoreCase` | Compares `LOWER()` of both sides | |
+
+- **Fields** are written as in the struct, in capitals: `unit_price` is `UnitPrice`.
+- **`OrderBy`** takes fields, each with `Asc` or `Desc`, such as `OrderByAuthorAscPriceDesc`.
+- **`cppboot::data::Page`** as the last parameter returns one page: `findByAuthor(author, {20, 40})` gives rows 41 to 60.
+- **Parameters** go in the order the name uses them, and their types have to fit the fields they're compared with.
+
+### Your own SQL
+
+For anything a name can't say, such as a join or a `GROUP BY`, give the function its SQL. Its parameters are `$1`, `$2` and so on, in order:
+
+```cpp
+struct CPPBOOT_ROW AuthorCount {
+    std::string author;
+    std::int64_t books{0};
+};
+
+class CPPBOOT_REPOSITORY("books") BookReports : public cppboot::data::Repository<Book> {
+public:
+    CPPBOOT_QUERY("SELECT author, COUNT(*) AS books FROM books GROUP BY author")
+    virtual std::vector<AuthorCount> countByEachAuthor() = 0;
+
+    CPPBOOT_QUERY("SELECT MAX(price) FROM books WHERE author = $1")
+    virtual std::optional<double> highestPrice(const std::string& author) = 0;
+
+    CPPBOOT_QUERY("UPDATE books SET price = price * $1 WHERE author = $2")
+    virtual std::int64_t changePrices(double factor, const std::string& author) = 0;
+};
+```
+
+| Returns | Runs it as |
+|---|---|
+| `std::vector<Row>` | Every row, as a `CPPBOOT_ROW` struct |
+| `std::optional<Row>` | The first row |
+| `std::optional<double>`, or another value | The first column of the first row |
+| `std::int64_t`, `bool` | For a `SELECT`, the first column of the first row, such as a `COUNT`. Otherwise, the number of rows changed |
+| `void` | A statement that changes rows |
+
+### Mistakes fail the build
+
+The generator checks each function against the row struct, and the build stops with the function's name and what's wrong:
+
+```text
+books.hpp:14: BookRepository::findByAuthr refers to Authr, which isn't a field of Book. Its fields are id, title, author, price, in_print, series
+books.hpp:15: BookRepository::findByTitle compares title, which is text, with parameter 'id', which is a number
+books.hpp:16: BookRepository::countByAuthor counts rows, so it has to return std::int64_t
+```
+
+- **A name it can't read is an error**, rather than a guess. Use `CPPBOOT_QUERY` for those.
+- **`deleteBy` needs a condition.** A name that would delete every row is too easy to write by mistake.
+- **A repository has no fields**, because the generated class holds its state. Functions that aren't pure virtual are left alone, so an interface can have helpers that call the others.
+
 ## Transactions
 
 `transaction` runs several statements as one unit. It commits if your function returns, and rolls back if it throws:
@@ -208,7 +325,8 @@ auto applied = cppboot::data::runMigrations(*database, "db/migrations");
 
 ## Not supported yet
 
-- A full ORM, or generating SQL from your structs. You write the SQL
+- A full ORM, or writing `INSERT` and `UPDATE` from your structs. Repositories write queries from their names, and you write the rest
+- `In` and `NotIn` conditions in repository names, because a parameter can't be a list yet
 - MySQL, MariaDB and SQL Server. To add a database, implement `cppboot::data::Connection`
 - Date, time and binary column types, other than reading them as text
 - Rolling back migrations

@@ -221,6 +221,7 @@ if (!enabled) {
 | `cppboot.security.jwt.*` | | See the [security guide](security.md#settings) |
 | `cppboot.rate_limit.*` | | See [rate limits](security.md#rate-limit-settings) |
 | `cppboot.actuator.metrics_token` | None | See the [health and metrics guide](actuator.md#who-can-see-metrics) |
+| `cppboot.openapi.enabled` | `false` | Serve the API's description at `/openapi.json`. See [OpenAPI](web.md#openapi) |
 
 ## Sensitive values
 

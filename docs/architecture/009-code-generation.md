@@ -53,6 +53,10 @@ Each check stops at the first failure, as reading a field of the wrong type alre
 
 **Unknown settings are errors**, for the same reason the YAML reader is strict: a setting that's silently ignored is a mistake nobody sees. Each struct knows the prefixes of the others, so that `shop` doesn't report the settings of `shop.mail`.
 
+**Repositories are interfaces that the generator implements.** C++ can't add a function body to a class from outside it, and a declared function defined only in the generated header would be undefined in every other file that calls it. An abstract class avoids both: other code calls the interface, and the generated header, which only `main.cpp` includes, holds the class that implements it and registers it. The cost is a virtual call per query, which is nothing next to the query.
+
+**A query comes from the function's name, read at build time.** The name is split into words at its capitals, which is why a field such as `android_version` doesn't break at the `And` in it. Field names come from the `CPPBOOT_ROW` struct, so this check runs when every header has been read, and a name that doesn't fit is an error rather than a guess. Text matches such as `Containing` escape `%` and `_` in the value, so a search for `50%` doesn't match everything.
+
 ## Results
 
 | Finding | Detail |

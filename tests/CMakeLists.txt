@@ -202,6 +202,18 @@ if(CPPBOOT_BUILD_CODEGEN)
     cppboot_apply_compiler_options(cppboot-generated-settings-tests)
     add_test(NAME cppboot-generated-settings-tests COMMAND cppboot-generated-settings-tests)
 
+    add_executable(cppboot-generated-queries-tests codegen/queries_test.cpp)
+    target_link_libraries(cppboot-generated-queries-tests PRIVATE
+        cppboot::boot
+        cppboot::data
+        GTest::gtest_main
+    )
+    cppboot_generate_components(cppboot-generated-queries-tests
+        HEADERS codegen/sample_queries.hpp
+    )
+    cppboot_apply_compiler_options(cppboot-generated-queries-tests)
+    add_test(NAME cppboot-generated-queries-tests COMMAND cppboot-generated-queries-tests)
+
     # Installs the framework, then creates, builds and runs a project using the installed CLI.
     add_test(NAME cppboot-cli-end-to-end
         COMMAND ${CMAKE_COMMAND}

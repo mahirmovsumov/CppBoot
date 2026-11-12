@@ -17,9 +17,14 @@ function(cppboot_generate_components target)
         message(FATAL_ERROR "This CppBoot installation doesn't include cppboot-codegen.")
     endif()
 
-    set(tool_options "")
+    # The OpenAPI document is named after the target, with the project's version if it has one.
+    set(api_version "${PROJECT_VERSION}")
+    if(NOT api_version)
+        set(api_version "0.0.0")
+    endif()
+    set(tool_options --title ${target} --version ${api_version})
     if(ARG_ACTUATOR)
-        set(tool_options --actuator)
+        list(APPEND tool_options --actuator)
         target_link_libraries(${target} PRIVATE cppboot::actuator)
     endif()
 
@@ -85,6 +90,7 @@ function(cppboot_generate_components target)
 
     add_custom_command(
         OUTPUT ${output}
+        BYPRODUCTS ${output_dir}/openapi.json
         COMMAND cppboot::codegen --merge --output ${output} ${tool_options} ${scans}
         DEPENDS cppboot::codegen ${scans}
         COMMENT "Generating CppBoot components for ${target}"

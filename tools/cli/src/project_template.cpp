@@ -47,7 +47,7 @@ constexpr std::string_view kSecuritySettings = R"(
 constexpr std::array<ProjectFile, 17> kProjectFiles = {{
     {"CMakeLists.txt", R"(cmake_minimum_required(VERSION 3.25)
 
-project(@NAME@ LANGUAGES CXX)
+project(@NAME@ VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

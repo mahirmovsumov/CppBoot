@@ -87,12 +87,29 @@ std::string routeShape(std::string_view path) {
 std::string quoted(std::string_view text) {
     std::string result = "\"";
     for (const char c : text) {
-        if (c == '"' || c == '\\') {
-            result += '\\';
+        if (c == '\n') {
+            result += "\\n";
+        } else if (c == '\r') {
+            result += "\\r";
+        } else if (c == '\t') {
+            result += "\\t";
+        } else {
+            if (c == '"' || c == '\\') {
+                result += '\\';
+            }
+            result += c;
         }
-        result += c;
     }
     return result + '"';
+}
+
+/// Text as a raw string literal, or an ordinary one if the text happens to contain the delimiter.
+std::string rawLiteral(const std::string& text) {
+    constexpr std::string_view kDelimiter = "cppboot_text";
+    if (text.find(")" + std::string{kDelimiter} + "\"") != std::string::npos) {
+        return quoted(text);
+    }
+    return "R\"" + std::string{kDelimiter} + "(" + text + ")" + std::string{kDelimiter} + "\"";
 }
 
 bool hasChecks(const Declarations& declarations) {
@@ -162,8 +179,95 @@ void renderConfigType(const ConfigStruct& settings, const std::vector<ConfigStru
     text += "    }\n";
 }
 
+/// app::ProductRepository becomes app_ProductRepositoryImplementation, a name for its generated
+/// class. The suffix keeps it apart from the interface, even one with no namespace.
+std::string implementationName(const RepositoryInterface& repository) {
+    std::string name;
+    for (const char c : repository.type) {
+        name += c == ':' ? '_' : c;
+    }
+    std::string collapsed;
+    for (const char c : name) {
+        if (!(c == '_' && !collapsed.empty() && collapsed.back() == '_')) {
+            collapsed += c;
+        }
+    }
+    return collapsed + "Implementation";
+}
+
+/// The code that runs a query and returns what the function returns.
+std::string renderQueryCall(const RepositoryFunction& function, const RepositoryQuery& query) {
+    std::string arguments = quoted(query.sql);
+    for (const std::string& argument : query.arguments) {
+        arguments += ", " + argument;
+    }
+
+    switch (query.run) {
+        case QueryRun::Rows:
+            return "        return database_.queryAs<" + function.element_type + ">(" + arguments +
+                   ");\n";
+        case QueryRun::FirstRow:
+            return "        return database_.queryOne<" + function.element_type + ">(" + arguments +
+                   ");\n";
+        case QueryRun::OneRow:
+            return "        auto rows = database_.queryAs<" + function.element_type + ">(" +
+                   arguments + ");\n"
+                   "        if (rows.size() > 1) {\n"
+                   "            throw cppboot::data::DatabaseError(cppboot::data::DatabaseError::Kind::Query, " +
+                   quoted(function.name + " found more than one row, so it can't return one. Return "
+                                          "a std::vector, or start its name with findFirstBy") +
+                   ");\n        }\n"
+                   "        if (rows.empty()) {\n            return std::nullopt;\n        }\n"
+                   "        return std::move(rows.front());\n";
+        case QueryRun::Value:
+            if (function.returns == RepositoryReturn::Optional) {
+                return "        return database_.queryValue<" + function.element_type + ">(" +
+                       arguments + ");\n";
+            }
+            return "        return database_.queryValue<" +
+                   std::string{function.returns == RepositoryReturn::Bool ? "bool" : "std::int64_t"} +
+                   ">(" + arguments + ").value_or(" +
+                   (function.returns == RepositoryReturn::Bool ? "false" : "0") + ");\n";
+        case QueryRun::Exists:
+            return "        return database_.queryValue<std::int64_t>(" + arguments +
+                   ").has_value();\n";
+        case QueryRun::Change:
+            if (function.returns == RepositoryReturn::Void) {
+                return "        database_.execute(" + arguments + ");\n";
+            }
+            return "        return database_.execute(" + arguments + ");\n";
+    }
+    return "";
+}
+
+/// A class that implements a repository's functions with the queries their names describe.
+void renderRepository(const RepositoryInterface& repository, const Declarations& declarations,
+                      std::string& text) {
+    const std::string name = implementationName(repository);
+    // Qualified from the global namespace, so that the name can't mean anything in this one.
+    text += "class " + name + " final : public ::" + repository.type + " {\npublic:\n";
+    text += "    explicit " + name +
+            "(cppboot::data::Database& database) : database_(database) {}\n";
+    for (const RepositoryFunction& function : repository.functions) {
+        // Checked by validateDeclarations, so this always has a value here.
+        const auto query = repositoryQuery(repository, function, declarations);
+        if (!query) {
+            continue;
+        }
+        text += "\n    " + function.return_type + " " + function.name + "(";
+        for (std::size_t i = 0; i < function.parameters.size(); ++i) {
+            text += i == 0 ? "" : ", ";
+            text += function.parameters[i].type + " " + function.parameters[i].name;
+        }
+        text += std::string{")"} + (function.is_const ? " const" : "") + " override {\n";
+        text += renderQueryCall(function, query.value());
+        text += "    }\n";
+    }
+    text += "\nprivate:\n    cppboot::data::Database& database_;\n};\n\n";
+}
+
 bool usesDatabase(const Declarations& declarations) {
-    if (!declarations.row_types.empty()) {
+    if (!declarations.row_types.empty() || !declarations.repositories.empty()) {
         return true;
     }
     return std::any_of(declarations.components.begin(), declarations.components.end(),
@@ -412,7 +516,7 @@ void renderActuator(bool uses_database, bool uses_security, std::string& text) {
 void renderRouter(const Declarations& declarations, bool uses_database, bool uses_security,
                   bool actuator, std::string& text) {
     text += "    container.registerSingleton<cppboot::web::Router>([";
-    text += actuator ? "&container" : "";
+    text += actuator || !declarations.controllers.empty() ? "&container" : "";
     text += "](cppboot::di::Resolver& resolver) {\n";
     text += "        auto router = std::make_shared<cppboot::web::Router>();\n";
     if (uses_security) {
@@ -429,6 +533,16 @@ void renderRouter(const Declarations& declarations, bool uses_database, bool use
         renderActuator(uses_database, uses_security, text);
     }
     renderMiddleware(declarations.middleware, text);
+    if (!declarations.controllers.empty()) {
+        // Off unless asked for, because it lists every route to whoever can reach the server. A
+        // container with no settings, as in some tests, leaves it off.
+        text += "        if (container.contains(typeid(cppboot::config::Config)) &&\n"
+                "            resolver.resolve<cppboot::config::Config>()->getBool("
+                "\"cppboot.openapi.enabled\", false).value()) {\n";
+        text += "            router->get(\"/openapi.json\", [](const cppboot::web::Request&) {\n";
+        text += "                return cppboot::web::Response::json(std::string{kOpenApi});\n";
+        text += "            });\n        }\n";
+    }
     for (const Controller& controller : declarations.controllers) {
         text += "        {\n";
         text += "            auto controller = resolver.resolve<" + controller.type + ">();\n";
@@ -444,6 +558,10 @@ void renderRouter(const Declarations& declarations, bool uses_database, bool use
 }
 
 }  // namespace
+
+bool routesNeedTokens(const Declarations& declarations) {
+    return usesSecurity(declarations);
+}
 
 std::string checkExpression(const Check& check, std::string_view value) {
     const std::string argument{value};
@@ -496,6 +614,8 @@ void Declarations::append(Declarations other) {
                      std::make_move_iterator(other.row_types.end()));
     config_types.insert(config_types.end(), std::make_move_iterator(other.config_types.begin()),
                         std::make_move_iterator(other.config_types.end()));
+    repositories.insert(repositories.end(), std::make_move_iterator(other.repositories.begin()),
+                        std::make_move_iterator(other.repositories.end()));
     controllers.insert(controllers.end(), std::make_move_iterator(other.controllers.begin()),
                        std::make_move_iterator(other.controllers.end()));
     middleware.insert(middleware.end(), std::make_move_iterator(other.middleware.begin()),
@@ -535,6 +655,23 @@ Result<void> validateDeclarations(const Declarations& declarations, RenderOption
             if (auto added = addProvider(providers, interface_type, component); !added) {
                 return added;
             }
+        }
+    }
+
+    // A repository's interface is provided by the class the generator writes for it.
+    std::vector<Component> repository_components;
+    for (const RepositoryInterface& repository : declarations.repositories) {
+        repository_components.push_back(
+            Component{repository.type, repository.location, {}, {std::string{kDatabaseType}}});
+        for (const RepositoryFunction& function : repository.functions) {
+            if (auto query = repositoryQuery(repository, function, declarations); !query) {
+                return query.error();
+            }
+        }
+    }
+    for (const Component& repository : repository_components) {
+        if (auto added = addProvider(providers, repository.type, repository); !added) {
+            return added;
         }
     }
 
@@ -626,6 +763,14 @@ std::string renderRegistration(const Declarations& declarations,
     if (has_router) {
         text += "#include <cppboot/web/router.hpp>\n#include <cppboot/web/server_module.hpp>\n";
     }
+    if (!declarations.controllers.empty()) {
+        text += "#include <cppboot/config/config.hpp>\n#include <string>\n#include <string_view>\n"
+                "#include <typeinfo>\n";
+    }
+    if (!declarations.repositories.empty()) {
+        text += "#include <cppboot/data/repository.hpp>\n#include <optional>\n#include <string>\n"
+                "#include <vector>\n";
+    }
     text += "#include <memory>\n#include <type_traits>\n#include <utility>\n\n";
 
     for (const std::string& header : headers) {
@@ -637,9 +782,23 @@ std::string renderRegistration(const Declarations& declarations,
         renderJsonType(json_type, text);
     }
 
-    text +=
-        "namespace cppboot::generated {\n\n"
-        "inline void registerComponents([[maybe_unused]] cppboot::di::Container& container) {\n";
+    if (!declarations.repositories.empty()) {
+        text += "namespace cppboot::generated::repositories {\n\n";
+        for (const RepositoryInterface& repository : declarations.repositories) {
+            renderRepository(repository, declarations, text);
+        }
+        text += "}  // namespace cppboot::generated::repositories\n\n";
+    }
+
+    text += "namespace cppboot::generated {\n\n";
+    if (!declarations.controllers.empty()) {
+        text += "/// The OpenAPI document for the routes, which /openapi.json serves when "
+                "cppboot.openapi.enabled is\n/// true. The build also writes it to openapi.json "
+                "next to this file.\n";
+        text += "inline constexpr std::string_view kOpenApi = " +
+                rawLiteral(renderOpenApi(declarations, options)) + ";\n\n";
+    }
+    text += "inline void registerComponents([[maybe_unused]] cppboot::di::Container& container) {\n";
 
     for (const ConfigStruct& settings : declarations.config_types) {
         renderConfigType(settings, declarations.config_types, text);
@@ -677,6 +836,14 @@ std::string renderRegistration(const Declarations& declarations,
                                                      : "    container.bind<";
             text += interface_type + ", " + component.type + ">();\n";
         }
+    }
+
+    for (const RepositoryInterface& repository : declarations.repositories) {
+        const std::string implementation =
+            "cppboot::generated::repositories::" + implementationName(repository);
+        text += "    container.registerSingleton<" + implementation +
+                ">(cppboot::di::Deps<cppboot::data::Database>{});\n";
+        text += "    container.bind<" + repository.type + ", " + implementation + ">();\n";
     }
 
     if (has_router) {

@@ -37,6 +37,8 @@ constexpr std::string_view kLengthPrefix = "cppboot:length:";
 constexpr std::string_view kMinPrefix = "cppboot:min:";
 constexpr std::string_view kMaxPrefix = "cppboot:max:";
 constexpr std::string_view kRangePrefix = "cppboot:range:";
+constexpr std::string_view kRepositoryPrefix = "cppboot:repository:";
+constexpr std::string_view kQueryPrefix = "cppboot:query:";
 constexpr std::string_view kAnyPrefix = "cppboot:";
 
 /// Nested settings structs deeper than this are almost certainly a mistake.
@@ -409,6 +411,62 @@ std::optional<ValueShape> shapeOf(CXType type) {
     return std::nullopt;
 }
 
+/// What a type holds, for comparing it with a column. Takes the type without a reference.
+ValueKind valueKind(CXType type) {
+    if (type.kind == CXType_Bool) {
+        return ValueKind::Bool;
+    }
+    if (isNumber(type)) {
+        return ValueKind::Number;
+    }
+    if (isAnyStandardType(type, {"basic_string", "basic_string_view"})) {
+        return ValueKind::Text;
+    }
+    if (withoutConst(qualifiedName(type)) == "cppboot::data::Page") {
+        return ValueKind::Page;
+    }
+    return ValueKind::Other;
+}
+
+bool isInStandardLibrary(CXCursor declaration);
+
+/// The JSON type of a C++ type, written as Schema describes, for the OpenAPI document. Types it
+/// can't describe are "any", which keeps the document valid.
+std::string schemaOf(CXType type, int depth = 0) {
+    type = withoutOptional(clang_getCanonicalType(type));
+    if (depth > 16) {
+        return "any";
+    }
+    if (type.kind == CXType_Bool) {
+        return "boolean";
+    }
+    if (isWholeNumber(type)) {
+        return clang_Type_getSizeOf(type) > 4 ? "integer/int64" : "integer/int32";
+    }
+    if (type.kind == CXType_Float) {
+        return "number/float";
+    }
+    if (type.kind == CXType_Double) {
+        return "number/double";
+    }
+    if (isAnyStandardType(type, {"basic_string", "basic_string_view"})) {
+        return "string";
+    }
+    if (isAnyStandardType(type, {"vector", "list", "deque", "array", "set", "unordered_set"}) &&
+        clang_Type_getNumTemplateArguments(type) >= 1) {
+        return "array:" + schemaOf(clang_Type_getTemplateArgumentAsType(type, 0), depth + 1);
+    }
+    if (isAnyStandardType(type, {"map", "unordered_map"}) &&
+        clang_Type_getNumTemplateArguments(type) >= 2) {
+        return "map:" + schemaOf(clang_Type_getTemplateArgumentAsType(type, 1), depth + 1);
+    }
+    if (type.kind == CXType_Record && !isInStandardLibrary(clang_getTypeDeclaration(type))) {
+        const std::string name = withoutConst(qualifiedName(type));
+        return name == "cppboot::Json" ? "any" : "ref:" + name;
+    }
+    return "any";
+}
+
 bool hasValidationMark(const std::vector<std::string>& marks) {
     return hasAnnotation(marks, kNotEmptyAnnotation) || findWithPrefix(marks, kLengthPrefix) ||
            findWithPrefix(marks, kMinPrefix) || findWithPrefix(marks, kMaxPrefix) ||
@@ -697,7 +755,9 @@ Result<MappedStruct> readMappedStruct(CXCursor cursor, std::string_view macro, b
                     error = checks.error();
                 } else {
                     mapped.fields.push_back(StructField{spelling(child), isOptionalType(type),
-                                                        std::move(checks).value()});
+                                                        std::move(checks).value(),
+                                                        valueKind(withoutOptional(type)),
+                                                        schemaOf(type)});
                 }
             }
         }
@@ -871,6 +931,141 @@ Result<ConfigStruct> readConfigStruct(CXCursor cursor, std::string_view prefix) 
     return settings;
 }
 
+/// A table name as SQL can use it without quotes: lower-case letters, digits and _.
+bool isTableName(std::string_view name) {
+    return !name.empty() && name.front() >= 'a' && name.front() <= 'z' &&
+           std::all_of(name.begin(), name.end(), [](char c) {
+               return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+           });
+}
+
+/// The T of a public cppboot::data::Repository<T> base, if the class has one.
+std::optional<std::string> repositoryRowType(CXCursor cursor) {
+    std::optional<std::string> row;
+    visitChildren(cursor, [&](CXCursor child) {
+        if (clang_getCursorKind(child) != CXCursor_CXXBaseSpecifier ||
+            clang_getCXXAccessSpecifier(child) != CX_CXXPublic) {
+            return CXChildVisit_Continue;
+        }
+        const CXType base = clang_getCanonicalType(clang_getCursorType(child));
+        const CXCursor declaration = clang_getTypeDeclaration(base);
+        const CXCursor parent = clang_getCursorSemanticParent(declaration);
+        if (spelling(declaration) == "Repository" &&
+            clang_Type_getNumTemplateArguments(base) == 1 && spelling(parent) == "data" &&
+            spelling(clang_getCursorSemanticParent(parent)) == "cppboot") {
+            row = withoutConst(qualifiedName(clang_Type_getTemplateArgumentAsType(base, 0)));
+            return CXChildVisit_Break;
+        }
+        return CXChildVisit_Continue;
+    });
+    return row;
+}
+
+Result<RepositoryFunction> readRepositoryFunction(CXCursor method, const std::string& owner) {
+    RepositoryFunction function;
+    function.name = spelling(method);
+    function.location = locationOf(method);
+    function.is_const = clang_CXXMethod_isConst(method) != 0;
+    function.query = findWithPrefix(annotationsOf(method), kQueryPrefix).value_or("");
+    const std::string what = owner + "::" + function.name;
+
+    if (clang_getCXXAccessSpecifier(method) != CX_CXXPublic) {
+        return errorAt(method, what + " must be public, so that components can call it");
+    }
+    if (clang_getCursorExceptionSpecificationType(method) == CXCursor_ExceptionSpecificationKind_BasicNoexcept ||
+        clang_getCursorExceptionSpecificationType(method) == CXCursor_ExceptionSpecificationKind_ComputedNoexcept) {
+        return errorAt(method, what + " can't be noexcept, because a query can fail");
+    }
+    if (findWithPrefix(annotationsOf(method), kQueryPrefix) && function.query.empty()) {
+        return errorAt(method, "CPPBOOT_QUERY on " + what + " needs SQL");
+    }
+
+    const CXType result = clang_getCanonicalType(clang_getCursorResultType(method));
+    function.return_type = qualifiedName(result);
+    if (result.kind == CXType_Void) {
+        function.returns = RepositoryReturn::Void;
+    } else if (result.kind == CXType_Bool) {
+        function.returns = RepositoryReturn::Bool;
+    } else if (isWholeNumber(result)) {
+        function.returns = RepositoryReturn::Integer;
+    } else if ((isStandardType(result, "vector") || isOptionalType(result)) &&
+               clang_Type_getNumTemplateArguments(result) >= 1) {
+        const CXType element = clang_getCanonicalType(clang_Type_getTemplateArgumentAsType(result, 0));
+        function.returns =
+            isOptionalType(result) ? RepositoryReturn::Optional : RepositoryReturn::List;
+        function.element_type = withoutConst(qualifiedName(element));
+        function.element_kind = valueKind(element);
+    }
+
+    const int count = clang_Cursor_getNumArguments(method);
+    for (int i = 0; i < count; ++i) {
+        const CXCursor parameter = clang_Cursor_getArgument(method, static_cast<unsigned>(i));
+        const CXType type = clang_getCanonicalType(clang_getCursorType(parameter));
+        const CXType value = withoutReference(type);
+        if (type.kind == CXType_LValueReference && clang_isConstQualifiedType(value) == 0) {
+            return errorAt(parameter, what + " can't take a non-const reference");
+        }
+        std::string name = spelling(parameter);
+        if (name.empty()) {
+            name = "parameter_" + std::to_string(i);
+        }
+        function.parameters.push_back(
+            RepositoryParameter{std::move(name), qualifiedName(type), valueKind(value)});
+    }
+    return function;
+}
+
+Result<RepositoryInterface> readRepository(CXCursor cursor, std::string_view table) {
+    RepositoryInterface repository;
+    repository.type = qualifiedName(clang_getCursorType(cursor));
+    repository.location = locationOf(cursor);
+    repository.table = std::string{table};
+
+    if (repository.type.find("(anonymous") != std::string::npos) {
+        return errorAt(cursor, repository.type + " can't be a repository because generated code "
+                                                 "can't name it");
+    }
+    if (!isTableName(table)) {
+        return errorAt(cursor, "The table of " + repository.type + " must be lower-case letters, "
+                                   "digits and _, such as \"order_items\"");
+    }
+    auto row = repositoryRowType(cursor);
+    if (!row) {
+        return errorAt(cursor, repository.type + " must derive publicly from "
+                                                 "cppboot::data::Repository<Row>, where Row is the "
+                                                 "CPPBOOT_ROW struct of its table");
+    }
+    repository.row_type = *std::move(row);
+
+    std::optional<Error> error;
+    visitChildren(cursor, [&](CXCursor child) {
+        const CXCursorKind kind = clang_getCursorKind(child);
+        if (kind == CXCursor_FieldDecl) {
+            error = errorAt(child, repository.type + " can't have fields, because the generator "
+                                                     "writes the class that holds its state");
+        } else if (kind == CXCursor_CXXMethod && clang_CXXMethod_isPureVirtual(child) != 0) {
+            auto function = readRepositoryFunction(child, repository.type);
+            if (!function) {
+                error = function.error();
+            } else {
+                repository.functions.push_back(std::move(function).value());
+            }
+        } else if (kind == CXCursor_CXXMethod && findWithPrefix(annotationsOf(child), kQueryPrefix)) {
+            error = errorAt(child, "CPPBOOT_QUERY is on " + spelling(child) + ", which isn't pure "
+                                   "virtual, so nothing would use it. Write it as ... = 0;");
+        }
+        return error ? CXChildVisit_Break : CXChildVisit_Continue;
+    });
+    if (error) {
+        return *std::move(error);
+    }
+    if (repository.functions.empty()) {
+        return errorAt(cursor, repository.type + " has no pure virtual functions for the "
+                                                 "generator to write");
+    }
+    return repository;
+}
+
 Result<std::vector<RouteParameter>> readRouteParameters(CXCursor method, const std::string& path) {
     const std::vector<std::string> path_names = pathParameterNames(path);
     std::vector<std::string> unbound = path_names;
@@ -935,14 +1130,15 @@ Result<std::vector<RouteParameter>> readRouteParameters(CXCursor method, const s
             }
             parameters.push_back(
                 RouteParameter{is_path ? ParameterSource::Path : ParameterSource::Query, name,
-                               type_name, std::move(checks).value()});
+                               type_name, std::move(checks).value(), schemaOf(type)});
         } else {
             if (has_body) {
                 return errorAt(parameter, "A route can only read one parameter from the request "
                                           "body, but '" + name + "' is a second one");
             }
             has_body = true;
-            parameters.push_back(RouteParameter{ParameterSource::Body, name, type_name});
+            parameters.push_back(
+                RouteParameter{ParameterSource::Body, name, type_name, {}, schemaOf(type)});
         }
     }
 
@@ -988,6 +1184,16 @@ Result<Route> readRoute(CXCursor method, std::string_view annotation, std::strin
         route.return_kind = ReturnKind::Response;
     } else {
         route.return_kind = ReturnKind::Value;
+        // WithStatus<T> sends T, with a status that's only known when it runs.
+        const CXType value = withoutReference(result);
+        const CXCursor declaration = clang_getTypeDeclaration(value);
+        if (spelling(declaration) == "WithStatus" && clang_Type_getNumTemplateArguments(value) == 1 &&
+            spelling(clang_getCursorSemanticParent(declaration)) == "web") {
+            route.status_varies = true;
+            route.response_schema = schemaOf(clang_Type_getTemplateArgumentAsType(value, 0));
+        } else {
+            route.response_schema = schemaOf(value);
+        }
     }
     return route;
 }
@@ -1214,8 +1420,22 @@ void readClass(CXCursor cursor, Walk& walk) {
     const auto controller_path = findWithPrefix(annotations, kControllerPrefix);
     const auto middleware_order = findWithPrefix(annotations, kMiddlewarePrefix);
     const bool is_service = hasAnnotation(annotations, kServiceAnnotation);
+    const bool is_component = is_service || controller_path || middleware_order;
 
-    if (is_service || controller_path || middleware_order) {
+    // Checked first, because reading it as a component would report something less helpful.
+    if (is_component && findWithPrefix(annotations, kRepositoryPrefix)) {
+        walk.error = errorAt(cursor, spelling(cursor) + " can't be both CPPBOOT_REPOSITORY and "
+                                                        "another kind of component. The generator "
+                                                        "writes its component");
+        return;
+    }
+    if (is_component && findWithPrefix(annotations, kConfigPrefix)) {
+        walk.error = errorAt(cursor, spelling(cursor) + " can't be both CPPBOOT_CONFIG and "
+                                                        "another kind of component");
+        return;
+    }
+
+    if (is_component) {
         auto component = readComponent(cursor);
         if (!component) {
             walk.error = component.error();
@@ -1250,12 +1470,16 @@ void readClass(CXCursor cursor, Walk& walk) {
         return;
     }
 
-    if (const auto config_prefix = findWithPrefix(annotations, kConfigPrefix)) {
-        if (is_service || controller_path || middleware_order) {
-            walk.error = errorAt(cursor, spelling(cursor) + " can't be both CPPBOOT_CONFIG and "
-                                                            "another kind of component");
+    if (const auto table = findWithPrefix(annotations, kRepositoryPrefix)) {
+        auto repository = readRepository(cursor, *table);
+        if (!repository) {
+            walk.error = repository.error();
             return;
         }
+        walk.declarations.repositories.push_back(std::move(repository).value());
+    }
+
+    if (const auto config_prefix = findWithPrefix(annotations, kConfigPrefix)) {
         auto settings = readConfigStruct(cursor, *config_prefix);
         if (!settings) {
             walk.error = settings.error();

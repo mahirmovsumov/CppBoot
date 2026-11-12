@@ -35,6 +35,8 @@ constexpr const char* kPreamble = R"(
 #define MIN(min) [[clang::annotate("cppboot:min:" #min)]]
 #define MAX(max) [[clang::annotate("cppboot:max:" #max)]]
 #define RANGE(min, max) [[clang::annotate("cppboot:range:" #min ":" #max)]]
+#define REPOSITORY(table) [[clang::annotate("cppboot:repository:" table)]]
+#define QUERY(sql) [[clang::annotate("cppboot:query:" sql)]]
 #include <atomic>
 #include <map>
 #include <mutex>
@@ -889,4 +891,86 @@ TEST_F(ParserTest, AComponentCanDependOnASettingsStruct) {
     ASSERT_TRUE(result) << result.error().message();
     EXPECT_EQ(result.value().components.at(0).dependencies,
               std::vector<std::string>{"MailSettings"});
+}
+
+TEST_F(ParserTest, ReadsARepository) {
+    const auto result = parse(R"(
+        #include <cstdint>
+        namespace cppboot::data {
+        template <typename T> class Repository { public: virtual ~Repository() = default; };
+        struct Page { std::int64_t limit; std::int64_t offset; };
+        }
+        namespace app {
+        struct ROW Book { long id; std::string title; double price; bool in_print; };
+        class REPOSITORY("books") Books : public cppboot::data::Repository<Book> {
+        public:
+            virtual std::vector<Book> findByTitle(const std::string& title) = 0;
+            virtual std::optional<Book> findFirstByOrderByPriceDesc() const = 0;
+            virtual long count() = 0;
+            virtual std::vector<Book> findByInPrintTrue(cppboot::data::Page) = 0;
+            QUERY("SELECT * FROM books WHERE price < $1")
+            virtual std::vector<Book> cheap(double most) = 0;
+            int helper() { return 1; }
+        };
+        }
+    )");
+    ASSERT_TRUE(result) << result.error().message();
+    ASSERT_EQ(result.value().repositories.size(), 1U);
+    const RepositoryInterface& books = result.value().repositories[0];
+    EXPECT_EQ(books.type, "app::Books");
+    EXPECT_EQ(books.table, "books");
+    EXPECT_EQ(books.row_type, "app::Book");
+    ASSERT_EQ(books.functions.size(), 5U);
+
+    EXPECT_EQ(books.functions[0].returns, RepositoryReturn::List);
+    EXPECT_EQ(books.functions[0].element_type, "app::Book");
+    EXPECT_EQ(books.functions[0].parameters.at(0).kind, ValueKind::Text);
+    EXPECT_EQ(books.functions[1].returns, RepositoryReturn::Optional);
+    EXPECT_TRUE(books.functions[1].is_const);
+    EXPECT_EQ(books.functions[2].returns, RepositoryReturn::Integer);
+    // An unnamed parameter gets a name, so that the override can use it.
+    EXPECT_EQ(books.functions[3].parameters.at(0).kind, ValueKind::Page);
+    EXPECT_EQ(books.functions[3].parameters.at(0).name, "parameter_0");
+    EXPECT_EQ(books.functions[4].query, "SELECT * FROM books WHERE price < $1");
+
+    // The row's fields know what they hold, for checking the parameters compared with them.
+    const std::vector<StructField>& fields = result.value().row_types.at(0).fields;
+    EXPECT_EQ(fields[1].kind, ValueKind::Text);
+    EXPECT_EQ(fields[2].kind, ValueKind::Number);
+    EXPECT_EQ(fields[3].kind, ValueKind::Bool);
+    // It isn't a component itself, because it's abstract.
+    EXPECT_TRUE(result.value().components.empty());
+}
+
+TEST_F(ParserTest, RejectsRepositoriesItCannotWrite) {
+    const std::string base = R"(
+        namespace cppboot::data {
+        template <typename T> class Repository { public: virtual ~Repository() = default; };
+        }
+        struct ROW Book { long id; };
+    )";
+    expectError(base + R"(class REPOSITORY("books") Books {
+                              public: virtual long count() = 0; };)",
+                "must derive publicly from cppboot::data::Repository<Row>");
+    expectError(base + R"(class REPOSITORY("Books") Books : public cppboot::data::Repository<Book> {
+                              public: virtual long count() = 0; };)",
+                "must be lower-case letters, digits and _");
+    expectError(base + R"(class REPOSITORY("books") Books : public cppboot::data::Repository<Book> {
+                              public: virtual long count() = 0; int cache; };)",
+                "can't have fields");
+    expectError(base + R"(class REPOSITORY("books") Books : public cppboot::data::Repository<Book> {
+                              virtual long count() = 0; };)",
+                "must be public");
+    expectError(base + R"(class REPOSITORY("books") Books : public cppboot::data::Repository<Book> {
+                              public: virtual long count() noexcept = 0; };)",
+                "can't be noexcept");
+    expectError(base + R"(class REPOSITORY("books") Books : public cppboot::data::Repository<Book> {
+                              public: QUERY("SELECT 1") long count() { return 1; } };)",
+                "isn't pure virtual, so nothing would use it");
+    expectError(base + R"(class REPOSITORY("books") Books : public cppboot::data::Repository<Book> {
+                              public: int helper() { return 1; } };)",
+                "has no pure virtual functions");
+    expectError(base + R"(class REPOSITORY("books") SERVICE Books : public cppboot::data::Repository<Book> {
+                              public: virtual long count() = 0; };)",
+                "can't be both CPPBOOT_REPOSITORY and another kind of component");
 }

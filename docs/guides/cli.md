@@ -178,6 +178,10 @@ cppboot dev --cppboot.logging.level=debug
 
 Tests in `tests/` aren't watched, since they don't change the application. Run `cppboot test` for them.
 
+### `cppboot openapi`
+
+Builds the project and writes the [OpenAPI document](web.md#openapi) of its routes to `openapi.json` in the project folder, replacing any that's there. It fails in a project with no controllers, since there's no API to describe.
+
 ### `cppboot package`
 
 Builds a release into `build-release/`, then puts it in `dist/` with everything it needs to run on another machine. On Linux, that includes a systemd service and a script that installs it. See [Deployment](deployment.md).

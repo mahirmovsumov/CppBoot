@@ -48,6 +48,19 @@
 /// replaces it.
 #define CPPBOOT_RATE_LIMIT(limit) CPPBOOT_ANNOTATE("cppboot:rate_limit:" limit)
 
+/// Makes an interface whose functions the generator writes, from their names, for a table:
+///   class CPPBOOT_REPOSITORY("products") ProductRepository
+///       : public cppboot::data::Repository<Product> {
+///   public:
+///       virtual std::vector<Product> findByCategoryOrderByPriceDesc(const std::string& c) = 0;
+///   };
+/// The generated class is registered as the interface, so components take ProductRepository&.
+#define CPPBOOT_REPOSITORY(table) CPPBOOT_ANNOTATE("cppboot:repository:" table)
+
+/// Gives a repository function its SQL, rather than deriving it from the name. Parameters go to $1,
+/// $2 and so on, in order: CPPBOOT_QUERY("SELECT ... WHERE price < $1")
+#define CPPBOOT_QUERY(sql) CPPBOOT_ANNOTATE("cppboot:query:" sql)
+
 /// Fills a struct from the settings under a prefix when the application starts, and makes it a
 /// component that others can take as const Settings&:
 ///   struct CPPBOOT_CONFIG("mail") MailSettings { std::string host; int port{25}; };

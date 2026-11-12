@@ -41,9 +41,23 @@ jobs:
       # A skipped test still counts as passed, so this stops PostgreSQL testing from silently ending.
       - name: Check that the PostgreSQL tests ran
         run: |
-          output=$(build/${{ matrix.preset }}/tests/cppboot-data-tests --gtest_brief=1)
-          echo "$output" | tail -n 2
-          ! echo "$output" | grep -q SKIPPED
+          for tests in cppboot-data-tests cppboot-generated-queries-tests; do
+            output=$(build/${{ matrix.preset }}/tests/$tests --gtest_brief=1)
+            echo "$output" | tail -n 2
+            ! echo "$output" | grep -q SKIPPED
+          done
+      # The generated OpenAPI documents have to be valid for the tools that read them.
+      - name: Validate the OpenAPI documents
+        if: matrix.preset == 'dev' && matrix.compiler == 'g++'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/openapi"
+          "$RUNNER_TEMP/openapi/bin/pip" install -q openapi-spec-validator
+          documents=$(find build/dev -name openapi.json)
+          test -n "$documents"
+          for document in $documents; do
+            echo "$document"
+            "$RUNNER_TEMP/openapi/bin/openapi-spec-validator" "$document"
+          done
 
   docs:
     runs-on: ubuntu-24.04

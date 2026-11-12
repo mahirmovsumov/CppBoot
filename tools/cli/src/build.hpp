@@ -33,6 +33,10 @@ Result<int> buildProject(const std::filesystem::path& directory,
 Result<int> runProject(const std::filesystem::path& directory, std::vector<std::string> arguments,
                        Sanitizer sanitizer);
 
+/// Builds the project and copies the OpenAPI document that the build wrote to openapi.json in the
+/// project folder. Returns its path. Fails if the project has no routes to describe.
+Result<std::filesystem::path> writeOpenApi(const std::filesystem::path& directory);
+
 /// Builds the tests in tests/ and runs them, passing arguments such as --gtest_filter=Order* on.
 Result<int> testProject(const std::filesystem::path& directory,
                         const std::vector<std::string>& arguments, Sanitizer sanitizer);

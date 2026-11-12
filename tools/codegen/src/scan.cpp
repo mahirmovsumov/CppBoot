@@ -45,9 +45,71 @@ Json fieldsToJson(const std::vector<StructField>& fields) {
     for (const StructField& field : fields) {
         result.push(makeObject({{"name", field.name},
                                 {"is_optional", field.is_optional},
-                                {"checks", checksToJson(field.checks)}}));
+                                {"checks", checksToJson(field.checks)},
+                                {"kind", static_cast<int>(field.kind)},
+                                {"schema", field.schema}}));
     }
     return result;
+}
+
+Json repositoriesToJson(const std::vector<RepositoryInterface>& repositories) {
+    Json result = Json::array();
+    for (const RepositoryInterface& repository : repositories) {
+        Json functions = Json::array();
+        for (const RepositoryFunction& function : repository.functions) {
+            Json parameters = Json::array();
+            for (const RepositoryParameter& parameter : function.parameters) {
+                parameters.push(makeObject({{"name", parameter.name},
+                                            {"type", parameter.type},
+                                            {"kind", static_cast<int>(parameter.kind)}}));
+            }
+            functions.push(makeObject({{"name", function.name},
+                                       {"location", function.location},
+                                       {"return_type", function.return_type},
+                                       {"returns", static_cast<int>(function.returns)},
+                                       {"element_type", function.element_type},
+                                       {"element_kind", static_cast<int>(function.element_kind)},
+                                       {"parameters", std::move(parameters)},
+                                       {"is_const", function.is_const},
+                                       {"query", function.query}}));
+        }
+        result.push(makeObject({{"type", repository.type},
+                                {"location", repository.location},
+                                {"table", repository.table},
+                                {"row_type", repository.row_type},
+                                {"functions", std::move(functions)}}));
+    }
+    return result;
+}
+
+std::vector<RepositoryInterface> repositoriesFromJson(const Json& value) {
+    std::vector<RepositoryInterface> repositories;
+    for (const Json& repository : value.items()) {
+        RepositoryInterface read{repository.at("type").asString(),
+                                 repository.at("location").asString(),
+                                 repository.at("table").asString(),
+                                 repository.at("row_type").asString(),
+                                 {}};
+        for (const Json& function : repository.at("functions").items()) {
+            RepositoryFunction entry;
+            entry.name = function.at("name").asString();
+            entry.location = function.at("location").asString();
+            entry.return_type = function.at("return_type").asString();
+            entry.returns = static_cast<RepositoryReturn>(function.at("returns").get<int>());
+            entry.element_type = function.at("element_type").asString();
+            entry.element_kind = static_cast<ValueKind>(function.at("element_kind").get<int>());
+            entry.is_const = function.at("is_const").asBool();
+            entry.query = function.at("query").asString();
+            for (const Json& parameter : function.at("parameters").items()) {
+                entry.parameters.push_back(RepositoryParameter{
+                    parameter.at("name").asString(), parameter.at("type").asString(),
+                    static_cast<ValueKind>(parameter.at("kind").get<int>())});
+            }
+            read.functions.push_back(std::move(entry));
+        }
+        repositories.push_back(std::move(read));
+    }
+    return repositories;
 }
 
 Json configTypesToJson(const std::vector<ConfigStruct>& config_types) {
@@ -98,7 +160,8 @@ Json routeToJson(const Route& route) {
         parameters.push(makeObject({{"source", static_cast<int>(parameter.source)},
                                     {"name", parameter.name},
                                     {"type", parameter.type},
-                                    {"checks", checksToJson(parameter.checks)}}));
+                                    {"checks", checksToJson(parameter.checks)},
+                                    {"schema", parameter.schema}}));
     }
     Json result = makeObject({{"method", route.method},
                               {"path", route.path},
@@ -107,7 +170,9 @@ Json routeToJson(const Route& route) {
                               {"parameters", std::move(parameters)},
                               {"return_kind", static_cast<int>(route.return_kind)},
                               {"is_public", route.is_public},
-                              {"roles", route.roles}});
+                              {"roles", route.roles},
+                              {"response_schema", route.response_schema},
+                              {"status_varies", route.status_varies}});
     if (route.rate_limit) {
         result["rate_limit"] = makeObject({{"requests", route.rate_limit->requests},
                                            {"window_seconds", route.rate_limit->window_seconds}});
@@ -119,7 +184,9 @@ std::vector<StructField> fieldsFromJson(const Json& value) {
     std::vector<StructField> fields;
     for (const Json& field : value.items()) {
         fields.push_back(StructField{field.at("name").asString(), field.at("is_optional").asBool(),
-                                     checksFromJson(field.at("checks"))});
+                                     checksFromJson(field.at("checks")),
+                                     static_cast<ValueKind>(field.at("kind").get<int>()),
+                                     field.at("schema").asString()});
     }
     return fields;
 }
@@ -143,11 +210,13 @@ Route routeFromJson(const Json& value) {
         route.parameters.push_back(RouteParameter{
             static_cast<ParameterSource>(parameter.at("source").get<int>()),
             parameter.at("name").asString(), parameter.at("type").asString(),
-            checksFromJson(parameter.at("checks"))});
+            checksFromJson(parameter.at("checks")), parameter.at("schema").asString()});
     }
     route.return_kind = static_cast<ReturnKind>(value.at("return_kind").get<int>());
     route.is_public = value.at("is_public").asBool();
     route.roles = value.at("roles").get<std::vector<std::string>>();
+    route.response_schema = value.at("response_schema").asString();
+    route.status_varies = value.at("status_varies").asBool();
     if (const Json* const limit = value.find("rate_limit")) {
         route.rate_limit = RouteRateLimit{limit->at("requests").get<std::uint32_t>(),
                                           limit->at("window_seconds").get<std::uint32_t>()};
@@ -206,6 +275,7 @@ std::string toJson(const ScannedHeader& scanned) {
                                       {"json_types", structsToJson(declarations.json_types)},
                                       {"row_types", structsToJson(declarations.row_types)},
                                       {"config_types", configTypesToJson(declarations.config_types)},
+                                      {"repositories", repositoriesToJson(declarations.repositories)},
                                       {"controllers", std::move(controllers)},
                                       {"middleware", std::move(middleware)},
                                       {"warnings", declarations.warnings}});
@@ -228,6 +298,7 @@ Result<ScannedHeader> scannedHeaderFromJson(std::string_view text) {
         declarations.json_types = structsFromJson(document.at("json_types"));
         declarations.row_types = structsFromJson(document.at("row_types"));
         declarations.config_types = configTypesFromJson(document.at("config_types"));
+        declarations.repositories = repositoriesFromJson(document.at("repositories"));
         for (const Json& controller : document.at("controllers").items()) {
             Controller read{controller.at("type").asString(), {}};
             for (const Json& route : controller.at("routes").items()) {

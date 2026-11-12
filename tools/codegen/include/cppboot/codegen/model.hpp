@@ -66,11 +66,18 @@ std::string checkExpression(const Check& check, std::string_view value);
 /// What a value has to be to pass a check, such as "must be from 1 to 100".
 std::string checkMessage(const Check& check);
 
+/// What kind of value a field or parameter holds, as far as SQL is concerned.
+enum class ValueKind { Number, Text, Bool, Page, Other };
+
 struct StructField {
     std::string name;
     /// A std::optional field, which may be missing from JSON.
     bool is_optional{false};
     std::vector<Check> checks{};
+    /// What it holds, without the std::optional.
+    ValueKind kind{ValueKind::Other};
+    /// Its JSON type, for OpenAPI. See Schema.
+    std::string schema{};
 };
 
 /// A struct marked with CPPBOOT_JSON or CPPBOOT_ROW.
@@ -89,6 +96,8 @@ struct RouteParameter {
     std::string type;
     /// For path and query parameters.
     std::vector<Check> checks{};
+    /// Its JSON type, for OpenAPI. See Schema.
+    std::string schema{};
 };
 
 enum class ReturnKind { Nothing, Response, Value };
@@ -113,6 +122,10 @@ struct Route {
     /// With any of these, a user may call this route. Empty means any signed-in user.
     std::vector<std::string> roles;
     std::optional<RouteRateLimit> rate_limit;
+    /// The JSON type it returns, for OpenAPI, when it returns a value. See Schema.
+    std::string response_schema{};
+    /// It returns a WithStatus, so its status is only known when it runs.
+    bool status_varies{false};
 };
 
 struct Controller {
@@ -145,12 +158,48 @@ struct ConfigStruct {
     std::vector<ConfigField> fields;
 };
 
+struct RepositoryParameter {
+    std::string name;
+    /// As the override has to spell it, such as "const std::basic_string<char> &".
+    std::string type;
+    ValueKind kind{ValueKind::Other};
+};
+
+enum class RepositoryReturn { Void, List, Optional, Integer, Bool, Other };
+
+/// A pure virtual function of a repository, which the generator writes.
+struct RepositoryFunction {
+    std::string name;
+    std::string location;
+    /// As the override has to spell it.
+    std::string return_type;
+    RepositoryReturn returns{RepositoryReturn::Other};
+    /// For a std::vector or std::optional, the type inside it.
+    std::string element_type;
+    ValueKind element_kind{ValueKind::Other};
+    std::vector<RepositoryParameter> parameters;
+    bool is_const{false};
+    /// From CPPBOOT_QUERY. Empty means the query comes from the function's name.
+    std::string query;
+};
+
+/// An interface marked with CPPBOOT_REPOSITORY, which derives from cppboot::data::Repository<T>.
+struct RepositoryInterface {
+    std::string type;
+    std::string location;
+    std::string table;
+    /// The CPPBOOT_ROW struct that its rows are.
+    std::string row_type;
+    std::vector<RepositoryFunction> functions;
+};
+
 /// Everything marked in one or more headers.
 struct Declarations {
     std::vector<Component> components;
     std::vector<MappedStruct> json_types;
     std::vector<MappedStruct> row_types;
     std::vector<ConfigStruct> config_types;
+    std::vector<RepositoryInterface> repositories;
     std::vector<Controller> controllers;
     std::vector<Middleware> middleware;
     /// Risky patterns that don't stop the build, as "file:line: warning: message".
@@ -162,7 +211,51 @@ struct Declarations {
 struct RenderOptions {
     /// Adds the /actuator routes, and starts a web server even with no controllers.
     bool actuator{false};
+    /// For the OpenAPI document.
+    std::string title{"API"};
+    std::string version{"0.0.0"};
 };
+
+/// The OpenAPI 3.0 document that describes the routes, from the same declarations as their code.
+/// JSON types are written in the model as text, so that they can nest and be saved in scans:
+/// integer/int32, integer/int64, number/double, number/float, string, boolean, array:<type>,
+/// map:<type>, ref:<qualified C++ type>, or any. A std::optional is written as the type inside.
+std::string renderOpenApi(const Declarations& declarations, const RenderOptions& options);
+
+/// Whether routes need a token unless they're marked public, which is so once anything in the
+/// project uses security.
+bool routesNeedTokens(const Declarations& declarations);
+
+/// How a repository function runs its SQL, which decides the code around it.
+enum class QueryRun {
+    /// Every row, as a std::vector.
+    Rows,
+    /// At most one row, as a std::optional. Finding two is an error.
+    OneRow,
+    /// The first row, if any.
+    FirstRow,
+    /// The first column of the first row, such as a COUNT, as a number or bool.
+    Value,
+    /// Whether there are any rows.
+    Exists,
+    /// A statement that changes rows, returning how many, or nothing.
+    Change,
+};
+
+struct RepositoryQuery {
+    std::string sql;
+    /// The C++ expressions for $1, $2 and so on, in order.
+    std::vector<std::string> arguments;
+    QueryRun run{QueryRun::Rows};
+};
+
+/// Works out a repository function's SQL, from CPPBOOT_QUERY or from its name, the way Spring Data
+/// does: findByCategoryAndPriceLessThanOrderByNameAsc, countByActiveTrue, existsByEmail,
+/// deleteByCreatedBefore, findFirstByOrderByPriceDesc, findTop5By... The row struct gives the
+/// columns. Fails with a message that names the function if the name or its types don't fit.
+Result<RepositoryQuery> repositoryQuery(const RepositoryInterface& repository,
+                                        const RepositoryFunction& function,
+                                        const Declarations& declarations);
 
 /// Fails if a dependency has no provider, a type has two providers, dependencies form a cycle, two
 /// routes have the same method and path, two structs read the same settings, there's middleware

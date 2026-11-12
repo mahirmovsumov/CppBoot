@@ -25,7 +25,9 @@ constexpr std::string_view kUsage =
     "       cppboot-codegen --print-resource-dir\n"
     "\n"
     "--scan reads one header and saves what it found, and --merge combines saved scans into the\n"
-    "generated header. A build does this so that only changed headers are read again.\n";
+    "generated header. A build does this so that only changed headers are read again.\n"
+    "--title and --version name the API in openapi.json, which is written next to the output when\n"
+    "there are routes.\n";
 
 Result<void> writeFile(const fs::path& path, const std::string& content) {
     std::error_code ignored;
@@ -63,7 +65,16 @@ Result<void> render(const fs::path& output, const codegen::Declarations& declara
     if (auto valid = codegen::validateDeclarations(declarations, options); !valid) {
         return valid;
     }
-    return writeFile(output, codegen::renderRegistration(declarations, includes, options));
+    if (auto written = writeFile(output, codegen::renderRegistration(declarations, includes, options));
+        !written) {
+        return written;
+    }
+    // A file of its own too, for tools that make clients or documentation from it.
+    if (!declarations.controllers.empty()) {
+        return writeFile(output.parent_path() / "openapi.json",
+                         codegen::renderOpenApi(declarations, options));
+    }
+    return {};
 }
 
 Result<void> generate(const fs::path& output, const std::vector<fs::path>& headers,
@@ -171,6 +182,10 @@ int main(int argc, char* argv[]) {
         }
         if (argument == "--actuator") {
             options.actuator = true;
+        } else if (argument == "--title" && i + 1 < argc) {
+            options.title = argv[++i];
+        } else if (argument == "--version" && i + 1 < argc) {
+            options.version = argv[++i];
         } else if (argument == "--merge") {
             merging = true;
         } else if (argument == "--output" && i + 1 < argc) {

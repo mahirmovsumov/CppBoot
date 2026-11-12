@@ -5,6 +5,7 @@
 #include <cppboot/data/database.hpp>
 #include <cppboot/data/database_module.hpp>
 #include <cppboot/data/migrations.hpp>
+#include <cppboot/data/repository.hpp>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -658,4 +659,14 @@ TEST_F(PoolTest, NeverOpensMoreThanTheLimitUnderLoad) {
     }
     EXPECT_LE(most_in_use.load(), 3);
     EXPECT_LE(created_.load(), 3);
+}
+
+TEST(LikePatternTest, EscapesWildcardsSoTextMatchesAsWritten) {
+    using cppboot::data::likePattern;
+    using cppboot::data::TextMatch;
+    EXPECT_EQ(likePattern("tea", TextMatch::StartsWith), "tea%");
+    EXPECT_EQ(likePattern("tea", TextMatch::EndsWith), "%tea");
+    EXPECT_EQ(likePattern("tea", TextMatch::Contains), "%tea%");
+    EXPECT_EQ(likePattern(R"(50%_off\)", TextMatch::Contains), R"(%50\%\_off\\%)");
+    EXPECT_EQ(likePattern("", TextMatch::Contains), "%%");
 }

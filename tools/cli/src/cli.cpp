@@ -50,6 +50,7 @@ Commands:
                     find memory errors or data races, on Linux
   package           Build a release into dist/, with everything needed to run it elsewhere
                     On Linux, this includes a systemd service and a script that installs it
+  openapi           Build the project and write the OpenAPI document of its routes to openapi.json
   doctor            Check that everything CppBoot needs is installed, and say how to fix what isn't
                     Add --full to also build and run a sample project
   info              Show version and installation details
@@ -240,6 +241,14 @@ int run(const std::vector<std::string>& arguments, std::istream& in, std::ostrea
     }
     if (command == "package" && rest.empty()) {
         return package(out, err);
+    }
+    if (command == "openapi" && rest.empty()) {
+        auto written = writeOpenApi(fs::current_path());
+        if (!written) {
+            return finish(written.error(), err);
+        }
+        out << "Wrote " << written.value().generic_string() << '\n';
+        return 0;
     }
     return usage(err);
 }

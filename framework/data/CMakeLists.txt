@@ -3,6 +3,7 @@ add_library(cppboot-data
     src/database_module.cpp
     src/migrations.cpp
     src/pool.cpp
+    src/repository.cpp
     src/postgresql.cpp
     src/row.cpp
     src/sqlite.cpp

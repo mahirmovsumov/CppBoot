@@ -143,3 +143,42 @@ TEST(ScanTest, ChecksAndSettingsStructsReadBackTheSame) {
 
     EXPECT_EQ(renderRegistration(back, {"shop.hpp"}), renderRegistration(declarations, {"shop.hpp"}));
 }
+
+TEST(ScanTest, RepositoriesReadBackTheSame) {
+    ScannedHeader scanned;
+    scanned.header = "books.hpp";
+    Declarations& declarations = scanned.declarations;
+    declarations.row_types.push_back(MappedStruct{
+        "Book", "books.hpp:3", {{"id", false, {}, ValueKind::Number}, {"title", false, {}, ValueKind::Text}}});
+
+    RepositoryFunction find;
+    find.name = "findByTitle";
+    find.location = "books.hpp:9";
+    find.return_type = "std::vector<Book>";
+    find.returns = RepositoryReturn::List;
+    find.element_type = "Book";
+    find.parameters = {{"title", "const std::string &", ValueKind::Text}};
+    RepositoryFunction cheap;
+    cheap.name = "cheapest";
+    cheap.location = "books.hpp:11";
+    cheap.return_type = "std::optional<double>";
+    cheap.returns = RepositoryReturn::Optional;
+    cheap.element_type = "double";
+    cheap.element_kind = ValueKind::Number;
+    cheap.is_const = true;
+    cheap.query = "SELECT MIN(price) FROM books";
+    declarations.repositories.push_back(
+        RepositoryInterface{"Books", "books.hpp:7", "books", "Book", {find, cheap}});
+
+    const auto read = scannedHeaderFromJson(toJson(scanned));
+    ASSERT_TRUE(read) << read.error().message();
+    const Declarations& back = read.value().declarations;
+    ASSERT_EQ(back.repositories.size(), 1U);
+    EXPECT_EQ(back.repositories[0].table, "books");
+    EXPECT_EQ(back.repositories[0].functions.at(0).parameters.at(0).kind, ValueKind::Text);
+    EXPECT_EQ(back.repositories[0].functions.at(1).query, "SELECT MIN(price) FROM books");
+    EXPECT_TRUE(back.repositories[0].functions.at(1).is_const);
+    EXPECT_EQ(back.row_types.at(0).fields.at(1).kind, ValueKind::Text);
+
+    EXPECT_EQ(renderRegistration(back, {"books.hpp"}), renderRegistration(declarations, {"books.hpp"}));
+}

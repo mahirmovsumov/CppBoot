@@ -1,11 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <cppboot/base/json.hpp>
 #include <cppboot/codegen/model.hpp>
 #include <string>
 #include <vector>
 
 using namespace cppboot::codegen;
 using cppboot::ErrorCode;
+using cppboot::Json;
 
 namespace {
 
@@ -517,4 +519,324 @@ TEST(ValidateDeclarationsTest, SettingsStructsCountAsProvidedButOthersStillDoNot
     const auto result = validateDeclarations(declarations);
     ASSERT_FALSE(result);
     EXPECT_NE(result.error().message().find("needs Missing"), std::string::npos);
+}
+
+namespace {
+
+Declarations bookDeclarations() {
+    Declarations declarations;
+    declarations.row_types = {{"Book",
+                               "a.hpp:1",
+                               {{"id", false, {}, ValueKind::Number},
+                                {"title", false, {}, ValueKind::Text},
+                                {"unit_price", false, {}, ValueKind::Number},
+                                {"in_print", false, {}, ValueKind::Bool},
+                                {"series", true, {}, ValueKind::Text}}}};
+    declarations.repositories = {{"Books", "a.hpp:9", "books", "Book", {}}};
+    return declarations;
+}
+
+RepositoryFunction function(std::string name, RepositoryReturn returns,
+                            std::vector<RepositoryParameter> parameters = {},
+                            std::string element = "Book") {
+    RepositoryFunction result;
+    result.name = std::move(name);
+    result.location = "a.hpp:12";
+    result.returns = returns;
+    result.element_type = returns == RepositoryReturn::List || returns == RepositoryReturn::Optional
+                              ? std::move(element)
+                              : "";
+    result.parameters = std::move(parameters);
+    return result;
+}
+
+RepositoryParameter text(std::string name) {
+    return {std::move(name), "const std::string &", ValueKind::Text};
+}
+RepositoryParameter number(std::string name) {
+    return {std::move(name), "double", ValueKind::Number};
+}
+
+/// The SQL for a function of Books, which must be valid.
+std::string sqlFor(const RepositoryFunction& candidate) {
+    const Declarations declarations = bookDeclarations();
+    const auto query = repositoryQuery(declarations.repositories[0], candidate, declarations);
+    EXPECT_TRUE(query) << (query ? "" : query.error().message());
+    return query ? query.value().sql : "";
+}
+
+/// The error for a function of Books, which must be rejected.
+std::string errorFor(const RepositoryFunction& candidate) {
+    const Declarations declarations = bookDeclarations();
+    const auto query = repositoryQuery(declarations.repositories[0], candidate, declarations);
+    EXPECT_FALSE(query) << candidate.name << " was accepted as " << (query ? query.value().sql : "");
+    return query ? "" : query.error().message();
+}
+
+bool contains(const std::string& text, std::string_view part) {
+    return text.find(part) != std::string::npos;
+}
+
+}  // namespace
+
+TEST(RepositoryQueryTest, ReadsFieldsOfSeveralWords) {
+    EXPECT_EQ(sqlFor(function("findByUnitPriceLessThanOrderByUnitPriceDesc", RepositoryReturn::List,
+                              {number("most")})),
+              "SELECT id, title, unit_price, in_print, series FROM books WHERE unit_price < $1 "
+              "ORDER BY unit_price DESC");
+    EXPECT_EQ(sqlFor(function("countByInPrintTrue", RepositoryReturn::Integer)),
+              "SELECT COUNT(*) FROM books WHERE in_print = TRUE");
+}
+
+TEST(RepositoryQueryTest, NamesItsMistakes) {
+    EXPECT_TRUE(contains(errorFor(function("lookUp", RepositoryReturn::List)),
+                         "a.hpp:12: Books::lookUp can't be written from its name"));
+    EXPECT_TRUE(contains(errorFor(function("findByAuthor", RepositoryReturn::List, {text("a")})),
+                         "refers to Author, which isn't a field of Book. Its fields are id, title, "
+                         "unit_price, in_print, series"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitleRoughly", RepositoryReturn::List, {text("t")})),
+                         "has 'Roughly' after title"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitleIn", RepositoryReturn::List, {text("t")})),
+                         "uses In, which isn't supported yet"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitle", RepositoryReturn::List)),
+                         "needs a parameter for title, but it has too few"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitle", RepositoryReturn::List,
+                                           {text("a"), text("b")})),
+                         "has 2 parameters, but its name uses 1"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitle", RepositoryReturn::List, {number("t")})),
+                         "compares title, which is text, with parameter 't', which is a number"));
+    EXPECT_TRUE(contains(errorFor(function("findByUnitPriceContaining", RepositoryReturn::List,
+                                           {number("p")})),
+                         "matches text in unit_price, which isn't text"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitleTrue", RepositoryReturn::List)),
+                         "isn't a bool"));
+    EXPECT_TRUE(contains(errorFor(function("findByUnitPriceIgnoreCase", RepositoryReturn::List,
+                                           {number("p")})),
+                         "ignores case for unit_price"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitleAnd", RepositoryReturn::List, {text("t")})),
+                         "ends with And"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitleOrderBy", RepositoryReturn::List, {text("t")})),
+                         "ends with OrderBy"));
+    EXPECT_TRUE(contains(errorFor(function("findByOrderByWeight", RepositoryReturn::List)),
+                         "orders by Weight"));
+}
+
+TEST(RepositoryQueryTest, TheReturnTypeHasToFit) {
+    EXPECT_TRUE(contains(errorFor(function("findByTitle", RepositoryReturn::Integer, {text("t")})),
+                         "has to return std::vector<Book> or std::optional<Book>"));
+    EXPECT_TRUE(contains(errorFor(function("findByTitle", RepositoryReturn::List, {text("t")}, "Other")),
+                         "returns Other, but Books holds Book"));
+    EXPECT_TRUE(contains(errorFor(function("findFirstByTitle", RepositoryReturn::List, {text("t")})),
+                         "finds one row, so it has to return std::optional<Book>"));
+    EXPECT_TRUE(contains(errorFor(function("findTop3ByTitle", RepositoryReturn::Optional, {text("t")})),
+                         "has to return std::vector<Book>"));
+    EXPECT_TRUE(contains(errorFor(function("findTop0ByTitle", RepositoryReturn::List, {text("t")})),
+                         "has to be a whole number from 1"));
+    EXPECT_TRUE(contains(errorFor(function("countByTitle", RepositoryReturn::Bool, {text("t")})),
+                         "has to return std::int64_t"));
+    EXPECT_TRUE(contains(errorFor(function("existsByTitle", RepositoryReturn::Integer, {text("t")})),
+                         "has to return bool"));
+    EXPECT_TRUE(contains(errorFor(function("deleteByTitle", RepositoryReturn::List, {text("t")})),
+                         "deletes rows"));
+    EXPECT_TRUE(contains(errorFor(function("countByTitleOrderByTitle", RepositoryReturn::Integer,
+                                           {text("t")})),
+                         "has OrderBy, which only changes anything when finding rows"));
+}
+
+TEST(RepositoryQueryTest, NeverDeletesEverythingFromAName) {
+    EXPECT_TRUE(contains(errorFor(function("deleteBy", RepositoryReturn::Integer)),
+                         "would delete every row"));
+    EXPECT_TRUE(contains(errorFor(function("deleteAll", RepositoryReturn::Void)),
+                         "can't be written from its name"));
+}
+
+TEST(RepositoryQueryTest, APageComesLastAndOnlyWhenListing) {
+    const RepositoryParameter page{"page", "cppboot::data::Page", ValueKind::Page};
+    const Declarations declarations = bookDeclarations();
+    const auto query = repositoryQuery(
+        declarations.repositories[0],
+        function("findByInPrintTrueOrderByTitle", RepositoryReturn::List, {page}), declarations);
+    ASSERT_TRUE(query) << query.error().message();
+    EXPECT_TRUE(query.value().sql.ends_with("ORDER BY title ASC LIMIT $1 OFFSET $2"));
+    EXPECT_EQ(query.value().arguments, (std::vector<std::string>{"page.limit", "page.offset"}));
+
+    EXPECT_TRUE(contains(errorFor(function("findByTitle", RepositoryReturn::List, {page, text("t")})),
+                         "a cppboot::data::Page that isn't its last parameter"));
+    EXPECT_TRUE(contains(errorFor(function("findTop2ByTitle", RepositoryReturn::List, {text("t"), page})),
+                         "only works when returning a std::vector with no First or Top"));
+    EXPECT_TRUE(contains(errorFor(function("countByInPrintTrue", RepositoryReturn::Integer, {page})),
+                         "only works when finding rows"));
+}
+
+TEST(RepositoryQueryTest, OwnSqlHasToMatchItsParametersAndTypes) {
+    Declarations declarations = bookDeclarations();
+    const auto check = [&](RepositoryFunction candidate, std::string query) {
+        candidate.query = std::move(query);
+        return repositoryQuery(declarations.repositories[0], candidate, declarations);
+    };
+
+    auto ok = check(function("cheap", RepositoryReturn::List, {number("most")}),
+                    "SELECT * FROM books WHERE unit_price < $1");
+    ASSERT_TRUE(ok) << ok.error().message();
+    EXPECT_EQ(ok.value().run, QueryRun::Rows);
+
+    // A $ inside quotes isn't a placeholder.
+    ok = check(function("dollars", RepositoryReturn::Integer), "SELECT COUNT(*) FROM books WHERE title = '$9'");
+    ASSERT_TRUE(ok) << ok.error().message();
+    EXPECT_EQ(ok.value().run, QueryRun::Value);
+
+    ok = check(function("raise", RepositoryReturn::Integer, {number("f")}),
+               "UPDATE books SET unit_price = unit_price * $1");
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(ok.value().run, QueryRun::Change);
+
+    auto bad = check(function("cheap", RepositoryReturn::List, {number("a"), number("b")}),
+                     "SELECT * FROM books WHERE unit_price < $1");
+    ASSERT_FALSE(bad);
+    EXPECT_TRUE(contains(bad.error().message(), "has 2 parameters, but its SQL goes up to $1"));
+
+    bad = check(function("names", RepositoryReturn::List, {}, "std::basic_string<char>"),
+                "SELECT title FROM books");
+    ASSERT_FALSE(bad);
+    EXPECT_TRUE(contains(bad.error().message(), "which isn't marked CPPBOOT_ROW"));
+
+    bad = check(function("touched", RepositoryReturn::Bool), "DELETE FROM books");
+    ASSERT_FALSE(bad);
+    EXPECT_TRUE(contains(bad.error().message(), "returns bool, which only works for a SELECT"));
+}
+
+TEST(ValidateDeclarationsTest, ChecksEveryRepositoryFunctionAndProvidesTheInterface) {
+    Declarations declarations = bookDeclarations();
+    declarations.repositories[0].functions = {
+        function("findByTitle", RepositoryReturn::List, {text("t")})};
+    declarations.components = {{"Shelf", "b.hpp:1", {}, {"Books"}}};
+    const auto valid = validateDeclarations(declarations);
+    EXPECT_TRUE(valid) << valid.error().message();
+
+    declarations.repositories[0].functions.push_back(function("findByWeight", RepositoryReturn::List,
+                                                              {number("w")}));
+    const auto invalid = validateDeclarations(declarations);
+    ASSERT_FALSE(invalid);
+    EXPECT_TRUE(contains(invalid.error().message(), "Books::findByWeight refers to Weight"));
+
+    declarations.repositories[0].row_type = "Missing";
+    declarations.repositories[0].functions.pop_back();
+    const auto no_row = validateDeclarations(declarations);
+    ASSERT_FALSE(no_row);
+    EXPECT_TRUE(contains(no_row.error().message(), "holds Missing, which isn't marked CPPBOOT_ROW"));
+}
+
+TEST(OpenApiTest, DescribesSecurityChecksAndLimits) {
+    Declarations declarations;
+    declarations.json_types = {
+        {"shop::Order",
+         "a.hpp:1",
+         {{"quantity", false, {{CheckKind::Range, ValueShape::Number, "1", "100"}}, ValueKind::Number,
+           "integer/int32"},
+          {"note", true, {{CheckKind::Length, ValueShape::Text, "0", "200"}}, ValueKind::Text, "string"},
+          {"items", false, {{CheckKind::NotEmpty, ValueShape::Items, "", ""}}, ValueKind::Other,
+           "array:ref:shop::Item"},
+          {"gift", true, {}, ValueKind::Other, "ref:shop::Order"},
+          {"extra", false, {}, ValueKind::Other, "map:number/double"},
+          {"opaque", false, {}, ValueKind::Other, "ref:shop::NotJson"}}},
+    };
+
+    Route list;
+    list.method = "Get";
+    list.path = "/orders";
+    list.function = "list";
+    list.parameters = {{ParameterSource::Query,
+                        "size",
+                        "std::optional<int>",
+                        {{CheckKind::Max, ValueShape::Number, "", "50"}},
+                        "integer/int32"}};
+    list.response_schema = "array:ref:shop::Order";
+    list.roles = {"admin", "staff"};
+    list.rate_limit = RouteRateLimit{5, 60};
+
+    Route health;
+    health.method = "Get";
+    health.path = "/health";
+    health.function = "health";
+    health.is_public = true;
+    health.return_kind = ReturnKind::Response;
+
+    Route create;
+    create.method = "Post";
+    create.path = "/orders";
+    create.function = "create";
+    create.parameters = {{ParameterSource::Body, "order", "shop::Order", {}, "ref:shop::Order"},
+                         {ParameterSource::Principal, "who", "cppboot::security::Principal", {}, ""}};
+    create.response_schema = "ref:shop::Order";
+    create.status_varies = true;
+
+    declarations.controllers = {{"shop::OrderController", {list, health, create}}};
+
+    RenderOptions options;
+    options.title = "shop";
+    options.version = "1.2.3";
+    const Json document = Json::parse(renderOpenApi(declarations, options));
+
+    EXPECT_EQ(document.at("info").at("version"), "1.2.3");
+    EXPECT_EQ(document.at("components").at("securitySchemes").at("bearerAuth").at("scheme"), "bearer");
+
+    const Json& get = document.at("paths").at("/orders").at("get");
+    EXPECT_EQ(get.at("operationId"), "shop.OrderController.list");
+    EXPECT_EQ(get.at("security").at(0).at("bearerAuth"), Json::array());
+    for (const char* status : {"200", "400", "401", "403", "429"}) {
+        EXPECT_TRUE(get.at("responses").contains(status)) << status;
+    }
+    EXPECT_NE(get.at("description").asString().find("admin, staff"), std::string::npos);
+    const Json& size = get.at("parameters").at(0);
+    EXPECT_EQ(size.at("required"), false);
+    EXPECT_EQ(size.at("schema").at("maximum"), 50);
+
+    // A public route has no security and no 401, even in a secured project.
+    const Json& open = document.at("paths").at("/health").at("get");
+    EXPECT_FALSE(open.contains("security"));
+    EXPECT_FALSE(open.at("responses").contains("401"));
+    EXPECT_TRUE(open.at("responses").contains("default"));
+
+    const Json& post = document.at("paths").at("/orders").at("post");
+    EXPECT_EQ(post.at("requestBody").at("content").at("application/json").at("schema").at("$ref"),
+              "#/components/schemas/shop.Order");
+    EXPECT_TRUE(post.at("responses").contains("2XX"));
+    EXPECT_FALSE(post.at("responses").contains("403"));
+    // A Principal comes from the token, not from the request, so it isn't a parameter.
+    EXPECT_FALSE(post.contains("parameters"));
+
+    const Json& order = document.at("components").at("schemas").at("shop.Order");
+    EXPECT_EQ(order.at("required"),
+              (Json{std::vector<std::string>{"quantity", "items", "extra", "opaque"}}));
+    const Json& properties = order.at("properties");
+    EXPECT_EQ(properties.at("quantity").at("minimum"), 1);
+    EXPECT_EQ(properties.at("quantity").at("maximum"), 100);
+    EXPECT_EQ(properties.at("note").at("maxLength"), 200);
+    EXPECT_EQ(properties.at("note").at("nullable"), true);
+    EXPECT_EQ(properties.at("items").at("minItems"), 1);
+    // shop::Item isn't converted to JSON, so it's left open rather than a broken $ref.
+    EXPECT_EQ(properties.at("items").at("items"), Json::object());
+    EXPECT_EQ(properties.at("gift").at("allOf").at(0).at("$ref"), "#/components/schemas/shop.Order");
+    EXPECT_EQ(properties.at("gift").at("nullable"), true);
+    EXPECT_EQ(properties.at("extra").at("additionalProperties").at("format"), "double");
+    EXPECT_EQ(properties.at("opaque"), Json::object());
+}
+
+TEST(OpenApiTest, AProjectWithoutSecurityHasNoSchemes) {
+    Declarations declarations;
+    Route route;
+    route.method = "Delete";
+    route.path = "/items/{id}";
+    route.function = "remove";
+    route.return_kind = ReturnKind::Nothing;
+    route.parameters = {{ParameterSource::Path, "id", "long long", {}, "integer/int64"}};
+    declarations.controllers = {{"Items", {route}}};
+
+    const Json document = Json::parse(renderOpenApi(declarations, {}));
+    EXPECT_FALSE(document.at("components").contains("securitySchemes"));
+    const Json& remove = document.at("paths").at("/items/{id}").at("delete");
+    EXPECT_FALSE(remove.contains("security"));
+    EXPECT_TRUE(remove.at("responses").contains("204"));
+    EXPECT_EQ(remove.at("parameters").at(0).at("schema").at("format"), "int64");
+    EXPECT_EQ(remove.at("parameters").at(0).at("required"), true);
 }

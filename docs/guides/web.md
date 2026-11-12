@@ -399,6 +399,39 @@ A database query or another blocking call can't be interrupted this way. The che
 
 Handlers don't run on network threads. These read requests, write responses and do all TLS work. Each connection stays on one thread, and connections are shared out evenly. With more than one, a burst of slow TLS handshakes on one thread doesn't delay connections on the others. The [benchmarks](../benchmarks.md#network-threads) show the difference.
 
+## OpenAPI
+
+The build writes an [OpenAPI 3.0](https://spec.openapis.org/oas/v3.0.3) document that describes every route, from the same declarations as the code that runs them, so it can't fall behind. Tools such as Swagger UI, Postman and client generators read it.
+
+```powershell
+cppboot openapi    # builds the project, and writes openapi.json in the project folder
+```
+
+To serve it from the application at `/openapi.json`, turn it on:
+
+```yaml
+cppboot:
+  openapi:
+    enabled: true
+```
+
+It's off by default, because it lists every route to whoever can reach the server. When it's on, it's public, like the routes it describes that are marked `CPPBOOT_PUBLIC`, so turn it on only where that's fine, such as with a profile for development.
+
+What it contains:
+
+| From | In the document |
+|---|---|
+| Each controller function | A path and operation, named `Controller.function`, tagged with its controller |
+| Path and query parameters | Parameters, required unless they're a `std::optional` |
+| A body parameter | The request body |
+| What the function returns | `200` with its JSON type, `2XX` for a `WithStatus`, `204` for `void`, or `default` for a `Response` |
+| `CPPBOOT_JSON` structs | Schemas, with required fields, and `nullable` for a `std::optional` |
+| Checks such as `CPPBOOT_RANGE` and `CPPBOOT_LENGTH` | `minimum`, `maximum`, `minLength`, `maxLength`, `minItems` and `maxItems` |
+| Security | The bearer token scheme, on every route that needs a token, with `401`, and `403` and the roles where there are some |
+| Reading the request, and rate limits | `400` and `429`, with the error body's schema |
+
+The title is the project's name, and the version is the one in `project()` in `CMakeLists.txt`. New projects start at `0.1.0`.
+
 ## Not supported yet
 
 - HTTP/2

@@ -107,6 +107,34 @@ Result<int> buildProject(const fs::path& directory, Sanitizer sanitizer, const s
     return runTool(std::move(command), directory, share_input);
 }
 
+Result<fs::path> writeOpenApi(const fs::path& directory) {
+    auto name = readProjectName(directory);
+    if (!name) {
+        return name.error();
+    }
+    auto built = buildProject(directory);
+    if (!built) {
+        return built.error();
+    }
+    if (built.value() != 0) {
+        return Error{ErrorCode::IoError, "The build failed"};
+    }
+
+    const fs::path document =
+        directory / buildFolder(Sanitizer::None) / "cppboot_generated" / name.value() / "openapi.json";
+    std::error_code error;
+    if (!fs::exists(document, error)) {
+        return Error{ErrorCode::NotFound,
+                     "The project has no controllers, so there's no API to describe"};
+    }
+    const fs::path copy = directory / "openapi.json";
+    fs::copy_file(document, copy, fs::copy_options::overwrite_existing, error);
+    if (error) {
+        return Error{ErrorCode::IoError, "Cannot write " + copy.generic_string() + ": " + error.message()};
+    }
+    return copy;
+}
+
 Result<int> testProject(const fs::path& directory, const std::vector<std::string>& arguments,
                         Sanitizer sanitizer) {
     auto name = readProjectName(directory);

@@ -267,6 +267,69 @@ expect_exit_code("${code}" 0 "test a resource" "${output}")
 expect_contains("${output}" "OrderItemRepositoryTest.AddsFindsReplacesAndRemoves" "test a resource")
 expect_contains("${output}" "OrderItemInputTest.ChecksWhatClientsSend" "test a resource")
 
+# A repository written from its function names has to build with the installed SDK, and fit with
+# the other components.
+file(WRITE ${WORK_DIR}/demo-resource/src/order_item_queries.hpp [=[
+#pragma once
+
+#include <cppboot/cppboot.hpp>
+#include <cppboot/data/repository.hpp>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "order_item.hpp"
+
+class CPPBOOT_REPOSITORY("order_items") OrderItemQueries
+    : public cppboot::data::Repository<OrderItem> {
+public:
+    virtual std::vector<OrderItem> findByActiveTrueOrderByPriceDesc(cppboot::data::Page page) = 0;
+    virtual std::int64_t countByNameContainingIgnoreCase(const std::string& part) = 0;
+};
+
+class CPPBOOT_SERVICE Stock {
+public:
+    explicit Stock(OrderItemQueries& queries) : queries_(queries) {}
+    std::int64_t teas() { return queries_.countByNameContainingIgnoreCase("tea"); }
+
+private:
+    OrderItemQueries& queries_;
+};
+]=])
+run_cli(code output ${WORK_DIR}/demo-resource test --gtest_filter=ComponentsTest.*)
+expect_exit_code("${code}" 0 "test a repository written from names" "${output}")
+file(WRITE ${WORK_DIR}/demo-resource/src/broken_queries.hpp [=[
+#pragma once
+#include <cppboot/cppboot.hpp>
+#include <cppboot/data/repository.hpp>
+#include <vector>
+#include "order_item.hpp"
+class CPPBOOT_REPOSITORY("order_items") BrokenQueries : public cppboot::data::Repository<OrderItem> {
+public:
+    virtual std::vector<OrderItem> findByColour(const std::string& colour) = 0;
+};
+]=])
+run_cli(code output ${WORK_DIR}/demo-resource build)
+if(code EQUAL 0)
+    message(FATAL_ERROR "build with an unknown field in a query name: expected a failure:\n${output}")
+endif()
+expect_contains("${output}" "BrokenQueries::findByColour refers to Colour, which isn't a field"
+    "build with an unknown field in a query name")
+file(REMOVE ${WORK_DIR}/demo-resource/src/broken_queries.hpp)
+
+# The OpenAPI document describes every route, and only a project with routes has one.
+run_cli(code output ${WORK_DIR}/demo-resource openapi)
+expect_exit_code("${code}" 0 "openapi" "${output}")
+expect_contains("${output}" "Wrote " "openapi")
+file(READ ${WORK_DIR}/demo-resource/openapi.json openapi_text)
+foreach(expected [["openapi":"3.0.3"]] [["title":"demo-resource"]] [["/api/order-items/{id}":]]
+                 [["OrderItemInput":]] [["maxLength":255]])
+    expect_contains("${openapi_text}" "${expected}" "openapi.json")
+endforeach()
+run_cli(code output ${WORK_DIR}/demo-app openapi)
+expect_exit_code("${code}" 1 "openapi without routes" "${output}")
+expect_contains("${output}" "no controllers" "openapi without routes")
+
 # cppboot dev has to build and run, then build and run again after a change, and quit when asked.
 run_cli(code output ${WORK_DIR} create demo-dev)
 expect_exit_code("${code}" 0 "create for cppboot dev" "${output}")
