@@ -51,6 +51,7 @@ private:
         Method method;
         std::string pattern;
         std::vector<Segment> segments;
+        std::size_t parameter_count;
         Handler handler;
     };
 

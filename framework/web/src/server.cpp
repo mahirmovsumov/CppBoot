@@ -8,14 +8,18 @@
 #include <boost/beast/ssl.hpp>
 #include <charconv>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <iterator>
 #include <list>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stop_token>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -55,9 +59,88 @@ constexpr std::chrono::seconds kShedLogInterval{10};
 using PlainStream = beast::tcp_stream;
 using TlsStream = beast::ssl_stream<beast::tcp_stream>;
 
-http::response<http::string_body> toBeastResponse(const Response& response, unsigned version,
-                                                  bool keep_alive, bool head_request) {
-    http::response<http::string_body> result{static_cast<http::status>(response.status()), version};
+/// Memory for the header fields of the request and the response that a connection is working on.
+/// Beast allocates each field separately, and this makes one allocation of them all. It belongs to
+/// one connection and only that connection's network thread uses it, and what a handler receives is
+/// copied out of it first, so no request can see another's data through it.
+class FieldArena {
+public:
+    void* allocate(std::size_t size, std::size_t alignment) {
+        const std::size_t start = (used_ + alignment - 1) & ~(alignment - 1);
+        if (start + size > kSize) {
+            // More headers than usual. They're still limited by the parser's header limit.
+            return ::operator new(size, std::align_val_t{alignment});
+        }
+        if (!memory_) {
+            memory_ = std::make_unique_for_overwrite<std::byte[]>(kSize);
+        }
+        used_ = start + size;
+        ++live_;
+        return memory_.get() + start;
+    }
+
+    void deallocate(void* pointer, std::size_t alignment) noexcept {
+        const auto* const address = static_cast<const std::byte*>(pointer);
+        if (!memory_ || std::less<>{}(address, memory_.get()) ||
+            !std::less<>{}(address, memory_.get() + kSize)) {
+            ::operator delete(pointer, std::align_val_t{alignment});
+            return;
+        }
+        // Everything is given back once a response has been written. The memory goes then too, so
+        // that a connection waiting for its next request holds none of it.
+        if (--live_ == 0) {
+            used_ = 0;
+            memory_.reset();
+        }
+    }
+
+private:
+    /// Room for the headers of an ordinary request and its response.
+    static constexpr std::size_t kSize = 4096;
+
+    std::unique_ptr<std::byte[]> memory_;
+    std::size_t used_{0};
+    std::size_t live_{0};
+};
+
+template <typename T>
+class FieldAllocator {
+public:
+    using value_type = T;
+
+    explicit FieldAllocator(FieldArena& arena) noexcept : arena_(&arena) {}
+    template <typename Other>
+    FieldAllocator(const FieldAllocator<Other>& other) noexcept : arena_(other.arena_) {}
+
+    T* allocate(std::size_t count) {
+        return static_cast<T*>(arena_->allocate(count * sizeof(T), alignof(T)));
+    }
+    void deallocate(T* pointer, std::size_t) noexcept { arena_->deallocate(pointer, alignof(T)); }
+
+    template <typename Other>
+    bool operator==(const FieldAllocator<Other>& other) const noexcept {
+        return arena_ == other.arena_;
+    }
+
+private:
+    template <typename Other>
+    friend class FieldAllocator;
+
+    FieldArena* arena_;
+};
+
+using BeastFields = http::basic_fields<FieldAllocator<char>>;
+using BeastRequest = http::request<http::string_body, BeastFields>;
+using BeastResponse = http::response<http::string_body, BeastFields>;
+using BeastRequestParser = http::request_parser<http::string_body, FieldAllocator<char>>;
+
+/// Takes the response's body rather than copying it.
+BeastResponse toBeastResponse(Response response, unsigned version, bool keep_alive,
+                              bool head_request, FieldArena& arena) {
+    BeastResponse result{std::piecewise_construct, std::make_tuple(),
+                         std::make_tuple(FieldAllocator<char>{arena})};
+    result.result(static_cast<http::status>(response.status()));
+    result.version(version);
     for (const auto& [name, value] : response.headers()) {
         result.set(name, value);
     }
@@ -67,21 +150,29 @@ http::response<http::string_body> toBeastResponse(const Response& response, unsi
         // A HEAD response reports the size of the body it would have sent.
         result.content_length(response.body().size());
     } else {
-        result.body() = response.body();
+        result.body() = std::move(response).body();
         result.prepare_payload();
     }
     return result;
 }
 
-Result<Request> toRequest(http::request<http::string_body>& request) {
+/// Copies what the handler needs out of the connection's memory, so that the request owns all of it.
+Result<Request> toRequest(BeastRequest& request) {
     const auto method = parseMethod(request.method_string());
     if (!method) {
         return Error{ErrorCode::InvalidArgument, "Unsupported method"};
     }
 
-    Headers headers;
+    std::size_t count = 0;
+    std::size_t characters = 0;
     for (const auto& field : request) {
-        headers.emplace_back(field.name_string(), field.value());
+        ++count;
+        characters += field.name_string().size() + field.value().size();
+    }
+    RequestHeaders headers;
+    headers.reserve(count, characters);
+    for (const auto& field : request) {
+        headers.add(field.name_string(), field.value());
     }
     return Request::create(*method, request.target(), std::move(headers),
                            std::move(request.body()));
@@ -110,6 +201,7 @@ struct Connection {
     std::string peer;
     bool peer_is_trusted;
     bool busy{false};
+    FieldArena field_arena;
 };
 
 /// Writes an IPv4 client as IPv4 even on a dual-stack socket, so that it has one spelling.
@@ -190,7 +282,7 @@ bool isTrusted(const std::vector<AddressRange>& ranges, const asio::ip::address&
 /// Each proxy adds the address it saw to the end of X-Forwarded-For, and a client can write
 /// anything before that. So this reads from the end, and the client is the first address that isn't
 /// a trusted proxy. If an entry can't be read, the last address it could believe is used.
-std::string forwardedClient(const http::request<http::string_body>& request,
+std::string forwardedClient(const BeastRequest& request,
                             const std::vector<AddressRange>& ranges, const std::string& peer) {
     std::string entries;
     const auto fields = request.equal_range("X-Forwarded-For");
@@ -427,7 +519,8 @@ struct Server::Impl {
         beast::tcp_stream& transport = connection.transport();
 
         while (!stopping) {
-            http::request_parser<http::string_body> parser;
+            BeastRequestParser parser{std::piecewise_construct, std::make_tuple(),
+                                      std::make_tuple(FieldAllocator<char>{connection.field_arena})};
             parser.body_limit(options.max_body_bytes);
 
             connection.busy = false;
@@ -476,11 +569,14 @@ struct Server::Impl {
                                                asio::use_awaitable);
 
             const bool keep_alive = wants_keep_alive && !stopping;
-            auto beast_response = toBeastResponse(response, version, keep_alive, head_request);
+            auto beast_response = toBeastResponse(std::move(response), version, keep_alive,
+                                                  head_request, connection.field_arena);
 
+            // Writing a message, rather than a serializer, makes Beast allocate one for it.
+            http::response_serializer<http::string_body, BeastFields> serializer{beast_response};
             transport.expires_after(options.request_timeout);
             auto [write_error, write_size] =
-                co_await http::async_write(stream, beast_response, kAsTuple);
+                co_await http::async_write(stream, serializer, kAsTuple);
             if (write_error) {
                 co_return false;
             }
@@ -493,7 +589,8 @@ struct Server::Impl {
 
     template <typename Stream>
     asio::awaitable<void> sendError(Connection& connection, Stream& stream, int status) {
-        auto response = toBeastResponse(errorResponse(status, statusReason(status)), 11, false, false);
+        auto response = toBeastResponse(errorResponse(status, statusReason(status)), 11, false,
+                                        false, connection.field_arena);
         connection.transport().expires_after(options.request_timeout);
         static_cast<void>(co_await http::async_write(stream, response, kAsTuple));
     }

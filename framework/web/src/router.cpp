@@ -6,16 +6,6 @@
 
 namespace cppboot::web {
 
-namespace {
-
-bool isAtLeastAsSpecific(const std::vector<bool>& candidate, const std::vector<bool>& best) {
-    // A literal segment beats a parameter, and earlier segments count first.
-    return std::lexicographical_compare(best.begin(), best.end(), candidate.begin(),
-                                        candidate.end());
-}
-
-}  // namespace
-
 Router& Router::add(Method method, std::string_view pattern, Handler handler) {
     const auto invalid = [&](const std::string& reason) {
         return Exception(Error{ErrorCode::InvalidArgument,
@@ -65,7 +55,11 @@ Router& Router::add(Method method, std::string_view pattern, Handler handler) {
         }
     }
 
-    routes_.push_back(Route{method, std::string{pattern}, std::move(segments), std::move(handler)});
+    const auto parameter_count = static_cast<std::size_t>(
+        std::count_if(segments.begin(), segments.end(),
+                      [](const Segment& segment) { return segment.is_parameter; }));
+    routes_.push_back(Route{method, std::string{pattern}, std::move(segments), parameter_count,
+                            std::move(handler)});
     return *this;
 }
 
@@ -101,24 +95,31 @@ void Router::onUnhandledException(std::function<void(std::string_view)> handler)
 Router::Match Router::findRoute(const Request& request) const {
     const std::vector<std::string>& path = request.pathSegments();
 
+    // A literal segment beats a parameter, and earlier segments count first. Both routes have as
+    // many segments as the path.
+    const auto is_more_specific = [](const Route& candidate, const Route& best) {
+        for (std::size_t i = 0; i < candidate.segments.size(); ++i) {
+            if (candidate.segments[i].is_parameter != best.segments[i].is_parameter) {
+                return best.segments[i].is_parameter;
+            }
+        }
+        return false;
+    };
+
     // HEAD uses the GET route when it has none of its own, as HTTP expects.
     const auto search = [&](Method method) -> const Route* {
         const Route* best = nullptr;
-        std::vector<bool> best_shape;
         for (const Route& route : routes_) {
             if (route.method != method || route.segments.size() != path.size()) {
                 continue;
             }
 
-            std::vector<bool> shape;
             bool matches = true;
             for (std::size_t i = 0; i < path.size() && matches; ++i) {
                 matches = route.segments[i].is_parameter || route.segments[i].text == path[i];
-                shape.push_back(!route.segments[i].is_parameter);
             }
-            if (matches && (best == nullptr || isAtLeastAsSpecific(shape, best_shape))) {
+            if (matches && (best == nullptr || is_more_specific(route, *best))) {
                 best = &route;
-                best_shape = std::move(shape);
             }
         }
         return best;
@@ -167,8 +168,14 @@ Response Router::run(std::size_t index, const Request& request, const Match& mat
         if (index == middleware_.size()) {
             return dispatch(request, match);
         }
-        return middleware_[index](request, [&, index](const Request& next_request) {
-            return run(index + 1, next_request, match);
+        // One pointer, so that the std::function for next holds it without allocating.
+        const struct {
+            const Router& router;
+            const Match& match;
+            std::size_t next_index;
+        } rest{*this, match, index + 1};
+        return middleware_[index](request, [&rest](const Request& next_request) {
+            return rest.router.run(rest.next_index, next_request, rest.match);
         });
     } catch (const HttpError& error) {
         return errorResponse(error.status(), error.what());
@@ -188,10 +195,13 @@ Response Router::handle(Request request) const {
     const Match match = findRoute(request);
     if (match.route != nullptr) {
         request.route_ = match.route->pattern;
+        request.params_.clear();
+        request.params_.reserve(match.route->parameter_count);
         for (std::size_t i = 0; i < match.route->segments.size(); ++i) {
             const Segment& segment = match.route->segments[i];
             if (segment.is_parameter) {
-                request.params_.insert_or_assign(segment.text, request.segments_[i]);
+                // A route can't name a parameter twice, so each name is added once.
+                request.params_.emplace_back(segment.text, request.segments_[i]);
             }
         }
     }

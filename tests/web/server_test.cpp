@@ -612,6 +612,31 @@ TEST_F(ServerTest, PassesBodyAndHeadersToHandlers) {
     EXPECT_EQ(response.body(), "hello|localhost");
 }
 
+// The connection keeps memory for header fields, which starts again for each request. Requests
+// with more headers than it holds, and requests after those, have to come through whole.
+TEST_F(ServerTest, ReadsAnyNumberOfHeadersOnOneConnection) {
+    router_.get("/headers", [](const Request& request) {
+        return Response::text(std::to_string(request.headers().size()) + " " +
+                              request.header("X-Last").value_or("none"));
+    });
+    const auto port = startServer().port();
+
+    Client client{port};
+    for (const int count : {1, 70, 2, 70, 0, 30}) {
+        std::string text = "GET /headers HTTP/1.1\r\nHost: localhost\r\n";
+        for (int i = 0; i < count; ++i) {
+            text += "X-Header-" + std::to_string(i) + ": " +
+                    std::string(80, static_cast<char>('a' + i % 26)) + "\r\n";
+        }
+        text += "X-Last: " + std::to_string(count) + "\r\n\r\n";
+        client.sendRaw(text);
+
+        const auto response = client.read();
+        EXPECT_EQ(response.result_int(), 200);
+        EXPECT_EQ(response.body(), std::to_string(count + 2) + " " + std::to_string(count));
+    }
+}
+
 TEST_F(ServerTest, ReusesAConnection) {
     std::atomic<int> count{0};
     router_.get("/", [&](const Request&) { return Response::text(std::to_string(++count)); });

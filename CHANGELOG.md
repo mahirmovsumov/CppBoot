@@ -31,6 +31,19 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `ErrorCode::InvalidConfiguration`, which `runApplication` turns into exit code 78 when it's thrown while components are registered.
 - The test that new projects come with now reads environment variables too, so a required setting given that way doesn't fail it.
 
+### Performance
+
+- A request makes far fewer allocations. A plain `GET` with a browser's headers takes 5, where it took 30, and one with path parameters and a query string takes 9, where it took 38. The work between parsing a request and writing its response takes less than half the time: about 560 ns, where it took 1,320 ns, for the same `GET` through two middleware.
+  - A request's headers are kept in one block of memory, not two strings for each.
+  - Header fields are parsed into one piece of memory for each request, not one for each field.
+  - A response's body is moved into what's written, not copied.
+  - Finding a route and calling middleware don't allocate. Before, each route with as many segments as the path cost one, and each middleware cost one.
+  - Query and path parameters are kept in a list, not a map.
+- `Request::headerView` reads a header without copying it. Checking a token uses it.
+- **Change:** `Request::headers()` returns a copy of the headers, as a `Headers`, where it returned a reference. `Request::create` takes a `RequestHeaders`, which a `Headers` converts to, so existing calls work.
+- The logger writes several threads' lines with one system call when they arrive together, where it made one for each line. Every line is still written before the call that logged it returns, or before the call of a thread that was already waiting does.
+- A test counts the allocations for each kind of request and fails if one goes over its budget, so the request path can't get slower without anyone noticing. See [making it faster without giving any of this up](docs/architecture/005-memory-management.md#making-it-faster-without-giving-any-of-this-up).
+
 ### Fewer dependencies
 
 - Settings files no longer use yaml-cpp. CppBoot's own reader handles the YAML that settings use, and names the line of anything else. See [what a settings file can contain](docs/guides/configuration.md#what-a-settings-file-can-contain).

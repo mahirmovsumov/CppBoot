@@ -203,6 +203,16 @@ request.clientAddress();         // The client's IP address
 
 `param`, `query` and `header` return a `std::optional<std::string>`.
 
+`header` gives you a copy. Where that matters, such as in middleware that reads a long header on every request, `headerView` returns a `std::optional<std::string_view>` without copying. It's valid for as long as the request is, so copy it if you keep it for longer:
+
+```cpp
+if (const auto agent = request.headerView("User-Agent"); agent && agent->starts_with("curl/")) {
+    // ...
+}
+```
+
+`request.headers()` returns a copy of all of them, in the order they were sent.
+
 Behind a proxy, `clientAddress` is the proxy's address unless you set `cppboot.server.trusted_proxies`, as the [security guide](security.md#behind-a-proxy) explains. Don't read the client's address from `X-Forwarded-For` yourself, because any client can send that header.
 
 ## Responses

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <map>
 #include <optional>
 #include <stdexcept>
 #include <stop_token>
@@ -22,20 +21,75 @@ std::optional<Method> parseMethod(std::string_view text) noexcept;
 
 using Headers = std::vector<std::pair<std::string, std::string>>;
 
+/// A request's headers, kept together in one block of memory that the request owns, rather than
+/// in two strings for each header. Copying or moving it leaves nothing pointing at the original.
+class RequestHeaders {
+public:
+    RequestHeaders() = default;
+    /// Not explicit, so that a Headers can be passed wherever a request's headers are wanted.
+    RequestHeaders(const Headers& headers);
+
+    /// Makes room for headers whose names and values add up to this many characters.
+    void reserve(std::size_t count, std::size_t characters);
+    void add(std::string_view name, std::string_view value);
+
+    std::size_t size() const noexcept { return count_; }
+    bool empty() const noexcept { return count_ == 0; }
+
+    /// Returns the first header with a name, ignoring letter case. It's valid until these headers
+    /// change or are destroyed.
+    std::optional<std::string_view> find(std::string_view name) const noexcept
+        CPPBOOT_LIFETIMEBOUND;
+
+    /// Calls visit(name, value) for each header, in the order they were added.
+    template <typename Visitor>
+    void forEach(Visitor&& visit) const {
+        std::size_t offset = 0;
+        for (std::size_t i = 0; i < count_; ++i) {
+            const Entry entry = entryAt(offset);
+            visit(entry.name, entry.value);
+            offset = entry.end;
+        }
+    }
+
+private:
+    struct Entry {
+        std::string_view name;
+        std::string_view value;
+        /// Where the next entry starts.
+        std::size_t end;
+    };
+
+    Entry entryAt(std::size_t offset) const noexcept;
+
+    /// Each header is the length of its name, the length of its value, then both texts. Lengths
+    /// rather than pointers, so that a copy is complete in itself.
+    std::string storage_;
+    std::size_t count_{0};
+};
+
 /// An HTTP request. Handlers receive it after routing, with its path parameters filled in.
 class Request {
 public:
     /// Fails if the target has invalid percent-encoding or encodes a null character.
-    static Result<Request> create(Method method, std::string_view target, Headers headers = {},
-                                  std::string body = {});
+    static Result<Request> create(Method method, std::string_view target,
+                                  RequestHeaders headers = {}, std::string body = {});
 
     Method method() const noexcept { return method_; }
     const std::string& path() const noexcept CPPBOOT_LIFETIMEBOUND { return path_; }
     const std::string& body() const noexcept CPPBOOT_LIFETIMEBOUND { return body_; }
-    const Headers& headers() const noexcept CPPBOOT_LIFETIMEBOUND { return headers_; }
+    /// A copy of every header. Use header() or headerView() to read one.
+    Headers headers() const;
 
     /// Returns a header by name, ignoring letter case.
     std::optional<std::string> header(std::string_view name) const;
+
+    /// The same, without copying it. It's valid for as long as this request is, so copy it to keep
+    /// it for longer.
+    std::optional<std::string_view> headerView(std::string_view name) const noexcept
+        CPPBOOT_LIFETIMEBOUND {
+        return headers_.find(name);
+    }
 
     /// Returns a decoded query parameter, such as "page" from /users?page=2.
     std::optional<std::string> query(std::string_view name) const;
@@ -83,16 +137,21 @@ private:
 
     Request() = default;
 
+    /// A request has a handful of these at most, so a list is smaller and quicker than a map.
+    using Values = std::vector<std::pair<std::string, std::string>>;
+
+    static const std::string* findValue(const Values& values, std::string_view name) noexcept;
+
     Method method_{Method::Get};
     std::string path_;
     std::vector<std::string> segments_;
-    std::map<std::string, std::string, std::less<>> query_;
-    std::map<std::string, std::string, std::less<>> params_;
+    Values query_;
+    Values params_;
     std::string route_;
     std::string client_address_;
     std::stop_token stop_token_;
     std::chrono::steady_clock::time_point deadline_{std::chrono::steady_clock::time_point::max()};
-    Headers headers_;
+    RequestHeaders headers_;
     std::string body_;
 };
 
@@ -105,7 +164,9 @@ public:
     static Response json(std::string body, int status = 200);
 
     int status() const noexcept { return status_; }
-    const std::string& body() const noexcept CPPBOOT_LIFETIMEBOUND { return body_; }
+    const std::string& body() const& noexcept CPPBOOT_LIFETIMEBOUND { return body_; }
+    /// Takes the body out of a response that's about to go away, without copying it.
+    std::string body() && noexcept { return std::move(body_); }
     const Headers& headers() const noexcept CPPBOOT_LIFETIMEBOUND { return headers_; }
 
     /// Sets a header, replacing any with the same name. Line breaks in a name or value would let

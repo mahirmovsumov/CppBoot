@@ -25,9 +25,8 @@ bool isLoopback(std::string_view address) {
     return address.starts_with("127.") || address == "::1";
 }
 
-std::optional<std::string_view> bearerToken(const std::string& header) {
+std::optional<std::string_view> bearerToken(std::string_view value) {
     constexpr std::string_view kScheme = "bearer ";
-    const std::string_view value = header;
     if (value.size() <= kScheme.size() ||
         !std::equal(kScheme.begin(), kScheme.end(), value.begin(), [](char expected, char actual) {
             return expected == std::tolower(static_cast<unsigned char>(actual));
@@ -187,9 +186,9 @@ void mount(web::Router& router, std::shared_ptr<Actuator> actuator, bool require
             // A proxy on this machine also connects from a local address, so a request it passed
             // on, which carries one of these headers, isn't counted as local.
             return !require_token && isLoopback(request.clientAddress()) &&
-                   !request.header("X-Forwarded-For") && !request.header("Forwarded");
+                   !request.headerView("X-Forwarded-For") && !request.headerView("Forwarded");
         }
-        const auto header = request.header("Authorization");
+        const auto header = request.headerView("Authorization");
         if (!header) {
             return false;
         }

@@ -1,7 +1,11 @@
 #include "cppboot/web/http.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 
 #include "cppboot/base/json.hpp"
 
@@ -92,7 +96,68 @@ std::optional<Method> parseMethod(std::string_view text) noexcept {
     return std::nullopt;
 }
 
-Result<Request> Request::create(Method method, std::string_view target, Headers headers,
+RequestHeaders::RequestHeaders(const Headers& headers) {
+    std::size_t characters = 0;
+    for (const auto& [name, value] : headers) {
+        characters += name.size() + value.size();
+    }
+    reserve(headers.size(), characters);
+    for (const auto& [name, value] : headers) {
+        add(name, value);
+    }
+}
+
+namespace {
+
+using HeaderLength = std::uint32_t;
+
+HeaderLength readLength(const std::string& storage, std::size_t offset) noexcept {
+    HeaderLength length = 0;
+    std::memcpy(&length, storage.data() + offset, sizeof(length));
+    return length;
+}
+
+}  // namespace
+
+void RequestHeaders::reserve(std::size_t count, std::size_t characters) {
+    storage_.reserve(storage_.size() + count * 2 * sizeof(HeaderLength) + characters);
+}
+
+void RequestHeaders::add(std::string_view name, std::string_view value) {
+    if (name.size() > std::numeric_limits<HeaderLength>::max() ||
+        value.size() > std::numeric_limits<HeaderLength>::max()) {
+        throw Exception(Error{ErrorCode::InvalidArgument, "A request header is too long"});
+    }
+    const std::array<HeaderLength, 2> lengths{static_cast<HeaderLength>(name.size()),
+                                              static_cast<HeaderLength>(value.size())};
+    storage_.append(reinterpret_cast<const char*>(lengths.data()), sizeof(lengths));
+    storage_.append(name);
+    storage_.append(value);
+    ++count_;
+}
+
+RequestHeaders::Entry RequestHeaders::entryAt(std::size_t offset) const noexcept {
+    const std::size_t name_size = readLength(storage_, offset);
+    const std::size_t value_size = readLength(storage_, offset + sizeof(HeaderLength));
+    const char* const text = storage_.data() + offset + 2 * sizeof(HeaderLength);
+    return Entry{{text, name_size},
+                 {text + name_size, value_size},
+                 offset + 2 * sizeof(HeaderLength) + name_size + value_size};
+}
+
+std::optional<std::string_view> RequestHeaders::find(std::string_view name) const noexcept {
+    std::size_t offset = 0;
+    for (std::size_t i = 0; i < count_; ++i) {
+        const Entry entry = entryAt(offset);
+        if (equalsIgnoringCase(entry.name, name)) {
+            return entry.value;
+        }
+        offset = entry.end;
+    }
+    return std::nullopt;
+}
+
+Result<Request> Request::create(Method method, std::string_view target, RequestHeaders headers,
                                 std::string body) {
     const auto invalid = [&] {
         return Error{ErrorCode::InvalidArgument, "Invalid request target: " + std::string{target}};
@@ -110,6 +175,13 @@ Result<Request> Request::create(Method method, std::string_view target, Headers 
     request.headers_ = std::move(headers);
     request.body_ = std::move(body);
 
+    // Counted first, so that each list is allocated once, and not at all when it's empty.
+    std::size_t segment_count = 0;
+    for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+        segment_count += path[i] == '/' && path[i + 1] != '/' ? 1 : 0;
+    }
+    request.segments_.reserve(segment_count);
+
     std::size_t start = 1;
     while (start <= path.size()) {
         const auto end = std::min(path.find('/', start), path.size());
@@ -125,6 +197,8 @@ Result<Request> Request::create(Method method, std::string_view target, Headers 
 
     if (question_mark != std::string_view::npos) {
         std::string_view rest = target.substr(question_mark + 1);
+        request.query_.reserve(
+            static_cast<std::size_t>(std::count(rest.begin(), rest.end(), '&')) + 1);
         while (!rest.empty()) {
             const auto ampersand = rest.find('&');
             const std::string_view pair = rest.substr(0, ampersand);
@@ -142,30 +216,49 @@ Result<Request> Request::create(Method method, std::string_view target, Headers 
             if (!name || !value) {
                 return invalid();
             }
-            request.query_.try_emplace(*std::move(name), *std::move(value));
+            // The first value of a name is the one that counts.
+            if (findValue(request.query_, *name) == nullptr) {
+                request.query_.emplace_back(*std::move(name), *std::move(value));
+            }
         }
     }
     return request;
 }
 
+const std::string* Request::findValue(const Values& values, std::string_view name) noexcept {
+    const auto found = std::find_if(values.begin(), values.end(),
+                                    [&](const auto& entry) { return entry.first == name; });
+    return found == values.end() ? nullptr : &found->second;
+}
+
+Headers Request::headers() const {
+    Headers copy;
+    copy.reserve(headers_.size());
+    headers_.forEach([&](std::string_view name, std::string_view value) {
+        copy.emplace_back(name, value);
+    });
+    return copy;
+}
+
 std::optional<std::string> Request::header(std::string_view name) const {
-    return findHeader(headers_, name);
+    if (const auto value = headers_.find(name)) {
+        return std::string{*value};
+    }
+    return std::nullopt;
 }
 
 std::optional<std::string> Request::query(std::string_view name) const {
-    const auto entry = query_.find(name);
-    if (entry == query_.end()) {
-        return std::nullopt;
+    if (const std::string* const value = findValue(query_, name)) {
+        return *value;
     }
-    return entry->second;
+    return std::nullopt;
 }
 
 std::optional<std::string> Request::param(std::string_view name) const {
-    const auto entry = params_.find(name);
-    if (entry == params_.end()) {
-        return std::nullopt;
+    if (const std::string* const value = findValue(params_, name)) {
+        return *value;
     }
-    return entry->second;
+    return std::nullopt;
 }
 
 Response Response::text(std::string body, int status) {

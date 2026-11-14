@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <cppboot/web/router.hpp>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace cppboot::web;
@@ -35,6 +39,92 @@ TEST(RequestTest, ReadsHeadersIgnoringCase) {
         Request::create(Method::Get, "/", Headers{{"Content-Type", "text/plain"}}).value();
     EXPECT_EQ(request.header("content-type"), "text/plain");
     EXPECT_FALSE(request.header("accept"));
+}
+
+TEST(RequestTest, TheFirstValueOfARepeatedQueryNameCounts) {
+    const Request request = makeRequest(Method::Get, "/?tag=one&other=x&tag=two&&tag=");
+    EXPECT_EQ(request.query("tag"), "one");
+    EXPECT_EQ(request.query("other"), "x");
+}
+
+TEST(RequestTest, ReadsAHeaderWithoutCopyingIt) {
+    const Request request =
+        Request::create(Method::Get, "/", Headers{{"Accept", "text/plain"}, {"X-Empty", ""}})
+            .value();
+    EXPECT_EQ(request.headerView("ACCEPT"), std::string_view{"text/plain"});
+    EXPECT_EQ(request.headerView("x-empty"), std::string_view{});
+    EXPECT_FALSE(request.headerView("absent"));
+    EXPECT_FALSE(request.headerView(""));
+}
+
+TEST(RequestTest, ListsEveryHeaderInOrder) {
+    const Headers sent{{"Host", "localhost"}, {"Accept", "a"}, {"accept", "b"}, {"X-Empty", ""}};
+    const Request request = Request::create(Method::Get, "/", sent).value();
+    EXPECT_EQ(request.headers(), sent);
+    // The first of two with one name, as before.
+    EXPECT_EQ(request.header("Accept"), "a");
+    EXPECT_TRUE(makeRequest(Method::Get, "/").headers().empty());
+}
+
+// A request crosses from a network thread to a worker by being moved, and a handler may keep a
+// copy. Neither may leave anything pointing into the request it came from.
+TEST(RequestTest, CopiesAndMovesOwnTheirHeaders) {
+    const std::string long_value(200, 'v');
+    auto original = std::make_unique<Request>(
+        Request::create(Method::Get, "/", Headers{{"X-Long", long_value}, {"X-Short", "s"}})
+            .value());
+
+    const Request copy = *original;
+    Request moved = std::move(*original);
+    original.reset();
+
+    for (const Request* request : {&copy, static_cast<const Request*>(&moved)}) {
+        EXPECT_EQ(request->headerView("x-long"), std::string_view{long_value});
+        EXPECT_EQ(request->header("X-Short"), "s");
+        EXPECT_EQ(request->headers().size(), 2U);
+    }
+}
+
+TEST(RequestHeadersTest, GrowsWithoutBeingReserved) {
+    RequestHeaders headers;
+    EXPECT_TRUE(headers.empty());
+    EXPECT_FALSE(headers.find("X-0"));
+
+    for (int i = 0; i < 100; ++i) {
+        headers.add("X-" + std::to_string(i), std::string(static_cast<std::size_t>(i), 'a'));
+    }
+    EXPECT_EQ(headers.size(), 100U);
+    EXPECT_EQ(headers.find("x-0"), std::string_view{});
+    EXPECT_EQ(headers.find("X-99"), std::string_view{std::string(99, 'a')});
+
+    int seen = 0;
+    headers.forEach([&](std::string_view name, std::string_view value) {
+        EXPECT_EQ(name, "X-" + std::to_string(seen));
+        EXPECT_EQ(value.size(), static_cast<std::size_t>(seen));
+        ++seen;
+    });
+    EXPECT_EQ(seen, 100);
+}
+
+TEST(RequestHeadersTest, KeepsBytesThatAreNotText) {
+    RequestHeaders headers;
+    const std::string value{"a\0b\xff", 4};
+    headers.add("X-Bytes", value);
+    EXPECT_EQ(headers.find("X-Bytes"), std::string_view{value});
+}
+
+// A vector that grows moves its items only if moving can't throw, and copies them otherwise.
+static_assert(std::is_nothrow_move_constructible_v<Request>);
+static_assert(std::is_nothrow_move_assignable_v<Request>);
+static_assert(std::is_nothrow_move_constructible_v<Response>);
+static_assert(std::is_nothrow_move_assignable_v<Response>);
+
+TEST(ResponseTest, GivesUpItsBodyWhenItIsGoingAway) {
+    const std::string text(100, 'x');
+    Response response = Response::text(text);
+    EXPECT_EQ(response.body(), text);
+    const std::string taken = std::move(response).body();
+    EXPECT_EQ(taken, text);
 }
 
 TEST(RequestTest, RejectsInvalidTargets) {

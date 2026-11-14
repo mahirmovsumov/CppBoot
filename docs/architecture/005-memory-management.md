@@ -55,6 +55,38 @@ A server must not let a client choose how much memory it uses. Each place that g
 
 With TLS, `SSL_MODE_RELEASE_BUFFERS` frees OpenSSL's buffers on idle connections, and there's no server-side session cache ([015](015-https.md)). Even so, an HTTPS connection uses 76 to 95 KB, against about 14 KB for plain HTTP, and where the rest goes hasn't been measured. That makes it the main limit on connections for a small server.
 
+## Making it faster without giving any of this up
+
+An allocation costs time, and under load it's also a lock or a cache miss, so the request path makes as few as it can. A plain `GET` takes 5, where it took 30, and the work between parsing a request and writing its response takes less than half the time it did. Each change kept the rules above, and the next one has to as well.
+
+**Copying less isn't the same as owning less.** Wherever a copy is removed, it has to stay clear who owns the data and how long it lives:
+
+| Where | Rule |
+|---|---|
+| What a handler sees | A request that owns all of its data |
+| Inside the framework | Views into data may be used while its owner is certainly alive, and never stored |
+| Between threads | The data moves, or is copied. Nothing is shared that can change |
+| When a request ends | Everything it used is released, and nothing of it reaches the next request |
+
+What that allows, and what it doesn't:
+
+- **A request's headers are one block of memory**, not two strings for each header. `RequestHeaders` holds them as lengths followed by text, with no pointers into itself, so a copied or moved request is complete. `Request::headerView` returns a view into that block, which lives as long as the request, as `body()` and `path()` do.
+- **Header fields are parsed into memory that the connection lends** for one request, in one allocation, rather than one for each field. Only that connection's network thread uses it, the handler's request is copied out of it before it crosses to a worker, and it's freed when the response has been written. So a connection waiting for its next request holds none, and [idle connections](#idle-connections) cost what they did.
+- **A response's body is moved** into what's written, not copied.
+- **Requests and responses aren't pooled or reused.** An object that served one client and then serves another is how data leaks between them, and it would break the rule that a request is a value of its own. Making them cheap to create is safer than making them last.
+- **A handler never gets a view into the connection's buffer.** The connection can close while a handler runs, and saving one copy of a few hundred bytes isn't worth a pointer that can dangle.
+- **No allocator is passed through the types** that handlers use. `std::pmr` would change `std::string` to another type everywhere in the public interface, for what's left to save after the changes above.
+
+A change to the request path answers five questions before it goes in:
+
+1. Does it make fewer allocations, or take less time? Measured, not expected.
+2. Does every piece of data still have one clear owner?
+3. Can one request still never see another's data?
+4. Does the public interface change?
+5. Does a connection that's waiting use more memory?
+
+`tests/perf/allocation_test.cpp` answers the first on every run of the tests. It counts the allocations for each of three kinds of request, through the server and through the router alone, and fails when one takes more than its budget. A count is the same on every run, which a timing isn't.
+
 ## What isn't done
 
 - **Allocations per request haven't been measured.** A request builds several strings and maps: the path, its segments, query and route parameters, headers, and two metric keys. That's fine for the throughput measured so far ([benchmarks](../benchmarks.md)), and nothing will change without a measurement that shows it matters.

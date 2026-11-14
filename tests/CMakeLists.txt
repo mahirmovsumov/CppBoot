@@ -66,6 +66,18 @@ set_tests_properties(cppboot-web-tests-many-io-threads PROPERTIES
     ENVIRONMENT "CPPBOOT_TEST_IO_THREADS=4"
 )
 
+# Counts allocations for each request, by replacing operator new, which sanitizers do too.
+if(NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize")
+    add_executable(cppboot-allocation-tests perf/allocation_test.cpp)
+    target_link_libraries(cppboot-allocation-tests PRIVATE cppboot::web Boost::headers)
+    if(WIN32)
+        target_compile_definitions(cppboot-allocation-tests PRIVATE _WIN32_WINNT=0x0A00)
+        target_link_libraries(cppboot-allocation-tests PRIVATE ws2_32 mswsock)
+    endif()
+    cppboot_apply_compiler_options(cppboot-allocation-tests)
+    add_test(NAME cppboot-allocation-tests COMMAND cppboot-allocation-tests)
+endif()
+
 add_executable(cppboot-security-tests security/security_test.cpp)
 target_link_libraries(cppboot-security-tests PRIVATE
     cppboot::security

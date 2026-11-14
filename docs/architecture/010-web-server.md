@@ -19,6 +19,8 @@ TLS handshakes stay on network threads, rather than getting their own executor. 
 
 Each connection handles one request at a time, so the number of queued requests is limited by `max_connections`. That bounds memory under load.
 
+A request is copied once, from the connection's memory into a `Request` that owns its data, on the network thread. That's what makes it safe to hand to a worker, and it's kept cheap: the headers go into one block, and the body is moved. See [005](005-memory-management.md#making-it-faster-without-giving-any-of-this-up) for what the request path allocates, and the test that keeps it from growing.
+
 The server keeps 64 accepts waiting at once. A single one takes one connection per turn of the event loop, which is only a few hundred per second under load, so new clients would queue for seconds. See the [benchmarks](../benchmarks.md).
 
 ## Public headers

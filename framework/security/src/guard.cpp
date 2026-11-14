@@ -8,7 +8,7 @@
 namespace cppboot::security {
 
 std::optional<Principal> authenticate(const TokenService& tokens, const web::Request& request) {
-    const auto header = request.header("Authorization");
+    const auto header = request.headerView("Authorization");
     if (!header) {
         return std::nullopt;
     }

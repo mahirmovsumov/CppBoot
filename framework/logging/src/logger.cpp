@@ -1,5 +1,6 @@
 #include "cppboot/logging/logger.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -76,6 +77,8 @@ struct Logger::Impl {
     std::optional<std::ofstream> file;
     /// One line at a time, so that lines from different threads never mix.
     std::mutex mutex;
+    /// Threads that have a line to write and are waiting for the mutex.
+    std::atomic<int> waiting{0};
 };
 
 Result<Level> parseLevel(std::string_view text) {
@@ -122,20 +125,28 @@ void Logger::log(Level level, std::string_view message) const {
     if (!enabled(level)) {
         return;
     }
+    // Everything that takes time or can fail happens before the lock, which is held only to write.
     const std::string time = timestamp(std::chrono::system_clock::now());
     const std::string_view name = levelName(level);
     const std::string plain = std::format("[{}] [{}] [{}] {}\n", time, impl_->name, name, message);
+    const std::string colored =
+        impl_->color ? std::format("[{}] [{}] [{}{}{}] {}\n", time, impl_->name, levelColor(level),
+                                   name, kResetColor, message)
+                     : std::string{};
+    const std::string& console = impl_->color ? colored : plain;
 
+    impl_->waiting.fetch_add(1, std::memory_order_relaxed);
     const std::lock_guard lock{impl_->mutex};
-    if (impl_->color) {
-        const std::string colored = std::format("[{}] [{}] [{}{}{}] {}\n", time, impl_->name,
-                                                levelColor(level), name, kResetColor, message);
-        std::fwrite(colored.data(), 1, colored.size(), stdout);
-    } else {
-        std::fwrite(plain.data(), 1, plain.size(), stdout);
+    const bool others_waiting = impl_->waiting.fetch_sub(1, std::memory_order_relaxed) > 1;
+
+    std::fwrite(console.data(), 1, console.size(), stdout);
+    // So that the log is complete when a program stops, or when output goes to a pipe. When other
+    // threads are waiting to write, the last of them does it for all of them, which is one system
+    // call rather than one for each line, at the time when lines arrive fastest. Nothing between
+    // counting a thread as waiting and this can fail, so a line is never left unwritten.
+    if (!others_waiting) {
+        std::fflush(stdout);
     }
-    // Every line, so that the log is complete when a program stops, or when output goes to a pipe.
-    std::fflush(stdout);
 
     if (impl_->file) {
         impl_->file->write(plain.data(), static_cast<std::streamsize>(plain.size()));
