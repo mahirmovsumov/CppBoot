@@ -79,6 +79,21 @@ Recording [metrics](guides/actuator.md) on every request took about 4% of throug
 | 2 | 12,992 requests/second | 12,595 requests/second |
 | 3 | 13,292 requests/second | 12,627 requests/second |
 
+## The access log
+
+The [access log](guides/web.md#access-log) writes a line for every request, and that's a large share of the work when a request does almost nothing. On one core of an AMD EPYC 9V74, with 64 connections, 5 rounds each, and the log written to a file:
+
+| Build | `/plaintext` requests/second | Route with parameters | p99 | Server CPU per request |
+|---|---|---|---|---|
+| Before request IDs | 49,446 | 49,828 | 1.5 ms | 21.2 µs |
+| With request IDs, access log off | 47,964 | 48,409 | 1.5 ms | 20.5 µs |
+| With request IDs, access log on | 41,690 | 42,057 | 1.8 ms | 24.0 µs |
+
+- **Request IDs cost nothing measurable.** The two builds without the log took turns being faster from round to round, and the one with IDs used slightly less CPU.
+- **The access log took 13 to 16% of throughput** in every round, and 3.4 µs of CPU for each request. Most of that is one more system call for each request, because every line is written before the next one starts, so that none are lost if the server crashes.
+
+A real handler that reads a database takes far longer than this one, so the log's share of its time is far smaller. If it matters, turn it off with `cppboot.server.access_log: false`, or raise the log level.
+
 ## HTTPS
 
 These compare HTTP and HTTPS on the same machines as above, with 1 network thread and 1 worker thread, over loopback. Each number is requests per second, and kept-open results are from 3 rounds on Linux, and 2 or 3 on Windows.

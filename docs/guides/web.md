@@ -317,6 +317,8 @@ That's the method, the path, the status, how long it took from when the whole re
 - **Clients choose paths,** so anything in a method or path that could break a log line, such as a line break or a terminal control code, is written as `?`, and a path is cut at 200 characters.
 - **It follows the log level.** With `cppboot.logging.level` set to `warn` or above, nothing is written and the server doesn't prepare the lines. Set `cppboot.server.access_log` to `false` to turn it off at `info`.
 
+On a route that does almost nothing, the log took 13 to 16% of throughput. See [what it costs](../benchmarks.md#the-access-log).
+
 ### Request IDs
 
 Every request gets an ID, which is in its access log line, in the response's `X-Request-Id` header, and in `request.id()`. Put it in your own log lines, so that they can be matched with the request:

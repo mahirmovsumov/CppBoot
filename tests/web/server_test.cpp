@@ -953,6 +953,9 @@ protected:
         return server_->port();
     }
 
+    // The server logs into recorded_, which would otherwise go first, while the server still runs.
+    void TearDown() override { server_.reset(); }
+
     RecordedRequests recorded_;
 };
 
