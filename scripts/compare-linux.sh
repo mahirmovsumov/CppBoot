@@ -5,6 +5,10 @@
 #
 #   scripts/compare-linux.sh LOAD_BIN NAME=SERVER_BIN [NAME=SERVER_BIN ...]
 #
+# A build can be given settings too, to compare one build with and without them:
+#
+#   scripts/compare-linux.sh build/load quiet=build/server "logged=build/server --cppboot.logging.level=info"
+#
 # Each round measures every build in turn, so a machine that slows down partway affects them all
 # alike. The last build is the one that's profiled. The server gets core 0, with 1 network thread and
 # 1 worker thread, and the load generator gets the other cores.
@@ -16,9 +20,16 @@ load_bin="$(realpath "$1")"
 shift
 names=()
 servers=()
+arguments=()
 for variant in "$@"; do
     names+=("${variant%%=*}")
-    servers+=("$(realpath "${variant#*=}")")
+    command="${variant#*=}"
+    servers+=("$(realpath "${command%% *}")")
+    if [ "$command" = "${command#* }" ]; then
+        arguments+=("")
+    else
+        arguments+=("${command#* }")
+    fi
 done
 
 rounds="${ROUNDS:-5}"
@@ -32,8 +43,11 @@ echo "Machine: $cores cores"
 grep -m1 'model name' /proc/cpuinfo
 sudo prlimit --pid $$ --nofile=1048576:1048576
 
+# Starts the build with this index.
 start_server() {
-    taskset -c 0 "$1" --cppboot.server.worker_threads=1 >/tmp/compare-server.log 2>&1 &
+    # shellcheck disable=SC2086
+    taskset -c 0 "${servers[$1]}" --cppboot.server.worker_threads=1 ${arguments[$1]} \
+        >/tmp/compare-server.log 2>&1 &
     server_pid=$!
     for _ in $(seq 1 100); do
         if bash -c "exec 3<>/dev/tcp/127.0.0.1/$port" 2>/dev/null; then
@@ -75,7 +89,7 @@ echo "=== Requests per second, 64 connections, ${seconds} s each, ${rounds} roun
 results="$(mktemp)"
 for round in $(seq 1 "$rounds"); do
     for index in "${!servers[@]}"; do
-        start_server "${servers[$index]}"
+        start_server "$index"
         load --connections 64 --seconds 2 --target /plaintext >/dev/null
         for target in "${targets[@]}"; do
             line="$(load --connections 64 --seconds "$seconds" --target "$target")"
@@ -104,7 +118,7 @@ echo "=== What a request costs the server: /plaintext, 64 connections, ${seconds
 ticks_per_second="$(getconf CLK_TCK)"
 printf '%-12s %10s %12s %12s %16s %16s\n' build requests "user us/req" "sys us/req" "voluntary sw/req" "forced sw/req"
 for index in "${!servers[@]}"; do
-    start_server "${servers[$index]}"
+    start_server "$index"
     load --connections 64 --seconds 2 --target /plaintext >/dev/null
     read -r user_before system_before <<<"$(cpu_ticks)"
     voluntary_before="$(thread_sum voluntary_ctxt_switches)"
@@ -121,13 +135,13 @@ for index in "${!servers[@]}"; do
     stop_server
 done
 
-profiled="${names[-1]}"
-server_bin="${servers[-1]}"
+last=$((${#names[@]} - 1))
+profiled="${names[$last]}"
 
 echo
 echo "=== System calls for each request: $profiled, /plaintext, 64 connections, 5 s under strace"
 if command -v strace >/dev/null; then
-    start_server "$server_bin"
+    start_server "$last"
     load --connections 64 --seconds 2 --target /plaintext >/dev/null
     sudo strace -c -f -p "$server_pid" -o /tmp/compare-strace.txt &
     strace_pid=$!
@@ -148,7 +162,7 @@ echo
 echo "=== Where $profiled spends its time: /plaintext, 64 connections, ${seconds} s"
 if command -v perf >/dev/null && perf version >/dev/null 2>&1; then
     sudo sysctl -q -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
-    start_server "$server_bin"
+    start_server "$last"
     load --connections 64 --seconds 2 --target /plaintext >/dev/null
     sudo perf record -q -e cpu-clock -F 1999 -g -p "$server_pid" -o /tmp/compare.perf -- sleep "$seconds" &
     perf_pid=$!

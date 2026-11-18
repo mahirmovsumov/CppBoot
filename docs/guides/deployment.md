@@ -64,7 +64,7 @@ Run `sudo ./install.sh` from a newer package to upgrade. It keeps your settings 
 | It crashes | systemd restarts it after 2 seconds. Repeated failures stop that, under systemd's default limits |
 | Its settings are invalid (exit code 78) | It isn't restarted, because that wouldn't help. Fix them and run `systemctl start` |
 | `systemctl stop` | It stops accepting connections and lets requests finish. After 30 seconds, handlers are [asked to stop](web.md#long-running-handlers), and after 45, systemd kills whatever is left |
-| Logs | They go to the system journal. Read them with `journalctl -u my-api` |
+| Logs | They go to the system journal. Read them with `journalctl -u my-api`. Every request has a line there, with its ID. See the [access log](web.md#access-log) |
 
 A missing secret exits with code 1, so it's restarted a few times before systemd gives up.
 
@@ -113,4 +113,5 @@ The archive holds the program and its libraries. Run it from its folder, so that
 
 - Set `cppboot.server.max_connections` to what your memory can hold. See the [benchmarks](../benchmarks.md).
 - Put a [rate limit](security.md#rate-limits) on every route that checks a password.
+- Decide how long the journal keeps logs, since the [access log](web.md#access-log) writes a line for every request. Behind a proxy that sets `X-Request-Id`, list it in `cppboot.server.trusted_proxies`, so that its logs and yours share an ID.
 - Back up `/var/lib/my-api` and `/etc/my-api`, which uninstalling keeps but a failed disk doesn't.

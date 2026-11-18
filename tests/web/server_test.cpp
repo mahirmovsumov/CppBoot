@@ -9,11 +9,14 @@
 #include <cstdlib>
 #include <cppboot/web/server_module.hpp>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <latch>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <random>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -901,6 +904,244 @@ TEST(ServerModuleTest, PortInUseFailsStartup) {
     options.default_settings = {{"cppboot.logging.level", "off"},
                                 {"cppboot.server.port", std::to_string(occupying.port())}};
 
+    Application app{0, nullptr, options};
+    app.emplaceModule<ServerModule>(router);
+    EXPECT_EQ(app.run(), kExitFailure);
+}
+
+/// Collects request records, which arrive just after their response, so a test may have to wait.
+class RecordedRequests {
+public:
+    Server::RequestLogFunction log() {
+        return [this](const RequestRecord& record) {
+            const std::lock_guard lock{mutex_};
+            records_.push_back(Saved{std::string{record.method}, std::string{record.path},
+                                     record.status, record.body_bytes,
+                                     std::string{record.client_address}, std::string{record.id}});
+            arrived_.notify_all();
+        };
+    }
+
+    struct Saved {
+        std::string method;
+        std::string path;
+        int status;
+        std::size_t body_bytes;
+        std::string client_address;
+        std::string id;
+    };
+
+    std::vector<Saved> waitFor(std::size_t count) {
+        std::unique_lock lock{mutex_};
+        arrived_.wait_for(lock, std::chrono::seconds{20}, [&] { return records_.size() >= count; });
+        return records_;
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable arrived_;
+    std::vector<Saved> records_;
+};
+
+class RequestLogTest : public ServerTest {
+protected:
+    std::uint16_t startLogged(ServerOptions options = testOptions()) {
+        server_ = std::make_unique<Server>(router_, std::move(options));
+        EXPECT_TRUE(server_->onRequest(recorded_.log()));
+        const auto started = server_->start();
+        EXPECT_TRUE(started) << (started ? "" : started.error().message());
+        return server_->port();
+    }
+
+    RecordedRequests recorded_;
+};
+
+TEST_F(RequestLogTest, RecordsEachRequestWithItsId) {
+    router_.get("/users/{id}", [](const Request& request) { return Response::text(request.id()); });
+    const auto port = startLogged();
+
+    Client client{port};
+    const auto first = client.send(http::verb::get, "/users/7?token=secret");
+    const auto second = client.send(http::verb::get, "/users/8");
+
+    const auto records = recorded_.waitFor(2);
+    ASSERT_EQ(records.size(), 2U);
+    EXPECT_EQ(records[0].method, "GET");
+    EXPECT_EQ(records[0].path, "/users/7");
+    EXPECT_EQ(records[0].status, 200);
+    EXPECT_EQ(records[0].body_bytes, 13U);
+    EXPECT_EQ(records[0].client_address, "127.0.0.1");
+
+    // The handler, the response header and the record agree, and every request gets its own.
+    EXPECT_EQ(records[0].id.size(), 13U);
+    EXPECT_EQ(first.body(), records[0].id);
+    EXPECT_EQ(first["X-Request-Id"], records[0].id);
+    EXPECT_EQ(second["X-Request-Id"], records[1].id);
+    EXPECT_NE(records[0].id, records[1].id);
+}
+
+TEST_F(RequestLogTest, IdsDontRepeat) {
+    router_.get("/", [](const Request&) { return Response{}; });
+    const auto port = startLogged();
+
+    Client client{port};
+    std::set<std::string> ids;
+    for (int i = 0; i < 200; ++i) {
+        ids.insert(std::string{client.send(http::verb::get, "/")["X-Request-Id"]});
+    }
+    EXPECT_EQ(ids.size(), 200U);
+}
+
+TEST_F(RequestLogTest, RecordsResponsesTheServerSendsItself) {
+    router_.post("/", [](const Request&) { return Response{}; });
+    ServerOptions options = testOptions();
+    options.max_body_bytes = 10;
+    const auto port = startLogged(std::move(options));
+
+    Client client{port};
+    const auto too_large = client.send(http::verb::post, "/", std::string(100, 'x'));
+    EXPECT_EQ(too_large.result_int(), 413);
+    Client other{port};
+    other.sendRaw("NOT HTTP AT ALL\r\n\r\n");
+    const auto malformed = other.read();
+    EXPECT_EQ(malformed.result_int(), 400);
+    Client third{port};
+    EXPECT_EQ(third.send(http::verb::get, "/missing").result_int(), 404);
+
+    auto records = recorded_.waitFor(3);
+    ASSERT_EQ(records.size(), 3U);
+    std::map<int, RecordedRequests::Saved> by_status;
+    for (auto& record : records) {
+        by_status.emplace(record.status, std::move(record));
+    }
+    EXPECT_EQ(by_status.at(413).method, "POST");
+    EXPECT_EQ(by_status.at(413).path, "/");
+    EXPECT_EQ(by_status.at(413).id, too_large["X-Request-Id"]);
+    EXPECT_EQ(by_status.at(400).path, "-");
+    EXPECT_EQ(by_status.at(400).id, malformed["X-Request-Id"]);
+    EXPECT_EQ(by_status.at(404).path, "/missing");
+}
+
+class RequestIdTest : public ServerTest {
+protected:
+    /// Sends a request with this X-Request-Id, and returns the ID the handler saw.
+    std::string idSeen(const std::vector<std::string>& trusted_proxies, const std::string& sent) {
+        router_.get("/id", [](const Request& request) { return Response::text(request.id()); });
+        ServerOptions options = testOptions();
+        options.trusted_proxies = trusted_proxies;
+        const auto port = startServer(std::move(options)).port();
+
+        Client client{port};
+        client.sendRaw("GET /id HTTP/1.1\r\nHost: localhost\r\nX-Request-Id: " + sent + "\r\n\r\n");
+        const auto response = client.read();
+        EXPECT_EQ(response["X-Request-Id"], response.body());
+        return response.body();
+    }
+};
+
+TEST_F(RequestIdTest, KeepsTheIdFromATrustedProxy) {
+    EXPECT_EQ(idSeen({"127.0.0.1"}, "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"),
+              "4bf92f35-77b3-4da6-a3ce-929d0e0e4736");
+}
+
+TEST_F(RequestIdTest, IgnoresTheIdFromAnyoneElse) {
+    const std::string seen = idSeen({}, "chosen-by-the-client");
+    EXPECT_NE(seen, "chosen-by-the-client");
+    EXPECT_EQ(seen.size(), 13U);
+}
+
+TEST_F(RequestIdTest, IgnoresAnIdThatCouldBreakALogLine) {
+    EXPECT_EQ(idSeen({"127.0.0.1"}, "two words").size(), 13U);
+    server_.reset();
+    router_ = Router{};
+    EXPECT_EQ(idSeen({"127.0.0.1"}, std::string(65, 'a')).size(), 13U);
+}
+
+TEST_F(ServerTest, RequestLogCantBeSetOnceStarted) {
+    Server& server = startServer();
+    EXPECT_FALSE(server.onRequest([](const RequestRecord&) {}));
+}
+
+TEST(FormatRequestRecordTest, WritesOneSafeLine) {
+    const RequestRecord record{"GET", "/a\nb\x1b[31m\xc3\xa9", 200, 52,
+                               std::chrono::microseconds{420}, "10.0.0.8", "3f9a1c0e5b7d2468"};
+    EXPECT_EQ(formatRequestRecord(record),
+              "GET /a?b?[31m?? 200 in 0.42 ms, 52 bytes, from 10.0.0.8, request 3f9a1c0e5b7d2468");
+
+    const std::string long_path(500, 'x');
+    const RequestRecord long_record{"GET", long_path, 200, 0, {}, "10.0.0.8", "id"};
+    EXPECT_NE(formatRequestRecord(long_record).find(std::string(200, 'x') + "... 200"),
+              std::string::npos);
+}
+
+namespace {
+
+/// Runs an application with these settings, sends one request, and returns its log.
+std::string logOfOneRequest(std::map<std::string, std::string> settings) {
+    const auto log_file = std::filesystem::temp_directory_path() /
+                          ("cppboot-access-log-" + std::to_string(std::random_device{}()) + ".log");
+    const auto router = std::make_shared<Router>();
+    router->get("/hello", [](const Request&) { return Response::text("hello"); });
+
+    ApplicationOptions options;
+    options.config_directory = std::filesystem::temp_directory_path() / "cppboot-absent-directory";
+    options.environment = std::map<std::string, std::string>{};
+    options.default_settings = std::move(settings);
+    options.default_settings["cppboot.server.port"] = "0";
+    options.default_settings["cppboot.logging.file"] = log_file.string();
+    {
+        Application app{0, nullptr, options};
+        auto module_owner = std::make_unique<ServerModule>(router);
+        ServerModule& server_module = *module_owner;
+        app.addModule(std::move(module_owner));
+
+        auto running = std::async(std::launch::async, [&] { return app.run(); });
+        while (app.state() != LifecycleState::Running) {
+            std::this_thread::yield();
+        }
+        {
+            Client client{server_module.port()};
+            EXPECT_EQ(client.send(http::verb::get, "/hello?name=ada").body(), "hello");
+        }
+        app.requestShutdown();
+        EXPECT_EQ(running.get(), kExitSuccess);
+    }
+
+    std::ifstream file{log_file};
+    std::string text{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+    file.close();
+    std::filesystem::remove(log_file);
+    return text;
+}
+
+}  // namespace
+
+TEST(ServerModuleTest, WritesAnAccessLog) {
+    const std::string log = logOfOneRequest({{"cppboot.logging.level", "info"}});
+    EXPECT_NE(log.find("GET /hello 200 in "), std::string::npos) << log;
+    EXPECT_NE(log.find(", 5 bytes, from 127.0.0.1, request "), std::string::npos) << log;
+    EXPECT_EQ(log.find("name=ada"), std::string::npos) << log;
+}
+
+TEST(ServerModuleTest, AccessLogCanBeTurnedOff) {
+    const std::string log = logOfOneRequest(
+        {{"cppboot.logging.level", "info"}, {"cppboot.server.access_log", "false"}});
+    EXPECT_EQ(log.find("GET /hello"), std::string::npos) << log;
+}
+
+TEST(ServerModuleTest, AccessLogFollowsTheLogLevel) {
+    const std::string log = logOfOneRequest({{"cppboot.logging.level", "warn"}});
+    EXPECT_EQ(log.find("GET /hello"), std::string::npos) << log;
+}
+
+TEST(ServerModuleTest, AnInvalidAccessLogSettingStopsStartup) {
+    const auto router = std::make_shared<Router>();
+    ApplicationOptions options;
+    options.config_directory = std::filesystem::temp_directory_path() / "cppboot-absent-directory";
+    options.environment = std::map<std::string, std::string>{};
+    options.default_settings = {{"cppboot.logging.level", "off"},
+                                {"cppboot.server.port", "0"},
+                                {"cppboot.server.access_log", "sometimes"}};
     Application app{0, nullptr, options};
     app.emplaceModule<ServerModule>(router);
     EXPECT_EQ(app.run(), kExitFailure);

@@ -299,7 +299,35 @@ With controllers, use the `CPPBOOT_RATE_LIMIT` mark. The [security guide](securi
 | `cppboot.server.request_timeout_seconds` | `30` | The longest a client can take to send a request or read a response |
 | `cppboot.server.shutdown_timeout_seconds` | `30` | How long shutdown waits for connections to finish |
 | `cppboot.server.queue_timeout_seconds` | `5` | A request that waits longer than this for a worker gets a 503, and its handler doesn't run |
-| `cppboot.server.trusted_proxies` | None | Proxies whose `X-Forwarded-For` header can be believed, separated by commas, such as `10.0.0.5, 10.1.0.0/16`. An invalid entry, or a range covering every address, stops startup |
+| `cppboot.server.trusted_proxies` | None | Proxies whose `X-Forwarded-For` and `X-Request-Id` headers can be believed, separated by commas, such as `10.0.0.5, 10.1.0.0/16`. An invalid entry, or a range covering every address, stops startup |
+| `cppboot.server.access_log` | `true` | Logs a line for every request. See [Access log](#access-log) |
+
+## Access log
+
+The server logs a line at `info` level for every request, once its response has been written:
+
+```text
+[2026-11-18 10:42:07.311] [my-api] [info] GET /api/users/7 200 in 0.42 ms, 52 bytes, from 10.0.0.8, request 0q3k8c1x7m2fa
+```
+
+That's the method, the path, the status, how long it took from when the whole request had arrived to when its response had been written, the size of the response's body, the client's address, and the request's ID.
+
+- **Every response is there**, including those that no handler sent: a 400 for a request that couldn't be read, a 413 for a body that's too large, and a 503 for a request that waited too long for a worker.
+- **The query string isn't logged,** because it can hold tokens and other secrets. Neither are headers or bodies.
+- **Clients choose paths,** so anything in a method or path that could break a log line, such as a line break or a terminal control code, is written as `?`, and a path is cut at 200 characters.
+- **It follows the log level.** With `cppboot.logging.level` set to `warn` or above, nothing is written and the server doesn't prepare the lines. Set `cppboot.server.access_log` to `false` to turn it off at `info`.
+
+### Request IDs
+
+Every request gets an ID, which is in its access log line, in the response's `X-Request-Id` header, and in `request.id()`. Put it in your own log lines, so that they can be matched with the request:
+
+```cpp
+logger_.warn("Payment declined for order {}, request {}", order.id, request.id());
+```
+
+The server makes one of 13 letters and digits, which is unique for as long as the server runs, and unlikely to be repeated by another server. Behind a proxy that makes its own, list the proxy in `cppboot.server.trusted_proxies`, and the server keeps the proxy's ID if it's up to 64 letters, digits, `-`, `_`, `.` or `:`. That's enough for a UUID. From any other client, the header is ignored, so nobody can make their requests look like someone else's in the log.
+
+An ID isn't secret, and doesn't prove anything about who sent a request, so don't use it to decide what a client may do.
 
 ## HTTPS
 

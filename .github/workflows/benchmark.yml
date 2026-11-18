@@ -40,8 +40,8 @@ jobs:
           SECTIONS: ${{ inputs.sections }}
         run: bash scripts/benchmark-linux.sh build/bench "$SECTIONS"
 
-      # Builds the baseline, this commit, and this commit with link-time optimization, all with frame
-      # pointers so that perf can follow calls, and measures them side by side on this machine.
+      # Builds the baseline and this commit, with frame pointers so that perf can follow calls, and
+      # measures them side by side on this machine, and this commit again with its access log on.
       - name: Install profilers
         if: inputs.sections == 'compare'
         run: |
@@ -67,11 +67,10 @@ jobs:
           }
           build ../baseline build/baseline
           build . build/current
-          build . build/lto -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
       - name: Compare
         if: inputs.sections == 'compare'
         run: |
           bash scripts/compare-linux.sh build/current/benchmarks/cppboot-load \
             baseline=build/baseline/benchmarks/cppboot-bench-server \
             current=build/current/benchmarks/cppboot-bench-server \
-            lto=build/lto/benchmarks/cppboot-bench-server
+            "logged=build/current/benchmarks/cppboot-bench-server --cppboot.logging.level=info"

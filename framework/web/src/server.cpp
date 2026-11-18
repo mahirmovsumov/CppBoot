@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <random>
 #include <stop_token>
 #include <string_view>
 #include <thread>
@@ -317,6 +318,46 @@ std::string forwardedClient(const BeastRequest& request,
     return client;
 }
 
+/// An X-Request-Id from a trusted proxy is kept if it's no longer than this and uses only these
+/// characters, which covers UUIDs and what common proxies make, and can't break a log line.
+bool isUsableRequestId(std::string_view id) {
+    constexpr std::size_t kLongest = 64;
+    return !id.empty() && id.size() <= kLongest &&
+           std::all_of(id.begin(), id.end(), [](char c) {
+               return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      c == '-' || c == '_' || c == '.' || c == ':';
+           });
+}
+
+/// Mixes a count into 13 characters. The mixing can be undone, so two counts never give the same ID,
+/// and IDs don't look like a sequence. 13 characters hold all 64 bits, and are short enough for a
+/// std::string to keep without allocating.
+std::string requestIdFor(std::uint64_t count) {
+    count = (count ^ (count >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+    count = (count ^ (count >> 27U)) * 0x94d049bb133111ebULL;
+    count ^= count >> 31U;
+
+    // Letters that can't be mistaken for each other or for digits.
+    constexpr std::string_view kDigits = "0123456789abcdefghjkmnpqrstvwxyz";
+    std::string id(13, '0');
+    for (std::size_t i = id.size(); i-- > 0;) {
+        id[i] = kDigits[count & 0x1FU];
+        count >>= 5U;
+    }
+    return id;
+}
+
+/// A random start, so that two servers, or two runs of one, are unlikely to make the same IDs.
+std::uint64_t firstRequestCount() {
+    std::random_device random;
+    return (static_cast<std::uint64_t>(random()) << 32U) ^ random();
+}
+
+/// The path of a request target, without its query string.
+std::string_view pathOf(std::string_view target) {
+    return target.substr(0, target.find('?'));
+}
+
 enum class ServerState { Created, Running, Stopped };
 
 std::size_t threadCount(std::size_t requested) {
@@ -368,6 +409,33 @@ struct Server::Impl {
         if (log_error) {
             log_error(message);
         }
+    }
+
+    std::string newRequestId() {
+        return requestIdFor(next_request_count.fetch_add(1, std::memory_order_relaxed));
+    }
+
+    /// Believes a request's own ID only from a trusted proxy, because anyone else could use it to
+    /// make their requests look like someone else's in the log.
+    std::string requestId(const Connection& connection, const BeastRequest& request) {
+        if (connection.peer_is_trusted) {
+            const auto field = request.find("X-Request-Id");
+            if (field != request.end() && isUsableRequestId(field->value())) {
+                return std::string{field->value()};
+            }
+        }
+        return newRequestId();
+    }
+
+    void logRequest(std::string_view method, std::string_view target, int status,
+                    std::size_t body_bytes, std::chrono::steady_clock::time_point arrived,
+                    std::string_view client, std::string_view id) const {
+        if (!request_log) {
+            return;
+        }
+        const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - arrived);
+        request_log(RequestRecord{method, pathOf(target), status, body_bytes, duration, client, id});
     }
 
     /// Runs when connections have had their time to finish. It can only ask, because C++ can't safely
@@ -528,20 +596,30 @@ struct Server::Impl {
             auto [read_error, read_size] = co_await http::async_read(stream, buffer, parser, kAsTuple);
             connection.busy = true;
 
+            const auto arrived = std::chrono::steady_clock::now();
             if (read_error) {
                 if (read_error == http::error::end_of_stream) {
                     co_return true;
                 }
+                int status = 0;
                 if (read_error == http::error::body_limit) {
-                    co_await sendError(connection, stream, 413);
-                    co_return true;
+                    status = 413;
+                } else if (read_error.category() ==
+                               beast::error_code{http::error::bad_method}.category() &&
+                           read_error != http::error::partial_message) {
+                    status = 400;
+                } else {
+                    co_return false;
                 }
-                if (read_error.category() == beast::error_code{http::error::bad_method}.category() &&
-                    read_error != http::error::partial_message) {
-                    co_await sendError(connection, stream, 400);
-                    co_return true;
-                }
-                co_return false;
+                const std::string id = newRequestId();
+                const std::size_t body_bytes = co_await sendError(connection, stream, status, id);
+                // A request that couldn't be read may not have a method or a path yet.
+                const auto or_dash = [](std::string_view text) {
+                    return text.empty() ? std::string_view{"-"} : text;
+                };
+                logRequest(or_dash(parser.get().method_string()), or_dash(parser.get().target()),
+                           status, body_bytes, arrived, connection.peer, id);
+                co_return true;
             }
 
             auto& beast_request = parser.get();
@@ -549,15 +627,19 @@ struct Server::Impl {
             const bool wants_keep_alive = beast_request.keep_alive();
             const bool head_request = beast_request.method() == http::verb::head;
 
+            const std::string request_id = requestId(connection, beast_request);
+            const std::string forwarded =
+                connection.peer_is_trusted
+                    ? forwardedClient(beast_request, trusted_proxies, connection.peer)
+                    : std::string{};
+            const std::string& client = connection.peer_is_trusted ? forwarded : connection.peer;
+
             auto request = toRequest(beast_request);
             if (request) {
-                request.value().setClientAddress(
-                    connection.peer_is_trusted
-                        ? forwardedClient(beast_request, trusted_proxies, connection.peer)
-                        : connection.peer);
+                request.value().setClientAddress(client);
+                request.value().setId(request_id);
                 request.value().setStopToken(handler_stop.get_token());
-                request.value().setDeadline(std::chrono::steady_clock::now() +
-                                            options.handler_deadline);
+                request.value().setDeadline(arrived + options.handler_deadline);
             }
             Response response = !request ? errorResponse(400, statusReason(400))
                                          : co_await asio::co_spawn(
@@ -569,14 +651,19 @@ struct Server::Impl {
                                                asio::use_awaitable);
 
             const bool keep_alive = wants_keep_alive && !stopping;
+            const int status = response.status();
+            const std::size_t body_bytes = head_request ? 0 : response.body().size();
             auto beast_response = toBeastResponse(std::move(response), version, keep_alive,
                                                   head_request, connection.field_arena);
+            beast_response.set("X-Request-Id", request_id);
 
             // Writing a message, rather than a serializer, makes Beast allocate one for it.
             http::response_serializer<http::string_body, BeastFields> serializer{beast_response};
             transport.expires_after(options.request_timeout);
             auto [write_error, write_size] =
                 co_await http::async_write(stream, serializer, kAsTuple);
+            logRequest(beast_request.method_string(), beast_request.target(), status, body_bytes,
+                       arrived, client, request_id);
             if (write_error) {
                 co_return false;
             }
@@ -587,12 +674,17 @@ struct Server::Impl {
         co_return true;
     }
 
+    /// Returns the size of the body it sent.
     template <typename Stream>
-    asio::awaitable<void> sendError(Connection& connection, Stream& stream, int status) {
+    asio::awaitable<std::size_t> sendError(Connection& connection, Stream& stream, int status,
+                                           std::string_view id) {
         auto response = toBeastResponse(errorResponse(status, statusReason(status)), 11, false,
                                         false, connection.field_arena);
+        response.set("X-Request-Id", id);
+        const std::size_t body_bytes = response.body().size();
         connection.transport().expires_after(options.request_timeout);
         static_cast<void>(co_await http::async_write(stream, response, kAsTuple));
+        co_return body_bytes;
     }
 
     /// Runs on each network thread. Idle connections close now, and busy ones after their response.
@@ -635,6 +727,8 @@ struct Server::Impl {
     const Router& router;
     ServerOptions options;
     LogFunction log_error;
+    // Set before start(), and only read after it.
+    RequestLogFunction request_log;
 
     // These don't change while the server runs, so every thread can read them.
     std::vector<AddressRange> trusted_proxies;
@@ -653,6 +747,7 @@ struct Server::Impl {
     std::atomic<std::uint64_t> shed_since_log{0};
     std::atomic<std::chrono::steady_clock::rep> next_shed_log_ticks{0};
     std::atomic<std::uint16_t> bound_port{0};
+    std::atomic<std::uint64_t> next_request_count{firstRequestCount()};
 
     std::mutex lifecycle_mutex;
     ServerState state{ServerState::Created};
@@ -663,6 +758,16 @@ Server::Server(const Router& router, ServerOptions options, LogFunction log_erro
 
 Server::~Server() {
     stop();
+}
+
+Result<void> Server::onRequest(RequestLogFunction log) {
+    const std::lock_guard lock{impl_->lifecycle_mutex};
+    if (impl_->state != ServerState::Created) {
+        // Network threads read it without a lock once the server runs.
+        return Error{ErrorCode::InvalidState, "Set the request log before starting the server"};
+    }
+    impl_->request_log = std::move(log);
+    return {};
 }
 
 Result<void> Server::start() {

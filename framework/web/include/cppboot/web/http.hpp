@@ -112,6 +112,13 @@ public:
     }
     void setClientAddress(std::string address) { client_address_ = std::move(address); }
 
+    /// Identifies this request in logs, and is sent back in the X-Request-Id header. The server
+    /// makes one, or takes it from a trusted proxy's X-Request-Id. It's unique within one run of a
+    /// server, and not secret, so don't use it to decide what a client may do. Empty if the
+    /// request didn't come from a server.
+    const std::string& id() const noexcept CPPBOOT_LIFETIMEBOUND { return id_; }
+    void setId(std::string id) { id_ = std::move(id); }
+
     /// Returns true once a handler should give up: the server is shutting down and has run out of
     /// patience, or the request's deadline has passed. A handler that loops or waits should check
     /// this, because nothing can stop it from outside. The server doesn't stop a handler that
@@ -149,6 +156,7 @@ private:
     Values params_;
     std::string route_;
     std::string client_address_;
+    std::string id_;
     std::stop_token stop_token_;
     std::chrono::steady_clock::time_point deadline_{std::chrono::steady_clock::time_point::max()};
     RequestHeaders headers_;

@@ -227,7 +227,7 @@ You can also start the Benchmark workflow by hand on GitHub.
 
 ### Compare two commits
 
-Two runs of the workflow can land on different machines, so their results can't be compared. To measure a change, start the Benchmark workflow with `compare` and a baseline commit. It builds the baseline, the current commit, and the current commit with link-time optimization, then measures them in turn on the same machine, over several rounds. It also reports the CPU time, thread switches and system calls that each request costs, and a `perf` profile of the current commit with link-time optimization. `scripts/compare-linux.sh` does the measuring, and runs on its own too.
+Two runs of the workflow can land on different machines, so their results can't be compared. To measure a change, start the Benchmark workflow with `compare` and a baseline commit. It builds the baseline and the current commit, then measures them in turn on the same machine, over several rounds, and the current commit again with its access log on. It also reports the CPU time, thread switches and system calls that each request costs, and a `perf` profile of the last of them. `scripts/compare-linux.sh` does the measuring, runs on its own too, and can pass settings to each build.
 
 ## What benchmarking found
 

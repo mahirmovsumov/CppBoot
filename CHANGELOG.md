@@ -4,6 +4,13 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 
 ## Unreleased
 
+### Access log and request IDs
+
+- The server logs a line for every request, with its method, path, status, time, size, client and ID. It covers responses that no handler sent, such as a 400 for a request that couldn't be read. Query strings aren't logged, since they can hold secrets, and anything in a path that could break a log line is replaced. It follows the log level, and `cppboot.server.access_log: false` turns it off. See [Access log](docs/guides/web.md#access-log).
+- Every request gets an ID, in `Request::id()` and the response's `X-Request-Id` header. An ID that a [trusted proxy](docs/guides/web.md#request-ids) sends is kept, and one from anyone else is ignored.
+- `Server::onRequest` gives a `RequestRecord` for every response written, for writing your own access log.
+- **Fix:** the TLS tests could fail when CTest ran both of their runs at once, because the runs shared their certificate files.
+
 ### Command-line tool
 
 - `cppboot create` with no name asks for the name and each option.

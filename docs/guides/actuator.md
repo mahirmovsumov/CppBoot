@@ -138,6 +138,5 @@ scrape_configs:
 ## Not included yet
 
 - Distributed tracing and OpenTelemetry
-- Automatic request logs. To add them, write [middleware](security.md#middleware)
 - A separate port for actuator routes
 - Changing these routes' paths

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <format>
 #include <limits>
 #include <string>
 #include <utility>
@@ -26,7 +27,30 @@ Result<std::int64_t> readInRange(const config::Config& config, std::string_view 
     return value.value();
 }
 
+/// Clients choose methods and paths, so whatever could break a log line, or fill the log, is
+/// replaced.
+std::string printable(std::string_view text) {
+    constexpr std::size_t kLongest = 200;
+    std::string result;
+    result.reserve(std::min(text.size(), kLongest) + 3);
+    for (const char c : text.substr(0, kLongest)) {
+        const auto byte = static_cast<unsigned char>(c);
+        result += byte < 0x20 || byte >= 0x7f ? '?' : c;
+    }
+    if (text.size() > kLongest) {
+        result += "...";
+    }
+    return result;
+}
+
 }  // namespace
+
+std::string formatRequestRecord(const RequestRecord& record) {
+    return std::format("{} {} {} in {:.2f} ms, {} bytes, from {}, request {}",
+                       printable(record.method), printable(record.path), record.status,
+                       static_cast<double>(record.duration.count()) / 1000.0, record.body_bytes,
+                       record.client_address, record.id);
+}
 
 Result<ServerOptions> readServerOptions(const config::Config& config) {
     constexpr std::int64_t kMaxCount = std::numeric_limits<std::int32_t>::max();
@@ -135,6 +159,10 @@ Result<void> ServerModule::start(ApplicationContext& context) {
     if (!options) {
         return options.error();
     }
+    const auto access_log = context.config().getBool("cppboot.server.access_log", true);
+    if (!access_log) {
+        return access_log.error();
+    }
 
     const logging::Logger& logger = context.logger();
     const bool uses_tls = options.value().tls.has_value();
@@ -151,6 +179,12 @@ Result<void> ServerModule::start(ApplicationContext& context) {
 
     server_ = std::make_unique<Server>(*router_, std::move(options).value(),
                                        [&logger](std::string_view what) { logger.error("{}", what); });
+    // At a level above info, nothing would be written, so the server isn't asked for records. A
+    // server that hasn't started can't refuse this.
+    if (access_log.value() && logger.enabled(logging::Level::Info)) {
+        static_cast<void>(server_->onRequest(
+            [&logger](const RequestRecord& record) { logger.info("{}", formatRequestRecord(record)); }));
+    }
     if (auto started = server_->start(); !started) {
         server_.reset();
         return started;

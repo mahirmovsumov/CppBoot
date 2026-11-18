@@ -21,8 +21,9 @@ The end-to-end test builds and starts a project with every option on every CI ru
 ## Left for later
 
 - Distributed tracing and OpenTelemetry
-- Automatic request logs
 - A separate port for actuator routes
+
+An [access log](../guides/web.md#access-log), with an ID for each request, was added later.
 
 ## Next
 

@@ -54,11 +54,29 @@ struct ServerOptions {
     std::optional<TlsOptions> tls;
 };
 
+/// What the server knows about a request once its response has been written, for an access log.
+/// The views are valid only during the call.
+struct RequestRecord {
+    std::string_view method;
+    /// As the client sent it, without the query string, which can hold secrets. Clients choose
+    /// it, so it can contain anything that HTTP allows in a path.
+    std::string_view path;
+    int status;
+    /// The size of the response's body.
+    std::size_t body_bytes;
+    /// From when the whole request had arrived to when its response had been written.
+    std::chrono::microseconds duration;
+    std::string_view client_address;
+    /// The same as Request::id() and the response's X-Request-Id header.
+    std::string_view id;
+};
+
 /// An HTTP/1.1 server. Handlers run on a pool of worker threads, so that a slow handler can't
 /// stop the server from serving other connections.
 class Server {
 public:
     using LogFunction = std::function<void(std::string_view)>;
+    using RequestLogFunction = std::function<void(const RequestRecord&)>;
 
     /// The router must outlive the server, and must not change while it's running.
     Server(const Router& router, ServerOptions options, LogFunction log_error = {});
@@ -66,6 +84,12 @@ public:
 
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
+
+    /// Calls log after each response is written, including error responses that the server sends
+    /// itself. It runs on a network thread, which serves other connections meanwhile, so it must be
+    /// quick, and it must be safe to call from several threads at once. Fails once start() has been
+    /// called.
+    Result<void> onRequest(RequestLogFunction log);
 
     /// Binds the address and starts serving. Fails if the address can't be used, and can then be
     /// called again. Calling it on a running or stopped server fails.

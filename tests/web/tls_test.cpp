@@ -22,6 +22,7 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -202,9 +203,11 @@ void limitToVersion(SSL_CTX* context, int version) {
 class TlsTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // CTest runs these tests twice at once, with different settings, so each run needs its own.
         const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-        directory_ =
-            std::filesystem::temp_directory_path() / (std::string{"cppboot-tls-"} + info->name());
+        directory_ = std::filesystem::temp_directory_path() /
+                     (std::string{"cppboot-tls-"} + info->name() + "-" +
+                      std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory_);
         std::filesystem::create_directories(directory_);
         certificate_ = directory_ / "cert.pem";
