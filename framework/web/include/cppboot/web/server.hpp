@@ -37,8 +37,14 @@ struct ServerOptions {
     std::size_t max_body_bytes{1024 * 1024};
     /// Connections beyond this limit are closed at once.
     std::size_t max_connections{1024};
-    /// The longest a client can take to send a request or receive a response.
+    /// The longest a client can take to send a request, from its first byte, or to receive a
+    /// response.
     std::chrono::milliseconds request_timeout{std::chrono::seconds{30}};
+    /// How long a connection can wait for its next request before it's closed, including its first.
+    /// Behind a proxy that keeps connections open, make this longer than the proxy does, or the
+    /// proxy can send a request just as the server closes the connection, and its client gets an
+    /// error.
+    std::chrono::milliseconds idle_timeout{std::chrono::seconds{30}};
     /// How long stop() lets connections finish before closing them.
     std::chrono::milliseconds shutdown_timeout{std::chrono::seconds{30}};
     /// A request that has waited this long for a worker gets a 503, and its handler doesn't run. Its

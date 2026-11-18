@@ -497,15 +497,20 @@ TEST(ReadServerOptionsTest, ReadsNetworkThreadsAndTheDeadline) {
     ASSERT_TRUE(defaults);
     EXPECT_EQ(defaults.value().io_threads, 0U);
     EXPECT_EQ(defaults.value().handler_deadline, std::chrono::seconds{30});
+    EXPECT_EQ(defaults.value().idle_timeout, std::chrono::seconds{30});
 
     sources.defaults = {{"cppboot.server.io_threads", "4"},
-                        {"cppboot.server.handler_deadline_seconds", "2"}};
+                        {"cppboot.server.handler_deadline_seconds", "2"},
+                        {"cppboot.server.idle_timeout_seconds", "75"}};
     const auto custom = readServerOptions(config::Config::load(sources).value());
     ASSERT_TRUE(custom);
     EXPECT_EQ(custom.value().io_threads, 4U);
     EXPECT_EQ(custom.value().handler_deadline, std::chrono::seconds{2});
+    EXPECT_EQ(custom.value().idle_timeout, std::chrono::seconds{75});
 
     sources.defaults = {{"cppboot.server.io_threads", "-1"}};
+    EXPECT_FALSE(readServerOptions(config::Config::load(sources).value()));
+    sources.defaults = {{"cppboot.server.idle_timeout_seconds", "0"}};
     EXPECT_FALSE(readServerOptions(config::Config::load(sources).value()));
 }
 
@@ -746,11 +751,59 @@ TEST_F(ServerTest, RejectsAnUnsupportedMethod) {
 
 TEST_F(ServerTest, ClosesAConnectionThatStaysSilent) {
     ServerOptions options = testOptions();
-    options.request_timeout = std::chrono::milliseconds{100};
+    options.idle_timeout = std::chrono::milliseconds{100};
     const auto port = startServer(std::move(options)).port();
 
     Client client{port};
     EXPECT_TRUE(client.closedByServer());
+}
+
+TEST_F(ServerTest, ClosesAnIdleConnectionAfterItsRequests) {
+    router_.get("/", [](const Request&) { return Response::text("ok"); });
+    ServerOptions options = testOptions();
+    options.idle_timeout = std::chrono::milliseconds{200};
+    const auto port = startServer(std::move(options)).port();
+
+    Client client{port};
+    EXPECT_EQ(client.send(http::verb::get, "/").body(), "ok");
+    EXPECT_TRUE(client.closedByServer());
+}
+
+TEST_F(ServerTest, AnIdleConnectionOutlastsTheRequestTimeout) {
+    router_.get("/", [](const Request&) { return Response::text("ok"); });
+    ServerOptions options = testOptions();
+    options.request_timeout = std::chrono::milliseconds{100};
+    options.idle_timeout = std::chrono::seconds{20};
+    const auto port = startServer(std::move(options)).port();
+
+    Client client{port};
+    EXPECT_EQ(client.send(http::verb::get, "/").body(), "ok");
+    std::this_thread::sleep_for(std::chrono::milliseconds{400});
+    EXPECT_EQ(client.send(http::verb::get, "/").body(), "ok");
+}
+
+TEST_F(ServerTest, ARequestThatStartsHasOnlyTheRequestTimeoutToFinish) {
+    ServerOptions options = testOptions();
+    options.request_timeout = std::chrono::milliseconds{200};
+    options.idle_timeout = std::chrono::seconds{20};
+    const auto port = startServer(std::move(options)).port();
+
+    Client client{port};
+    client.sendRaw("GET / HTTP/1.1\r\nHost: loc");
+    EXPECT_TRUE(client.closedByServer());
+}
+
+TEST_F(ServerTest, ServesPipelinedRequestsWithoutWaitingForMore) {
+    router_.get("/{n}", [](const Request& request) { return Response::text(*request.param("n")); });
+    ServerOptions options = testOptions();
+    options.idle_timeout = std::chrono::seconds{20};
+    const auto port = startServer(std::move(options)).port();
+
+    Client client{port};
+    client.sendRaw("GET /1 HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                   "GET /2 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    EXPECT_EQ(client.read().body(), "1");
+    EXPECT_EQ(client.read().body(), "2");
 }
 
 TEST_F(ServerTest, ClosesConnectionsBeyondTheLimit) {

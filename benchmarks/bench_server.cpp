@@ -88,6 +88,7 @@ int main(int argc, char* argv[]) {
         {"cppboot.server.io_threads", "1"},
         {"cppboot.server.max_connections", "1000000"},
         {"cppboot.server.request_timeout_seconds", "3600"},
+        {"cppboot.server.idle_timeout_seconds", "3600"},
     };
 
     cppboot::Application app(argc, argv, std::move(options));

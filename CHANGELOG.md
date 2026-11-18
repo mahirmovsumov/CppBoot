@@ -11,6 +11,10 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - `Server::onRequest` gives a `RequestRecord` for every response written, for writing your own access log.
 - **Fix:** the TLS tests could fail when CTest ran both of their runs at once, because the runs shared their certificate files.
 
+### Idle connections
+
+- `cppboot.server.idle_timeout_seconds` sets how long a connection can wait for its next request, and `request_timeout_seconds` now starts at a request's first byte. Before, one timeout covered both, so a connection could wait between requests only as long as a slow request was allowed to take. Both default to 30 seconds, so nothing changes unless you set them. Behind a proxy, set the idle timeout longer than the proxy's. See [Behind a proxy](docs/guides/deployment.md#behind-a-proxy).
+
 ### Command-line tool
 
 - `cppboot create` with no name asks for the name and each option.

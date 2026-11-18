@@ -296,7 +296,8 @@ With controllers, use the `CPPBOOT_RATE_LIMIT` mark. The [security guide](securi
 | `cppboot.server.handler_deadline_seconds` | `30` | How long a handler should take, from when its request arrived. See [Long-running handlers](#long-running-handlers) |
 | `cppboot.server.max_body_bytes` | `1048576` | Larger request bodies get a 413 response |
 | `cppboot.server.max_connections` | `1024` | Connections beyond this are closed at once |
-| `cppboot.server.request_timeout_seconds` | `30` | The longest a client can take to send a request or read a response |
+| `cppboot.server.request_timeout_seconds` | `30` | The longest a client can take to send a request, from its first byte, or to read a response |
+| `cppboot.server.idle_timeout_seconds` | `30` | How long a connection can wait for its next request, or its first, before it's closed. See [Behind a proxy](deployment.md#behind-a-proxy) |
 | `cppboot.server.shutdown_timeout_seconds` | `30` | How long shutdown waits for connections to finish |
 | `cppboot.server.queue_timeout_seconds` | `5` | A request that waits longer than this for a worker gets a 503, and its handler doesn't run |
 | `cppboot.server.trusted_proxies` | None | Proxies whose `X-Forwarded-For` and `X-Request-Id` headers can be believed, separated by commas, such as `10.0.0.5, 10.1.0.0/16`. An invalid entry, or a range covering every address, stops startup |

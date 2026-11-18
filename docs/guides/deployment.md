@@ -105,6 +105,18 @@ sudo install -m 640 -o root -g my-api fullchain.pem privkey.pem /etc/my-api/
 
 Let's Encrypt keeps its keys where other accounts can't read them, so copy them in a renewal hook, and restart the service there too.
 
+## Behind a proxy
+
+A proxy or load balancer, such as nginx or a cloud load balancer, keeps connections to the service open and reuses them. If the service closes one just as the proxy sends a request on it, the request fails, and the proxy's client gets an error such as 502. So **make the service wait longer than the proxy does**:
+
+```bash
+CPPBOOT_SERVER_IDLE_TIMEOUT_SECONDS=75
+```
+
+Many proxies keep idle connections for 60 seconds, so 75 is usually enough, but check yours. List the proxy in `cppboot.server.trusted_proxies` too, so that the service reads the client's address and [request ID](web.md#request-ids) from it.
+
+Without a proxy, a shorter time, such as 10 seconds, frees connections from clients that have gone quiet sooner. The default is 30.
+
 ## On Windows
 
 The archive holds the program and its libraries. Run it from its folder, so that it finds its settings. Running it as a Windows service isn't supported yet.

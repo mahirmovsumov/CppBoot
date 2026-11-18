@@ -105,6 +105,11 @@ Result<ServerOptions> readServerOptions(const config::Config& config) {
         !r) {
         return r.error();
     }
+    if (auto r = read("cppboot.server.idle_timeout_seconds", 30, 1, 86400,
+                      [&](std::int64_t v) { options.idle_timeout = std::chrono::seconds{v}; });
+        !r) {
+        return r.error();
+    }
     if (auto r = read("cppboot.server.shutdown_timeout_seconds", 30, 0, 86400,
                       [&](std::int64_t v) { options.shutdown_timeout = std::chrono::seconds{v}; });
         !r) {

@@ -79,8 +79,10 @@ constexpr std::string_view kEnvironmentFile = R"(# Settings for @NAME@. Restart 
 #CPPBOOT_SERVER_TLS_CERTIFICATE_FILE=/etc/@NAME@/fullchain.pem
 #CPPBOOT_SERVER_TLS_PRIVATE_KEY_FILE=/etc/@NAME@/privkey.pem
 
-# List your proxy if there's one in front of this service.
+# List your proxy if there's one in front of this service, and keep idle connections open longer
+# than it does, or some of its requests fail.
 #CPPBOOT_SERVER_TRUSTED_PROXIES=10.0.0.5
+#CPPBOOT_SERVER_IDLE_TIMEOUT_SECONDS=75
 
 #CPPBOOT_SERVER_MAX_CONNECTIONS=1024
 

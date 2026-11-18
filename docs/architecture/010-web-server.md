@@ -29,12 +29,16 @@ Boost.Asio and Boost.Beast appear only in the server's source files. Public head
 
 ## Limits and failures
 
+Waiting for a request and receiving one have separate limits. A connection waiting between requests costs little, and how long it should wait depends on what's in front of the server, so `idle_timeout` covers it. Once a request's first byte arrives, the rest of it has `request_timeout`, so a client that sends a few bytes at a time can't hold a connection for longer than that. Before they were separate, one timeout covered both, so a connection could wait between requests only as long as a slow request was allowed to take.
+
 | Situation | Response |
 |---|---|
 | Body over `max_body_bytes` | 413, then close |
 | Malformed HTTP or invalid percent-encoding | 400 |
 | Unsupported method | 400 |
-| Client too slow | Close when `request_timeout` expires |
+| No request within `idle_timeout`, on a new connection or after a response | Close |
+| A request that started but didn't finish within `request_timeout` | Close |
+| A response that the client didn't read within `request_timeout` | Close |
 | More than `max_connections` | Close at once |
 | Waited longer than `queue_timeout` for a worker | 503 with `Retry-After`, and the handler doesn't run |
 | Handler throws `HttpError` | That status, with its message |

@@ -587,11 +587,25 @@ struct Server::Impl {
         beast::tcp_stream& transport = connection.transport();
 
         while (!stopping) {
+            connection.busy = false;
+
+            // Waiting for a request gets idle_timeout, and once its first byte arrives, the rest gets
+            // request_timeout. A client that pipelines has already sent the next one.
+            if (buffer.size() == 0) {
+                transport.expires_after(options.idle_timeout);
+                auto [idle_error, idle_size] =
+                    co_await stream.async_read_some(buffer.prepare(beast::read_size(buffer, 65536)),
+                                                    kAsTuple);
+                if (idle_error) {
+                    co_return idle_error == asio::error::eof;
+                }
+                buffer.commit(idle_size);
+            }
+
             BeastRequestParser parser{std::piecewise_construct, std::make_tuple(),
                                       std::make_tuple(FieldAllocator<char>{connection.field_arena})};
             parser.body_limit(options.max_body_bytes);
 
-            connection.busy = false;
             transport.expires_after(options.request_timeout);
             auto [read_error, read_size] = co_await http::async_read(stream, buffer, parser, kAsTuple);
             connection.busy = true;
