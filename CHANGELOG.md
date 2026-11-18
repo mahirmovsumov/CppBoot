@@ -43,6 +43,7 @@ This file records what has been added to CppBoot. Versions follow [semantic vers
 - **Change:** `Request::headers()` returns a copy of the headers, as a `Headers`, where it returned a reference. `Request::create` takes a `RequestHeaders`, which a `Headers` converts to, so existing calls work.
 - The logger writes several threads' lines with one system call when they arrive together, where it made one for each line. Every line is still written before the call that logged it returns, or before the call of a thread that was already waiting does.
 - A test counts the allocations for each kind of request and fails if one goes over its budget, so the request path can't get slower without anyone noticing. See [making it faster without giving any of this up](docs/architecture/005-memory-management.md#making-it-faster-without-giving-any-of-this-up).
+- The Benchmark workflow can [compare two commits](docs/benchmarks.md#compare-two-commits) on the same machine, with and without link-time optimization, and show where a request's time goes.
 
 ### Fewer dependencies
 

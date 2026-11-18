@@ -225,6 +225,10 @@ bash scripts/benchmark-linux.sh build/bench
 
 You can also start the Benchmark workflow by hand on GitHub.
 
+### Compare two commits
+
+Two runs of the workflow can land on different machines, so their results can't be compared. To measure a change, start the Benchmark workflow with `compare` and a baseline commit. It builds the baseline, the current commit, and the current commit with link-time optimization, then measures them in turn on the same machine, over several rounds. It also reports the CPU time, thread switches and system calls that each request costs, and a `perf` profile of the current commit with link-time optimization. `scripts/compare-linux.sh` does the measuring, and runs on its own too.
+
 ## What benchmarking found
 
 The first run showed new connections waiting for seconds under load, up to 52 seconds at 10,000 connections, and being refused on Windows. The server took one connection per turn of its event loop, so it now keeps 64 accepts waiting. At 1,024 connections on Windows, the slowest request went from 2.7 s to 0.17 s, and refused connections from 414 to 0.

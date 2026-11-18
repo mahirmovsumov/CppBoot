@@ -11,22 +11,67 @@ on:
         options:
           - all
           - https
+          - compare
+      baseline:
+        description: For compare, the commit to measure against
+        type: string
+        default: ""
 
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y ninja-build libboost-dev libpq-dev libsqlite3-dev libssl-dev
       - name: Build
+        if: inputs.sections != 'compare'
         run: |
           cmake -S . -B build/bench -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCPPBOOT_BUILD_BENCHMARKS=ON -DCPPBOOT_BUILD_TESTS=OFF \
             -DCPPBOOT_BUILD_EXAMPLES=OFF -DCPPBOOT_BUILD_CODEGEN=OFF
           cmake --build build/bench --target cppboot-bench-server cppboot-load
       - name: Run
+        if: inputs.sections != 'compare'
         env:
           SECTIONS: ${{ inputs.sections }}
         run: bash scripts/benchmark-linux.sh build/bench "$SECTIONS"
+
+      # Builds the baseline, this commit, and this commit with link-time optimization, all with frame
+      # pointers so that perf can follow calls, and measures them side by side on this machine.
+      - name: Install profilers
+        if: inputs.sections == 'compare'
+        run: |
+          sudo apt-get install -y strace linux-tools-common "linux-tools-$(uname -r)" ||
+            sudo apt-get install -y strace linux-tools-common linux-tools-azure || true
+      - name: Build for comparison
+        if: inputs.sections == 'compare'
+        env:
+          BASELINE: ${{ inputs.baseline }}
+        run: |
+          set -e
+          if [ -z "$BASELINE" ]; then
+            echo "compare needs a baseline commit"
+            exit 1
+          fi
+          git worktree add ../baseline "$BASELINE"
+          build() {
+            cmake -S "$1" -B "$2" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CXX_FLAGS="-g -fno-omit-frame-pointer" \
+              -DCPPBOOT_BUILD_BENCHMARKS=ON -DCPPBOOT_BUILD_TESTS=OFF \
+              -DCPPBOOT_BUILD_EXAMPLES=OFF -DCPPBOOT_BUILD_CODEGEN=OFF "${@:3}"
+            cmake --build "$2" --target cppboot-bench-server cppboot-load
+          }
+          build ../baseline build/baseline
+          build . build/current
+          build . build/lto -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
+      - name: Compare
+        if: inputs.sections == 'compare'
+        run: |
+          bash scripts/compare-linux.sh build/current/benchmarks/cppboot-load \
+            baseline=build/baseline/benchmarks/cppboot-bench-server \
+            current=build/current/benchmarks/cppboot-bench-server \
+            lto=build/lto/benchmarks/cppboot-bench-server
