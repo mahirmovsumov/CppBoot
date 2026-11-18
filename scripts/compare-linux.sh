@@ -158,13 +158,13 @@ if command -v perf >/dev/null && perf version >/dev/null 2>&1; then
 
     echo
     echo "--- By library or kernel"
-    sudo perf report -i /tmp/compare.perf --no-children --sort dso --stdio 2>/dev/null | grep -v '^#' | grep -v '^$' | head -n 12
+    sudo perf report -i /tmp/compare.perf --no-children --sort dso --stdio -g none 2>/dev/null | grep -v -e '^#' -e '^$' 2>/dev/null | head -n 12
     echo
     echo "--- By function, own time only"
-    sudo perf report -i /tmp/compare.perf --no-children --sort sym --stdio -g none 2>/dev/null | grep -v '^#' | grep -v '^$' | head -n 45
+    sudo perf report -i /tmp/compare.perf --no-children --sort sym --stdio -g none 2>/dev/null | grep -v -e '^#' -e '^$' 2>/dev/null | head -n 45
     echo
     echo "--- By function, including what it calls"
-    sudo perf report -i /tmp/compare.perf --children --sort sym --stdio -g none 2>/dev/null | grep -v '^#' | grep -v '^$' | head -n 45
+    sudo perf report -i /tmp/compare.perf --children --sort sym --stdio -g none 2>/dev/null | grep -v -e '^#' -e '^$' 2>/dev/null | head -n 45
 else
     echo "perf isn't available on this kernel, so this is skipped."
 fi

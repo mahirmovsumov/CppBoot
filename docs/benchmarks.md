@@ -232,3 +232,17 @@ Two runs of the workflow can land on different machines, so their results can't 
 ## What benchmarking found
 
 The first run showed new connections waiting for seconds under load, up to 52 seconds at 10,000 connections, and being refused on Windows. The server took one connection per turn of its event loop, so it now keeps 64 accepts waiting. At 1,024 connections on Windows, the slowest request went from 2.7 s to 0.17 s, and refused connections from 414 to 0.
+
+### Fewer allocations, and link-time optimization
+
+After a request's allocations were cut from 30 to 5, a [comparison](#compare-two-commits) on one Linux machine, an Intel Xeon 6975P-C, measured 5 rounds of each build with 64 connections:
+
+| Build | `/plaintext` requests/second | Route with parameters | p99 |
+|---|---|---|---|
+| Before | 92,175 | 90,480 | 0.77 ms |
+| After | 94,942 | 93,055 | 0.76 ms |
+| After, with link-time optimization | 93,382 | 91,209 | 0.77 ms |
+
+The gain is about 3%, and the build after was faster in every round. Link-time optimization didn't help, so it isn't used.
+
+A request cost the server about 10.5 µs of CPU, and half of that was in the kernel. It made one system call to read and one to write, which is as few as it can. What's left that the framework controls is mostly the move from the network thread to a worker and back: about one thread switch and half a wake-up for each request, which together took over 15% of the time in the profile. Allocation took about 1%.
